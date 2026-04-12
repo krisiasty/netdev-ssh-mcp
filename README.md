@@ -11,19 +11,32 @@ Retrieves the running or startup configuration from an Arista switch.
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `host` | string | yes | — | Hostname or IP address of the switch |
-| `username` | string | yes | — | SSH username |
+| `username` | string | no | `ARISTA_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
 | `config_type` | string | no | `running` | `running` or `startup` |
 
-### `get_inventory`
+### `run_show_command`
 
-Retrieves hardware inventory from an Arista switch as JSON (`show inventory | json`).
+Runs any `show` command on an Arista switch and returns the output. The command must start with `show`. Append `| json` for structured output where supported, or `| no-more` to disable pagination for text output.
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `host` | string | yes | — | Hostname or IP address of the switch |
-| `username` | string | yes | — | SSH username |
+| `command` | string | yes | — | The show command to run |
+| `username` | string | no | `ARISTA_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
+
+Example commands:
+
+```
+show bgp summary | json
+show interfaces status | json
+show lldp neighbors detail | json
+show inventory | json
+show version | json
+show ip route | json
+show running-config | no-more
+```
 
 ## Default username
 

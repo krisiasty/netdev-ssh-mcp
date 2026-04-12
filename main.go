@@ -28,9 +28,13 @@ func main() {
 	}, arista.GetConfig)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_inventory",
-		Description: "Connect to an Arista switch via SSH and retrieve hardware inventory as JSON.",
-	}, arista.GetInventory)
+		Name: "run_show_command",
+		Description: "Connect to an Arista switch via SSH and run a show command. " +
+			"The command must start with 'show'. " +
+			"Append '| json' for structured output where supported, or '| no-more' to disable pagination for text output. " +
+			"Examples: 'show bgp summary | json', 'show interfaces status | json', " +
+			"'show lldp neighbors detail | json', 'show inventory | json', 'show version | json'.",
+	}, arista.RunShowCommand)
 
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		slog.Error("server exited with error", "err", err)
