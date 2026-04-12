@@ -24,6 +24,10 @@ The same secret value always produces the same hash, so configs from different
 devices can be safely compared and diffed — identical hashes mean identical
 secrets.
 
+> **Note:** Obfuscation applies only to `get_config` output. Some values
+> (e.g. SNMP community strings) can still be retrieved in plaintext via
+> `run_show_command` (e.g. `show snmp community`).
+
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `host` | string | yes | — | Hostname or IP address of the device |

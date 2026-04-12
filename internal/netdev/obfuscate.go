@@ -19,6 +19,8 @@ var sensitivePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(username\s+\S+\s+(?:privilege\s+\d+\s+)?(?:role\s+\S+\s+)?(?:secret|password)(?:\s+\d+)?\s+)(\S+)(.*)$`),
 	// snmp-server community <name> ...  (Arista, Cisco)
 	regexp.MustCompile(`(?i)^(snmp-server\s+community\s+)(\S+)(.*)$`),
+	// Community name: <value> / Community: <value>  (show snmp community output, Arista, Cisco, NX-OS)
+	regexp.MustCompile(`(?i)^(\s*Community(?:\s+name)?:\s+)(\S+)(.*)$`),
 	// snmp-server user NAME GROUP [auth algo <authpw> [priv algo]] — NX-OS
 	regexp.MustCompile(`(?i)^(snmp-server\s+user\s+\S+\s+\S+(?:\s+\S+)?\s+auth\s+\S+\s+)(\S+)(.*)$`),
 	// neighbor IP password [type] <value>  (BGP, Arista, Cisco)
