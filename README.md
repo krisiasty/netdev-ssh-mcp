@@ -236,9 +236,9 @@ Restart Claude Desktop after editing the config.
 - Get the interface status from 10.0.0.1 and list any interfaces that are down
 - Review the running config of 10.0.0.1 and flag any security concerns
 - Get the LLDP neighbors from 10.0.0.1 and draw a topology diagram
-- Check the routing table on 10.0.0.1 and tell me how traffic to 192.168.100.0/24 is forwarded
-- Get the running configs from 10.0.0.1, 10.0.0.2, and 10.0.0.3 and check if NTP is consistently configured across all of them
-- Discover all neighbors of spine-1 switch via LLDP / CPD then check EVPN fabric configuration and status
+- How is traffic to 192.168.100.0/24 forwarded on 10.0.0.1?
+- Check NTP consistency across 10.0.0.1, 10.0.0.2, and 10.0.0.3
+- Discover spine-1 neighbors via LLDP/CDP and check EVPN fabric configuration
 - Tell me what exact commands to use to fix configuration issues you detected
 - Verify if all previously spotted issues are fixed now
 
