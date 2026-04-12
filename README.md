@@ -24,7 +24,6 @@ The same secret value always produces the same hash, so configs from different
 devices can be safely compared and diffed — identical hashes mean identical
 secrets.
 
-
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `host` | string | yes | — | Hostname or IP address of the device |
