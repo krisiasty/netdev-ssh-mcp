@@ -1,0 +1,6 @@
+netdev-ssh-mcp - MCP server for interacting with Arista and Cisco network devices using SSH connection
+
+Copyright 2026 Krzysztof Ciepłucha
+
+This product includes software developed by Krzysztof Ciepłucha.
+https://github.com/krisiasty/netdev-ssh-mcp
