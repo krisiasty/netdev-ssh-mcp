@@ -42,7 +42,9 @@ Authentication methods are tried in order:
 1. **SSH agent** — if `SSH_AUTH_SOCK` is set, the agent is used automatically. No configuration needed.
 2. **Password** — set via the `ARISTA_PASSWORD` environment variable (see below).
 
-At least one method must be available at call time. Using an SSH agent is recommended; the password fallback is intended for environments where agent forwarding is unavailable.
+At least one method must be available at call time.
+
+> **Claude Desktop note:** Claude Desktop is a GUI application and does not inherit your shell environment, so `SSH_AUTH_SOCK` is not available to the MCP server process. Set it explicitly in the `env` block of the config (see the Claude Desktop section below). Claude Code runs in the terminal and inherits your shell environment, so no extra configuration is needed there.
 
 ### Password via environment variable
 
@@ -85,7 +87,24 @@ Add a project-local `.mcp.json` at the root of your repository:
 }
 ```
 
-With a default username and password authentication:
+With a default username:
+
+```json
+{
+  "mcpServers": {
+    "arista-ssh": {
+      "command": "/usr/local/bin/arista-ssh-mcp",
+      "env": {
+        "ARISTA_USERNAME": "admin"
+      }
+    }
+  }
+}
+```
+
+Claude Code runs in the terminal and inherits your shell environment, so `SSH_AUTH_SOCK` is available automatically — no extra configuration needed for SSH agent authentication.
+
+Alternatively, using password authentication:
 
 ```json
 {
@@ -121,7 +140,31 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 }
 ```
 
-With a default username and password authentication:
+Claude Desktop does not inherit your shell environment, so `SSH_AUTH_SOCK` must be set explicitly. Get the current socket path from your terminal:
+
+```bash
+echo $SSH_AUTH_SOCK
+```
+
+Then add it to the config:
+
+```json
+{
+  "mcpServers": {
+    "arista-ssh": {
+      "command": "/usr/local/bin/arista-ssh-mcp",
+      "env": {
+        "ARISTA_USERNAME": "admin",
+        "SSH_AUTH_SOCK": "/private/tmp/com.apple.launchd.XXXXX/Listeners"
+      }
+    }
+  }
+}
+```
+
+Note that the socket path changes on every reboot and must be updated in the config accordingly.
+
+Alternatively, using password authentication:
 
 ```json
 {
