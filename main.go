@@ -19,7 +19,6 @@ func main() {
 		"version", version,
 		"commit", commit,
 		"date", date,
-		"builtBy", builtBy,
 	)
 
 	server := mcp.NewServer(&mcp.Implementation{
