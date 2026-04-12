@@ -1,4 +1,4 @@
-# arista-ssh-mcp
+# netdev-ssh-mcp
 
 MCP server for interacting with network switches over SSH. Supports Arista EOS, Cisco NX-OS, and Cisco IOS/IOS-XE. Exposes switch operations as tools for use with Claude Code and Claude Desktop.
 
@@ -19,7 +19,7 @@ The same secret value always produces the same hash, so configs from different s
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `host` | string | yes | — | Hostname or IP address of the switch |
-| `username` | string | no | `ARISTA_USERNAME` | SSH username |
+| `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
 | `config_type` | string | no | `running` | `running` or `startup` |
 
@@ -31,7 +31,7 @@ Runs any `show` command on an Arista, Cisco Nexus, or Cisco Catalyst switch and 
 |---|---|---|---|---|
 | `host` | string | yes | — | Hostname or IP address of the switch |
 | `command` | string | yes | — | The show command to run |
-| `username` | string | no | `ARISTA_USERNAME` | SSH username |
+| `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
 
 Example commands:
@@ -49,10 +49,10 @@ show ip route | json
 
 ## Default username
 
-Set `ARISTA_USERNAME` to avoid specifying `username` in every tool call:
+Set `DEVICE_USERNAME` to avoid specifying `username` in every tool call:
 
 ```bash
-export ARISTA_USERNAME=admin
+export DEVICE_USERNAME=admin
 ```
 
 The `username` tool parameter takes precedence if provided.
@@ -62,7 +62,7 @@ The `username` tool parameter takes precedence if provided.
 Authentication methods are tried in order:
 
 1. **SSH agent** — if `SSH_AUTH_SOCK` is set, the agent is used automatically. No configuration needed.
-2. **Password** — set via the `ARISTA_PASSWORD` environment variable (see below).
+2. **Password** — set via the `DEVICE_PASSWORD` environment variable (see below).
 
 At least one method must be available at call time.
 
@@ -70,11 +70,11 @@ At least one method must be available at call time.
 
 ### Password via environment variable
 
-Set `ARISTA_PASSWORD` before starting the server:
+Set `DEVICE_PASSWORD` before starting the server:
 
 ```bash
-export ARISTA_PASSWORD=mysecret
-arista-ssh-mcp
+export DEVICE_PASSWORD=mysecret
+netdev-ssh-mcp
 ```
 
 The password is never passed through tool parameters or the MCP protocol — it is read once from the environment at call time and applies to all connections made by the server process.
@@ -84,13 +84,13 @@ The password is never passed through tool parameters or the MCP protocol — it 
 Requires Go 1.26 or later.
 
 ```bash
-go build -o arista-ssh-mcp .
+go build -o netdev-ssh-mcp .
 ```
 
 To install the binary to `/usr/local/bin` after building (macOS and Linux):
 
 ```bash
-sudo install -m 0755 arista-ssh-mcp /usr/local/bin/
+sudo install -m 0755 netdev-ssh-mcp /usr/local/bin/
 ```
 
 ## Integration
@@ -103,7 +103,7 @@ Add a project-local `.mcp.json` at the root of your repository:
 {
   "mcpServers": {
     "arista-ssh": {
-      "command": "/usr/local/bin/arista-ssh-mcp"
+      "command": "/usr/local/bin/netdev-ssh-mcp"
     }
   }
 }
@@ -115,9 +115,9 @@ With a default username:
 {
   "mcpServers": {
     "arista-ssh": {
-      "command": "/usr/local/bin/arista-ssh-mcp",
+      "command": "/usr/local/bin/netdev-ssh-mcp",
       "env": {
-        "ARISTA_USERNAME": "admin"
+        "DEVICE_USERNAME": "admin"
       }
     }
   }
@@ -132,10 +132,10 @@ Alternatively, using password authentication:
 {
   "mcpServers": {
     "arista-ssh": {
-      "command": "/usr/local/bin/arista-ssh-mcp",
+      "command": "/usr/local/bin/netdev-ssh-mcp",
       "env": {
-        "ARISTA_USERNAME": "admin",
-        "ARISTA_PASSWORD": "mysecret"
+        "DEVICE_USERNAME": "admin",
+        "DEVICE_PASSWORD": "mysecret"
       }
     }
   }
@@ -145,7 +145,7 @@ Alternatively, using password authentication:
 Alternatively, register the server globally with the Claude Code CLI:
 
 ```bash
-claude mcp add arista-ssh /usr/local/bin/arista-ssh-mcp
+claude mcp add arista-ssh /usr/local/bin/netdev-ssh-mcp
 ```
 
 ### Claude Desktop
@@ -156,7 +156,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 {
   "mcpServers": {
     "arista-ssh": {
-      "command": "/usr/local/bin/arista-ssh-mcp"
+      "command": "/usr/local/bin/netdev-ssh-mcp"
     }
   }
 }
@@ -174,9 +174,9 @@ Then add it to the config:
 {
   "mcpServers": {
     "arista-ssh": {
-      "command": "/usr/local/bin/arista-ssh-mcp",
+      "command": "/usr/local/bin/netdev-ssh-mcp",
       "env": {
-        "ARISTA_USERNAME": "admin",
+        "DEVICE_USERNAME": "admin",
         "SSH_AUTH_SOCK": "/private/tmp/com.apple.launchd.XXXXX/Listeners"
       }
     }
@@ -192,10 +192,10 @@ Alternatively, using password authentication:
 {
   "mcpServers": {
     "arista-ssh": {
-      "command": "/usr/local/bin/arista-ssh-mcp",
+      "command": "/usr/local/bin/netdev-ssh-mcp",
       "env": {
-        "ARISTA_USERNAME": "admin",
-        "ARISTA_PASSWORD": "mysecret"
+        "DEVICE_USERNAME": "admin",
+        "DEVICE_PASSWORD": "mysecret"
       }
     }
   }
@@ -216,7 +216,7 @@ The server logs to stderr (never stdout, which is reserved for the MCP protocol)
 | `error` | Errors only |
 
 ```bash
-LOG_LEVEL=debug arista-ssh-mcp
+LOG_LEVEL=debug netdev-ssh-mcp
 ```
 
 ## License

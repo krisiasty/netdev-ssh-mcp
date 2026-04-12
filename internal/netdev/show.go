@@ -1,4 +1,4 @@
-package arista
+package netdev
 
 import (
 	"context"
@@ -14,22 +14,22 @@ import (
 
 // RunShowCommandInput defines the input parameters for the run_show_command tool.
 type RunShowCommandInput struct {
-	Host     string `json:"host"     jsonschema:"hostname or IP address of the Arista switch"`
+	Host     string `json:"host"     jsonschema:"hostname or IP address of the network device"`
 	Command  string `json:"command"  jsonschema:"show command to execute, e.g. 'show bgp summary | json' or 'show interfaces status | json'"`
 	Username string `json:"username" jsonschema:"SSH username"`
 	Port     int    `json:"port"     jsonschema:"SSH port, defaults to 22"`
 }
 
-// RunShowCommand executes an arbitrary show command on an Arista switch.
+// RunShowCommand executes an arbitrary show command on a network device.
 func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowCommandInput) (*mcp.CallToolResult, any, error) {
 	if args.Host == "" {
 		return nil, nil, fmt.Errorf("host is required")
 	}
 	if args.Username == "" {
-		args.Username = os.Getenv("ARISTA_USERNAME")
+		args.Username = os.Getenv("DEVICE_USERNAME")
 	}
 	if args.Username == "" {
-		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set ARISTA_USERNAME")
+		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
 	cmd := strings.ToLower(strings.TrimSpace(args.Command))
 	if !strings.HasPrefix(cmd, "show") {

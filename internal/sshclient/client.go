@@ -70,12 +70,12 @@ func buildAuthMethods() ([]gossh.AuthMethod, error) {
 		}
 	}
 
-	if pw := os.Getenv("ARISTA_PASSWORD"); pw != "" {
+	if pw := os.Getenv("DEVICE_PASSWORD"); pw != "" {
 		methods = append(methods, gossh.Password(pw))
 	}
 
 	if len(methods) == 0 {
-		return nil, fmt.Errorf("no auth available: set SSH_AUTH_SOCK or ARISTA_PASSWORD")
+		return nil, fmt.Errorf("no auth available: set SSH_AUTH_SOCK or DEVICE_PASSWORD")
 	}
 
 	return methods, nil

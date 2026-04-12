@@ -1,4 +1,4 @@
-package arista
+package netdev
 
 import (
 	"crypto/sha256"
@@ -66,7 +66,7 @@ func obfuscateConfig(config string) string {
 
 // hashSecret returns a short deterministic identifier for a secret value.
 // The same input always produces the same output, enabling comparison across
-// switches without revealing the actual secret.
+// devices without revealing the actual secret.
 func hashSecret(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return fmt.Sprintf("[h:%x]", sum[:6]) // 12 hex chars

@@ -1,4 +1,4 @@
-package arista
+package netdev
 
 import (
 	"context"
@@ -13,22 +13,22 @@ import (
 
 // GetConfigInput defines the input parameters for the get_config tool.
 type GetConfigInput struct {
-	Host       string `json:"host"        jsonschema:"hostname or IP address of the Arista switch"`
+	Host       string `json:"host"        jsonschema:"hostname or IP address of the network device"`
 	Username   string `json:"username"    jsonschema:"SSH username"`
 	Port       int    `json:"port"        jsonschema:"SSH port, defaults to 22"`
 	ConfigType string `json:"config_type" jsonschema:"configuration type: running (default) or startup"`
 }
 
-// GetConfig retrieves the running or startup configuration from an Arista switch.
+// GetConfig retrieves the running or startup configuration from a network device.
 func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInput) (*mcp.CallToolResult, any, error) {
 	if args.Host == "" {
 		return nil, nil, fmt.Errorf("host is required")
 	}
 	if args.Username == "" {
-		args.Username = os.Getenv("ARISTA_USERNAME")
+		args.Username = os.Getenv("DEVICE_USERNAME")
 	}
 	if args.Username == "" {
-		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set ARISTA_USERNAME")
+		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
 
 	configType := args.ConfigType

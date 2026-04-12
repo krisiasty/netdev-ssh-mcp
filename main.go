@@ -7,7 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/krisiasty/arista-ssh-mcp/internal/arista"
+	"github.com/krisiasty/arista-ssh-mcp/internal/netdev"
 )
 
 func main() {
@@ -15,20 +15,25 @@ func main() {
 		Level: logLevel(),
 	})))
 
-	slog.Info("starting arista-ssh-mcp")
+	slog.Info("starting netdev-ssh-mcp",
+		"version", version,
+		"commit", commit,
+		"date", date,
+		"builtBy", builtBy,
+	)
 
 	server := mcp.NewServer(&mcp.Implementation{
-		Name:    "arista-ssh-mcp",
-		Version: "0.1.0",
+		Name:    "netdev-ssh-mcp",
+		Version: version,
 	}, nil)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "get_config",
 		Description: "Connect to an Arista, Cisco Nexus, or Cisco Catalyst switch via SSH and retrieve its " +
 			"running or startup configuration. Sensitive values (passwords, secrets, SNMP community names, " +
-			"BGP/OSPF/TACACS/RADIUS keys) are automatically obfuscated with deterministic hashes, " +
-			"allowing safe comparison across switches.",
-	}, arista.GetConfig)
+			"BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically obfuscated with deterministic hashes, " +
+			"allowing safe comparison across devices.",
+	}, netdev.GetConfig)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_show_command",
@@ -38,7 +43,7 @@ func main() {
 			"Append '| json' for structured output where supported, or '| no-more' to disable pagination for text output. " +
 			"Examples: 'show bgp summary | json', 'show interfaces status | json', " +
 			"'show lldp neighbors detail | json', 'show inventory | json', 'show version | json'.",
-	}, arista.RunShowCommand)
+	}, netdev.RunShowCommand)
 
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		slog.Error("server exited with error", "err", err)
