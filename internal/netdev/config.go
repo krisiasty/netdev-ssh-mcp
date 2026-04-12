@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -41,7 +42,7 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 
 	cmd := fmt.Sprintf("show %s-config | no-more", configType)
 
-	slog.Info("get_config", "host", args.Host, "user", args.Username, "config_type", configType)
+	slog.Info("get_config", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "config_type", configType)
 
 	out, err := sshclient.RunCommand(sshclient.ConnConfig{
 		Host:     args.Host,
@@ -58,4 +59,14 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: out}},
 	}, nil, nil
+}
+
+// sanitizeLog strips ASCII control characters from s to prevent log injection.
+func sanitizeLog(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
 }

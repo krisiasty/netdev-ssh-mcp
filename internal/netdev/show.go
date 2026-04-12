@@ -39,7 +39,7 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 		return nil, nil, fmt.Errorf("use the get_config tool for running-config and startup-config")
 	}
 
-	slog.Info("run_show_command", "host", args.Host, "user", args.Username, "command", args.Command)
+	slog.Info("run_show_command", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "command", sanitizeLog(args.Command))
 
 	out, err := sshclient.RunCommand(sshclient.ConnConfig{
 		Host:     args.Host,

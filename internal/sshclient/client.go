@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -64,9 +65,12 @@ func buildAuthMethods() ([]gossh.AuthMethod, error) {
 	var methods []gossh.AuthMethod
 
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
-		conn, err := net.Dial("unix", sock)
-		if err == nil {
-			methods = append(methods, gossh.PublicKeysCallback(agent.NewClient(conn).Signers))
+		sock = filepath.Clean(sock)
+		if filepath.IsAbs(sock) {
+			conn, err := net.Dial("unix", sock)
+			if err == nil {
+				methods = append(methods, gossh.PublicKeysCallback(agent.NewClient(conn).Signers))
+			}
 		}
 	}
 
