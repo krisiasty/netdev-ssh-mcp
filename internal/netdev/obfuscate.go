@@ -35,6 +35,10 @@ var sensitivePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(ntp\s+authentication-key\s+\d+\s+\S+\s+)(\S+)(.*)$`),
 	// key-string <value>  (key chain, Arista, Cisco)
 	regexp.MustCompile(`(?i)^(\s*key-string\s+)(\S+)(.*)$`),
+	// Key N -- text "<value>"  (show key chain output, Cisco IOS/IOS-XE, quoted)
+	regexp.MustCompile(`(?i)^(\s*key\s+\d+\s+--\s+text\s+(?:\d+\s+)?")([^"]+)(".*)?$`),
+	// Key N -- text <value>  (show key chain output, Cisco IOS/IOS-XE, unquoted)
+	regexp.MustCompile(`(?i)^(\s*key\s+\d+\s+--\s+text\s+(?:\d+\s+)?)(\S+)(.*)$`),
 	// [ip] ospf authentication-key [type] <value>  (Arista, Cisco)
 	regexp.MustCompile(`(?i)^(\s*(?:ip\s+)?ospf\s+authentication-key(?:\s+\d+)?\s+)(\S+)(.*)$`),
 	// [ip] ospf message-digest-key ID algo <value>  (Arista, Cisco)
