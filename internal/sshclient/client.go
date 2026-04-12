@@ -1,6 +1,7 @@
 package sshclient
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -67,7 +68,7 @@ func buildAuthMethods() ([]gossh.AuthMethod, error) {
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		sock = filepath.Clean(sock)
 		if filepath.IsAbs(sock) {
-			conn, err := net.Dial("unix", sock)
+			conn, err := (&net.Dialer{}).DialContext(context.Background(), "unix", sock) //nolint:gosec // G704: SSH_AUTH_SOCK is set by the system SSH agent, path is validated to be absolute above
 			if err == nil {
 				methods = append(methods, gossh.PublicKeysCallback(agent.NewClient(conn).Signers))
 			}

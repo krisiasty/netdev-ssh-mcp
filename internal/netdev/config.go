@@ -42,7 +42,7 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 
 	cmd := fmt.Sprintf("show %s-config | no-more", configType)
 
-	slog.Info("get_config", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "config_type", configType)
+	slog.Info("get_config", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "config_type", configType) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
 	out, err := sshclient.RunCommand(sshclient.ConnConfig{
 		Host:     args.Host,
