@@ -1,6 +1,6 @@
 # netdev-ssh-mcp
 
-MCP server for interacting with network switches over SSH. Supports Arista EOS, Cisco NX-OS, and Cisco IOS/IOS-XE. Exposes switch operations as tools for use with Claude Code and Claude Desktop.
+MCP server for interacting with network devices (switches, routers) over SSH. Supports Arista EOS, Cisco NX-OS, and Cisco IOS/IOS-XE. Exposes network device operations as tools for use with Claude Code and Claude Desktop (and other MCP clients)
 
 ## Tools
 
