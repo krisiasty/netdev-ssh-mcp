@@ -2,11 +2,6 @@ version: 2
 
 project_name: netdev-ssh-mcp
 
-before:
-  hooks:
-    - go mod tidy
-    - golangci-lint run
-
 builds:
   - binary: netdev-ssh-mcp
     ldflags:
