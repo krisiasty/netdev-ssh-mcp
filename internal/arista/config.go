@@ -53,6 +53,7 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 		return nil, nil, fmt.Errorf("get_config: %w", err)
 	}
 
+	out = obfuscateConfig(out)
 	slog.Info("get_config done", "host", args.Host, "bytes", len(out))
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: out}},

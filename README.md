@@ -6,7 +6,15 @@ MCP server for interacting with Arista switches over SSH. Exposes switch operati
 
 ### `get_config`
 
-Retrieves the running or startup configuration from an Arista switch.
+Retrieves the running or startup configuration from an Arista switch. Sensitive values (passwords, secrets, SNMP community names, BGP/OSPF/TACACS/RADIUS keys) are automatically replaced with deterministic SHA-256 hashes:
+
+```
+enable secret [h:a3f4b2c1d5e6]
+snmp-server community [h:f9e1d2b4c3a7] ro
+username admin privilege 15 secret [h:a3f4b2c1d5e6]
+```
+
+The same secret value always produces the same hash, so configs from different switches can be safely compared and diffed — identical hashes mean identical secrets.
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
