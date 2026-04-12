@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -23,7 +24,10 @@ func GetInventory(ctx context.Context, req *mcp.CallToolRequest, args GetInvento
 		return nil, nil, fmt.Errorf("host is required")
 	}
 	if args.Username == "" {
-		return nil, nil, fmt.Errorf("username is required")
+		args.Username = os.Getenv("ARISTA_USERNAME")
+	}
+	if args.Username == "" {
+		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set ARISTA_USERNAME")
 	}
 
 	slog.Info("get_inventory", "host", args.Host, "user", args.Username)

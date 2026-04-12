@@ -25,6 +25,16 @@ Retrieves hardware inventory from an Arista switch as JSON (`show inventory | js
 | `username` | string | yes | — | SSH username |
 | `port` | int | no | 22 | SSH port |
 
+## Default username
+
+Set `ARISTA_USERNAME` to avoid specifying `username` in every tool call:
+
+```bash
+export ARISTA_USERNAME=admin
+```
+
+The `username` tool parameter takes precedence if provided.
+
 ## Authentication
 
 Authentication methods are tried in order:
@@ -53,6 +63,12 @@ Requires Go 1.26 or later.
 go build -o arista-ssh-mcp .
 ```
 
+To install the binary to `/usr/local/bin` after building (macOS and Linux):
+
+```bash
+sudo install -m 0755 arista-ssh-mcp /usr/local/bin/
+```
+
 ## Integration
 
 ### Claude Code
@@ -63,20 +79,21 @@ Add a project-local `.mcp.json` at the root of your repository:
 {
   "mcpServers": {
     "arista-ssh": {
-      "command": "/absolute/path/to/arista-ssh-mcp"
+      "command": "/usr/local/bin/arista-ssh-mcp"
     }
   }
 }
 ```
 
-If you need password authentication, use the `env` key:
+With a default username and password authentication:
 
 ```json
 {
   "mcpServers": {
     "arista-ssh": {
-      "command": "/absolute/path/to/arista-ssh-mcp",
+      "command": "/usr/local/bin/arista-ssh-mcp",
       "env": {
+        "ARISTA_USERNAME": "admin",
         "ARISTA_PASSWORD": "mysecret"
       }
     }
@@ -87,7 +104,7 @@ If you need password authentication, use the `env` key:
 Alternatively, register the server globally with the Claude Code CLI:
 
 ```bash
-claude mcp add arista-ssh /absolute/path/to/arista-ssh-mcp
+claude mcp add arista-ssh /usr/local/bin/arista-ssh-mcp
 ```
 
 ### Claude Desktop
@@ -98,20 +115,21 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 {
   "mcpServers": {
     "arista-ssh": {
-      "command": "/absolute/path/to/arista-ssh-mcp"
+      "command": "/usr/local/bin/arista-ssh-mcp"
     }
   }
 }
 ```
 
-With password authentication:
+With a default username and password authentication:
 
 ```json
 {
   "mcpServers": {
     "arista-ssh": {
-      "command": "/absolute/path/to/arista-ssh-mcp",
+      "command": "/usr/local/bin/arista-ssh-mcp",
       "env": {
+        "ARISTA_USERNAME": "admin",
         "ARISTA_PASSWORD": "mysecret"
       }
     }
