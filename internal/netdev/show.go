@@ -9,7 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/krisiasty/arista-ssh-mcp/internal/sshclient"
+	"github.com/krisiasty/netdev-ssh-mcp-mcp/internal/sshclient"
 )
 
 // RunShowCommandInput defines the input parameters for the run_show_command tool.

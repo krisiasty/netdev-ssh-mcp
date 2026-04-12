@@ -121,7 +121,7 @@ Add a project-local `.mcp.json` at the root of your repository:
 ```json
 {
   "mcpServers": {
-    "arista-ssh": {
+    "netdev-ssh-mcp": {
       "command": "/usr/local/bin/netdev-ssh-mcp"
     }
   }
@@ -133,7 +133,7 @@ With a default username:
 ```json
 {
   "mcpServers": {
-    "arista-ssh": {
+    "netdev-ssh-mcp": {
       "command": "/usr/local/bin/netdev-ssh-mcp",
       "env": {
         "DEVICE_USERNAME": "admin"
@@ -152,7 +152,7 @@ Alternatively, using password authentication:
 ```json
 {
   "mcpServers": {
-    "arista-ssh": {
+    "netdev-ssh-mcp": {
       "command": "/usr/local/bin/netdev-ssh-mcp",
       "env": {
         "DEVICE_USERNAME": "admin",
@@ -166,7 +166,7 @@ Alternatively, using password authentication:
 Alternatively, register the server globally with the Claude Code CLI:
 
 ```bash
-claude mcp add arista-ssh /usr/local/bin/netdev-ssh-mcp
+claude mcp add netdev-ssh-mcp /usr/local/bin/netdev-ssh-mcp
 ```
 
 ### Claude Desktop
@@ -177,7 +177,7 @@ or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 ```json
 {
   "mcpServers": {
-    "arista-ssh": {
+    "netdev-ssh-mcp": {
       "command": "/usr/local/bin/netdev-ssh-mcp"
     }
   }
@@ -196,7 +196,7 @@ Then add it to the config:
 ```json
 {
   "mcpServers": {
-    "arista-ssh": {
+    "netdev-ssh-mcp": {
       "command": "/usr/local/bin/netdev-ssh-mcp",
       "env": {
         "DEVICE_USERNAME": "admin",
@@ -215,7 +215,7 @@ Alternatively, using password authentication:
 ```json
 {
   "mcpServers": {
-    "arista-ssh": {
+    "netdev-ssh-mcp": {
       "command": "/usr/local/bin/netdev-ssh-mcp",
       "env": {
         "DEVICE_USERNAME": "admin",
