@@ -31,8 +31,12 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 	if args.Username == "" {
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set ARISTA_USERNAME")
 	}
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(args.Command)), "show") {
+	cmd := strings.ToLower(strings.TrimSpace(args.Command))
+	if !strings.HasPrefix(cmd, "show") {
 		return nil, nil, fmt.Errorf("command must start with 'show'")
+	}
+	if strings.HasPrefix(cmd, "show ru") || strings.HasPrefix(cmd, "show sta") {
+		return nil, nil, fmt.Errorf("use the get_config tool for running-config and startup-config")
 	}
 
 	slog.Info("run_show_command", "host", args.Host, "user", args.Username, "command", args.Command)

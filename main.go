@@ -31,6 +31,7 @@ func main() {
 		Name: "run_show_command",
 		Description: "Connect to an Arista switch via SSH and run a show command. " +
 			"The command must start with 'show'. " +
+			"Running-config and startup-config are not allowed here — use the get_config tool instead. " +
 			"Append '| json' for structured output where supported, or '| no-more' to disable pagination for text output. " +
 			"Examples: 'show bgp summary | json', 'show interfaces status | json', " +
 			"'show lldp neighbors detail | json', 'show inventory | json', 'show version | json'.",

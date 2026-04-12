@@ -43,8 +43,9 @@ show lldp neighbors detail | json
 show inventory | json
 show version | json
 show ip route | json
-show running-config | no-more
 ```
+
+> `show running-config` and `show startup-config` are not allowed here — use the `get_config` tool instead.
 
 ## Default username
 
