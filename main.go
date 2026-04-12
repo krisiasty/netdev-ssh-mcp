@@ -8,7 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/krisiasty/netdev-ssh-mcp-mcp/internal/netdev"
+	"github.com/krisiasty/netdev-ssh-mcp/internal/netdev"
 )
 
 func main() {

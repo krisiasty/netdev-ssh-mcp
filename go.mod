@@ -1,4 +1,4 @@
-module github.com/krisiasty/netdev-ssh-mcp-mcp
+module github.com/krisiasty/netdev-ssh-mcp
 
 go 1.26.2
 
