@@ -1,12 +1,12 @@
 # arista-ssh-mcp
 
-MCP server for interacting with Arista switches over SSH. Exposes switch operations as tools for use with Claude Code and Claude Desktop.
+MCP server for interacting with network switches over SSH. Supports Arista EOS, Cisco NX-OS, and Cisco IOS/IOS-XE. Exposes switch operations as tools for use with Claude Code and Claude Desktop.
 
 ## Tools
 
 ### `get_config`
 
-Retrieves the running or startup configuration from an Arista switch. Sensitive values (passwords, secrets, SNMP community names, BGP/OSPF/TACACS/RADIUS keys) are automatically replaced with deterministic SHA-256 hashes:
+Retrieves the running or startup configuration from an Arista, Cisco Nexus, or Cisco Catalyst switch. Sensitive values (passwords, secrets, SNMP community names, BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with deterministic SHA-256 hashes:
 
 ```
 enable secret [h:a3f4b2c1d5e6]
@@ -25,7 +25,7 @@ The same secret value always produces the same hash, so configs from different s
 
 ### `run_show_command`
 
-Runs any `show` command on an Arista switch and returns the output. The command must start with `show`. Append `| json` for structured output where supported, or `| no-more` to disable pagination for text output.
+Runs any `show` command on an Arista, Cisco Nexus, or Cisco Catalyst switch and returns the output. The command must start with `show`. Append `| json` for structured output where supported, or `| no-more` to disable pagination for text output.
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|

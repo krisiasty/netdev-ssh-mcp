@@ -23,13 +23,16 @@ func main() {
 	}, nil)
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_config",
-		Description: "Connect to an Arista switch via SSH and retrieve its running or startup configuration.",
+		Name: "get_config",
+		Description: "Connect to an Arista, Cisco Nexus, or Cisco Catalyst switch via SSH and retrieve its " +
+			"running or startup configuration. Sensitive values (passwords, secrets, SNMP community names, " +
+			"BGP/OSPF/TACACS/RADIUS keys) are automatically obfuscated with deterministic hashes, " +
+			"allowing safe comparison across switches.",
 	}, arista.GetConfig)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_show_command",
-		Description: "Connect to an Arista switch via SSH and run a show command. " +
+		Description: "Connect to an Arista, Cisco Nexus, or Cisco Catalyst switch via SSH and run a show command. " +
 			"The command must start with 'show'. " +
 			"Running-config and startup-config are not allowed here — use the get_config tool instead. " +
 			"Append '| json' for structured output where supported, or '| no-more' to disable pagination for text output. " +
