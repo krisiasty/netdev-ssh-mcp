@@ -30,7 +30,8 @@ go.work.sum
 
 # Editor/IDE
 # .idea/
-# .vscode/
+.vscode/
+.claude/
 
 # binaries and releases
 dist/
