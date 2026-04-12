@@ -53,11 +53,18 @@ var sensitivePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(\s*password(?:\s+\d+)?\s+)(\S+)(.*)$`),
 }
 
+// Obfuscate controls whether sensitive values are replaced with hashes in
+// tool output. Enabled by default; set to false via --no-obfuscate.
+var Obfuscate = true
+
 // obfuscateConfig replaces sensitive values in a running-config with
 // deterministic SHA-256 hashes. Two configs with identical secret values
 // will produce identical hashes, making the output safe to compare or diff.
 // Supports Arista EOS, Cisco NX-OS, and Cisco IOS/IOS-XE syntax.
 func obfuscateConfig(config string) string {
+	if !Obfuscate {
+		return config
+	}
 	lines := strings.Split(config, "\n")
 	for i, line := range lines {
 		for _, re := range sensitivePatterns {

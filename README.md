@@ -24,9 +24,6 @@ The same secret value always produces the same hash, so configs from different
 devices can be safely compared and diffed — identical hashes mean identical
 secrets.
 
-> **Note:** Obfuscation applies only to `get_config` output. Some values
-> (e.g. SNMP community strings) can still be retrieved in plaintext via
-> `run_show_command` (e.g. `show snmp community`).
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -231,6 +228,28 @@ Alternatively, using password authentication:
 ```
 
 Restart Claude Desktop after editing the config.
+
+## Obfuscation
+
+Sensitive values are obfuscated by default in the output of both `get_config`
+and `run_show_command`. To disable this, pass `--no-obfuscate`:
+
+```bash
+netdev-ssh-mcp --no-obfuscate
+```
+
+In an MCP config file, pass it via `args`:
+
+```json
+{
+  "mcpServers": {
+    "netdev-ssh-mcp": {
+      "command": "/usr/local/bin/netdev-ssh-mcp",
+      "args": ["--no-obfuscate"]
+    }
+  }
+}
+```
 
 ## Logging
 
