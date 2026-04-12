@@ -228,6 +228,20 @@ Alternatively, using password authentication:
 
 Restart Claude Desktop after editing the config.
 
+## Example prompts
+
+- Show me the running config of 10.0.0.1
+- Compare the running configs of n9k-1 and n9k-2 and summarize the differences
+- Check BGP neighbor status on arista1 and tell me if any sessions are down
+- Get the interface status from 10.0.0.1 and list any interfaces that are down
+- Review the running config of 10.0.0.1 and flag any security concerns
+- Get the LLDP neighbors from 10.0.0.1 and draw a topology diagram
+- Check the routing table on 10.0.0.1 and tell me how traffic to 192.168.100.0/24 is forwarded
+- Get the running configs from 10.0.0.1, 10.0.0.2, and 10.0.0.3 and check if NTP is consistently configured across all of them
+- Discover all neighbors of spine-1 switch via LLDP / CPD then check EVPN fabric configuration and status
+- Tell me what exact commands to use to fix configuration issues you detected
+- Verify if all previously spotted issues are fixed now
+
 ## Obfuscation
 
 Sensitive values are obfuscated by default in the output of both `get_config`
