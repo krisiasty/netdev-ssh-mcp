@@ -44,13 +44,13 @@ func RunCommand(cfg ConnConfig, cmd string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("dial %s: %w", addr, err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	session, err := client.NewSession()
 	if err != nil {
 		return "", fmt.Errorf("new session: %w", err)
 	}
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	out, err := session.Output(cmd)
 	if err != nil {
