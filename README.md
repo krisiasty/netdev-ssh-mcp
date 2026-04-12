@@ -6,7 +6,7 @@ MCP server for interacting with network devices (switches, routers) over SSH. Su
 
 ### `get_config`
 
-Retrieves the running or startup configuration from an Arista, Cisco Nexus, or Cisco Catalyst switch. Sensitive values (passwords, secrets, SNMP community names, BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with deterministic SHA-256 hashes:
+Retrieves the running or startup configuration from an Arista, Cisco Nexus, or Cisco Catalyst device. Sensitive values (passwords, secrets, SNMP community names, BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with deterministic SHA-256 hashes:
 
 ```
 enable secret [h:a3f4b2c1d5e6]
@@ -14,22 +14,22 @@ snmp-server community [h:f9e1d2b4c3a7] ro
 username admin privilege 15 secret [h:a3f4b2c1d5e6]
 ```
 
-The same secret value always produces the same hash, so configs from different switches can be safely compared and diffed — identical hashes mean identical secrets.
+The same secret value always produces the same hash, so configs from different devices can be safely compared and diffed — identical hashes mean identical secrets.
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `host` | string | yes | — | Hostname or IP address of the switch |
+| `host` | string | yes | — | Hostname or IP address of the device |
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
 | `config_type` | string | no | `running` | `running` or `startup` |
 
 ### `run_show_command`
 
-Runs any `show` command on an Arista, Cisco Nexus, or Cisco Catalyst switch and returns the output. The command must start with `show`. Append `| json` for structured output where supported, or `| no-more` to disable pagination for text output.
+Runs any `show` command on an Arista, Cisco Nexus, or Cisco Catalyst device and returns the output. The command must start with `show`. Append `| json` for structured output where supported, or `| no-more` to disable pagination for text output.
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `host` | string | yes | — | Hostname or IP address of the switch |
+| `host` | string | yes | — | Hostname or IP address of the device |
 | `command` | string | yes | — | The show command to run |
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
