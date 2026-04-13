@@ -143,7 +143,26 @@ The password is never passed through tool parameters or the MCP protocol — it
 is read once from the environment at call time and applies to all connections
 made by the server process.
 
-## Building
+## Installation
+
+### macOS (Homebrew)
+
+```bash
+brew tap krisiasty/tap
+brew install netdev-ssh-mcp
+```
+
+The binary is installed to `$(brew --prefix)/bin/netdev-ssh-mcp`. The prefix
+depends on the Mac architecture:
+
+| Architecture | Path |
+| --- | --- |
+| Apple Silicon (M1/M2/M3/M4) | `/opt/homebrew/bin/netdev-ssh-mcp` |
+| Intel | `/usr/local/bin/netdev-ssh-mcp` |
+
+Run `brew --prefix` to confirm which applies to your machine.
+
+### Build from source
 
 Requires Go 1.26 or later.
 
@@ -159,6 +178,11 @@ sudo install -m 0755 netdev-ssh-mcp /usr/local/bin/
 
 ## Integration
 
+In the examples below, replace `<path-to-binary>` with the full path to the
+binary. If installed via Homebrew, run `brew --prefix` to determine the correct
+path (`/opt/homebrew` on Apple Silicon, `/usr/local` on Intel), then append
+`/bin/netdev-ssh-mcp`.
+
 ### Claude Code
 
 Add a project-local `.mcp.json` at the root of your repository:
@@ -167,7 +191,7 @@ Add a project-local `.mcp.json` at the root of your repository:
 {
   "mcpServers": {
     "netdev-ssh-mcp": {
-      "command": "/usr/local/bin/netdev-ssh-mcp"
+      "command": "<path-to-binary>"
     }
   }
 }
@@ -179,7 +203,7 @@ With a default username:
 {
   "mcpServers": {
     "netdev-ssh-mcp": {
-      "command": "/usr/local/bin/netdev-ssh-mcp",
+      "command": "<path-to-binary>",
       "env": {
         "DEVICE_USERNAME": "admin"
       }
@@ -198,7 +222,7 @@ Alternatively, using password authentication:
 {
   "mcpServers": {
     "netdev-ssh-mcp": {
-      "command": "/usr/local/bin/netdev-ssh-mcp",
+      "command": "<path-to-binary>",
       "env": {
         "DEVICE_USERNAME": "admin",
         "DEVICE_PASSWORD": "mysecret"
@@ -211,7 +235,7 @@ Alternatively, using password authentication:
 Alternatively, register the server globally with the Claude Code CLI:
 
 ```bash
-claude mcp add netdev-ssh-mcp /usr/local/bin/netdev-ssh-mcp
+claude mcp add netdev-ssh-mcp <path-to-binary>
 ```
 
 ### Claude Desktop
@@ -223,7 +247,7 @@ or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 {
   "mcpServers": {
     "netdev-ssh-mcp": {
-      "command": "/usr/local/bin/netdev-ssh-mcp"
+      "command": "<path-to-binary>"
     }
   }
 }
@@ -242,7 +266,7 @@ Then add it to the config:
 {
   "mcpServers": {
     "netdev-ssh-mcp": {
-      "command": "/usr/local/bin/netdev-ssh-mcp",
+      "command": "<path-to-binary>",
       "env": {
         "DEVICE_USERNAME": "admin",
         "SSH_AUTH_SOCK": "/private/tmp/com.apple.launchd.XXXXX/Listeners"
@@ -261,7 +285,7 @@ Alternatively, using password authentication:
 {
   "mcpServers": {
     "netdev-ssh-mcp": {
-      "command": "/usr/local/bin/netdev-ssh-mcp",
+      "command": "<path-to-binary>",
       "env": {
         "DEVICE_USERNAME": "admin",
         "DEVICE_PASSWORD": "mysecret"
@@ -308,7 +332,7 @@ In an MCP config file, pass it via `args`:
 {
   "mcpServers": {
     "netdev-ssh-mcp": {
-      "command": "/usr/local/bin/netdev-ssh-mcp",
+      "command": "<path-to-binary>",
       "args": ["--no-obfuscate"]
     }
   }

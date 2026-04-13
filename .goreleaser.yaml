@@ -28,9 +28,32 @@ upx:
     lzma: true
 
 archives:
-  - formats:
+  - id: binaries
+    formats:
       - binary
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: archives
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+brews:
+  - name: netdev-ssh-mcp
+    ids:
+      - archives
+    homepage: "https://github.com/krisiasty/netdev-ssh-mcp"
+    description: "MCP server for SSH-based network device operations (Arista EOS, Cisco NX-OS, IOS/IOS-XE)"
+    license: "Apache-2.0"
+    repository:
+      owner: krisiasty
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    install: |
+      bin.install "netdev-ssh-mcp"
 
 checksum:
   name_template: "checksums.txt"
