@@ -3,7 +3,8 @@ version: 2
 project_name: netdev-ssh-mcp
 
 builds:
-  - binary: netdev-ssh-mcp
+  - id: darwin
+    binary: netdev-ssh-mcp
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
@@ -13,6 +14,19 @@ builds:
       - CGO_ENABLED=0
     goos:
       - darwin
+    goarch:
+      - amd64
+      - arm64
+  - id: others
+    binary: netdev-ssh-mcp
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+    env:
+      - CGO_ENABLED=0
+    goos:
       - linux
       - windows
     goarch:
@@ -33,13 +47,11 @@ archives:
       - binary
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
   - id: archives
+    builds:
+      - darwin
     formats:
       - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format_overrides:
-      - goos: windows
-        formats:
-          - zip
 
 brews:
   - name: netdev-ssh-mcp
