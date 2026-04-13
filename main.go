@@ -62,6 +62,19 @@ func main() {
 			"vrf (VRF name), size (packet size in bytes).",
 	}, netdev.RunPing)
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "run_traceroute",
+		Description: "Connect to an Arista, Cisco Nexus, or Cisco Catalyst switch via SSH and run a traceroute. " +
+			"Shows the hop-by-hop path to a destination and per-hop latency. " +
+			"Useful for locating where connectivity breaks, verifying traffic follows the expected path, " +
+			"and identifying which hop introduces latency. " +
+			"Use device_type to select the correct syntax: 'eos' (Arista), 'ios' (Cisco IOS/IOS-XE), or 'nxos' " +
+			"(Cisco NX-OS). On IOS, vrf must be specified via device_type='ios' so it is placed correctly " +
+			"before the destination in the command. " +
+			"Optional parameters: max_hops, timeout (per-probe seconds), probe (probes per hop), " +
+			"source (source IP or interface), vrf.",
+	}, netdev.RunTraceroute)
+
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		slog.Error("server exited with error", "err", err)
 		os.Exit(1)

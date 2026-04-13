@@ -81,6 +81,29 @@ If omitted, EOS/IOS syntax is used (`repeat`, `size` keywords).
 | `size` | int | no | — | Packet size in bytes |
 | `device_type` | string | no | — | `eos`, `ios`, or `nxos` — controls ping syntax |
 
+### `run_traceroute`
+
+Shows the hop-by-hop path from the device to a destination and per-hop latency.
+Useful for locating where connectivity breaks, verifying traffic follows the
+expected path, and identifying which hop introduces latency.
+
+Use `device_type` to ensure correct syntax. On IOS, `vrf` must precede the
+destination in the command — specifying `device_type=ios` handles this
+automatically.
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `host` | string | yes | — | Hostname or IP address of the device |
+| `destination` | string | yes | — | IP address or hostname to trace to |
+| `username` | string | no | `DEVICE_USERNAME` | SSH username |
+| `port` | int | no | 22 | SSH port |
+| `max_hops` | int | no | — | Maximum number of hops (TTL) |
+| `timeout` | int | no | — | Per-probe timeout in seconds |
+| `probe` | int | no | — | Number of probes per hop |
+| `source` | string | no | — | Source IP address or interface name |
+| `vrf` | string | no | — | VRF name |
+| `device_type` | string | no | — | `eos`, `ios`, or `nxos` — controls traceroute syntax |
+
 ## Default username
 
 Set `DEVICE_USERNAME` to avoid specifying `username` in every tool call:
@@ -266,6 +289,8 @@ Restart Claude Desktop after editing the config.
 - Ping 10.0.0.2 from 10.0.0.1 and tell me if it's reachable
 - Check if arista1 can reach all its BGP peers by pinging each one
 - Ping 8.8.8.8 from the management VRF on n9k-1
+- Traceroute from arista1 to 10.0.0.2 and show me the path
+- Run a traceroute from spine-1 to each of its BGP peers and identify any asymmetric paths
 
 ## Obfuscation
 
