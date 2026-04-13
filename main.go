@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -13,7 +14,14 @@ import (
 
 func main() {
 	noObfuscate := flag.Bool("no-obfuscate", false, "disable obfuscation of sensitive values in tool output")
+	printVersion := flag.Bool("version", false, "print version information and exit")
 	flag.Parse()
+
+	if *printVersion {
+		fmt.Printf("version: %s\ncommit: %s\ndate: %s\n", version, commit, date)
+		return
+	}
+
 	if *noObfuscate {
 		netdev.Obfuscate = false
 	}
