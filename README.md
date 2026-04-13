@@ -59,6 +59,28 @@ show ip route | json
 > `show running-config` and `show startup-config` are not allowed here — use
 > the `get_config` tool instead.
 
+### `run_ping`
+
+Runs a ping command on an Arista, Cisco Nexus, or Cisco Catalyst device and
+returns the output. Useful for verifying reachability from the device's
+perspective — for example, testing connectivity to a BGP peer, next-hop, or
+management target.
+
+Use `device_type` to select the correct command syntax for the target platform.
+If omitted, EOS/IOS syntax is used (`repeat`, `size` keywords).
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `host` | string | yes | — | Hostname or IP address of the device |
+| `destination` | string | yes | — | IP address or hostname to ping |
+| `username` | string | no | `DEVICE_USERNAME` | SSH username |
+| `port` | int | no | 22 | SSH port |
+| `count` | int | no | — | Number of echo requests to send |
+| `source` | string | no | — | Source IP address or interface name |
+| `vrf` | string | no | — | VRF name |
+| `size` | int | no | — | Packet size in bytes |
+| `device_type` | string | no | — | `eos`, `ios`, or `nxos` — controls ping syntax |
+
 ## Default username
 
 Set `DEVICE_USERNAME` to avoid specifying `username` in every tool call:
@@ -241,11 +263,15 @@ Restart Claude Desktop after editing the config.
 - Discover spine-1 neighbors via LLDP/CDP and check EVPN fabric configuration
 - Tell me what exact commands to use to fix configuration issues you detected
 - Verify if all previously spotted issues are fixed now
+- Ping 10.0.0.2 from 10.0.0.1 and tell me if it's reachable
+- Check if arista1 can reach all its BGP peers by pinging each one
+- Ping 8.8.8.8 from the management VRF on n9k-1
 
 ## Obfuscation
 
-Sensitive values are obfuscated by default in the output of both `get_config`
-and `run_show_command`. To disable this, pass `--no-obfuscate`:
+Sensitive values are obfuscated by default in `get_config` and
+`run_show_command` output. The `run_ping` tool is not affected — ping output
+contains no sensitive values. To disable obfuscation, pass `--no-obfuscate`:
 
 ```bash
 netdev-ssh-mcp --no-obfuscate

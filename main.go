@@ -51,6 +51,17 @@ func main() {
 			"'show lldp neighbors detail | json', 'show inventory | json', 'show version | json'.",
 	}, netdev.RunShowCommand)
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "run_ping",
+		Description: "Connect to an Arista, Cisco Nexus, or Cisco Catalyst switch via SSH and run a ping command. " +
+			"Useful for verifying reachability from the device's perspective — for example, testing connectivity " +
+			"to a BGP peer, next-hop, or management target. " +
+			"Use device_type to select the correct syntax: 'eos' (Arista), 'ios' (Cisco IOS/IOS-XE), or 'nxos' " +
+			"(Cisco NX-OS). If device_type is omitted, EOS/IOS syntax is used (repeat, size keywords). " +
+			"Optional parameters: count (number of probes), source (source IP or interface), " +
+			"vrf (VRF name), size (packet size in bytes).",
+	}, netdev.RunPing)
+
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		slog.Error("server exited with error", "err", err)
 		os.Exit(1)
