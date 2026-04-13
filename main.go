@@ -6,14 +6,32 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/krisiasty/netdev-ssh-mcp/internal/netdev"
+	"github.com/krisiasty/netdev-ssh-mcp/internal/sshclient"
 )
 
 func main() {
+	knownHostsDefault, err := sshclient.DefaultKnownHostsPath()
+	if err != nil {
+		knownHostsDefault = ""
+	}
+	if envPath := strings.TrimSpace(os.Getenv(sshclient.EnvKnownHostsPath)); envPath != "" {
+		knownHostsDefault = envPath
+	}
+	skipHostKeyValidationDefault, err := envBool(sshclient.EnvSkipHostKeyValidation)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid %s: %v\n", sshclient.EnvSkipHostKeyValidation, err)
+		os.Exit(1)
+	}
+
 	noObfuscate := flag.Bool("no-obfuscate", false, "disable obfuscation of sensitive values in tool output")
+	knownHostsPath := flag.String("known-hosts", knownHostsDefault, "path to OpenSSH known_hosts file used for SSH host verification")
+	skipHostKeyValidation := flag.Bool("insecure-skip-host-key-check", skipHostKeyValidationDefault, "disable SSH host key verification (insecure)")
 	printVersion := flag.Bool("version", false, "print version information and exit")
 	flag.Parse()
 
@@ -24,6 +42,13 @@ func main() {
 
 	if *noObfuscate {
 		netdev.Obfuscate = false
+	}
+	if err := sshclient.Configure(sshclient.Options{
+		KnownHostsPath:           *knownHostsPath,
+		InsecureSkipHostKeyCheck: *skipHostKeyValidation,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "configure ssh client: %v\n", err)
+		os.Exit(1)
 	}
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
@@ -83,6 +108,13 @@ func main() {
 			"source (source IP or interface), vrf.",
 	}, netdev.RunTraceroute)
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "trust_host_key",
+		Description: "Fetch the SSH host key currently presented by a device and optionally add it to the configured known_hosts file. " +
+			"Call it first with confirm=false to inspect the fingerprint, then call it again with confirm=true after the user verifies the fingerprint. " +
+			"If a host key has legitimately changed, set replace_existing=true to replace the stored key after verification.",
+	}, netdev.TrustHostKey)
+
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		slog.Error("server exited with error", "err", err)
 		os.Exit(1)
@@ -100,4 +132,16 @@ func logLevel() slog.Level {
 	default:
 		return slog.LevelInfo
 	}
+}
+
+func envBool(name string) (bool, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("expected boolean value, got %q", value)
+	}
+	return parsed, nil
 }

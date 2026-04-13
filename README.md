@@ -104,6 +104,25 @@ automatically.
 | `vrf` | string | no | — | VRF name |
 | `device_type` | string | no | — | `eos`, `ios`, or `nxos` — controls traceroute syntax |
 
+### `trust_host_key`
+
+Fetches the SSH host key currently presented by a device and optionally adds it
+to the configured `known_hosts` file. Use it in two steps:
+
+1. Call with `confirm=false` to inspect the current fingerprint.
+2. After verifying that fingerprint out of band, call again with
+   `confirm=true` to write it to `known_hosts`.
+
+If a device host key has legitimately changed, call with
+`replace_existing=true` after verifying the new fingerprint.
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `host` | string | yes | — | Hostname or IP address of the device |
+| `port` | int | no | 22 | SSH port |
+| `confirm` | bool | no | `false` | When `false`, only inspect the current key; when `true`, write it |
+| `replace_existing` | bool | no | `false` | Replace an existing mismatched key after verification |
+
 ## Default username
 
 Set `DEVICE_USERNAME` to avoid specifying `username` in every tool call:
@@ -142,6 +161,30 @@ netdev-ssh-mcp
 The password is never passed through tool parameters or the MCP protocol — it
 is read once from the environment at call time and applies to all connections
 made by the server process.
+
+## Host Key Verification
+
+SSH host key verification is enabled by default. The server uses the current
+user's OpenSSH `known_hosts` file:
+
+- macOS and Linux: `~/.ssh/known_hosts`
+- Windows: `%USERPROFILE%\\.ssh\\known_hosts`
+
+You can override the path with either:
+
+- command-line flag: `--known-hosts /path/to/known_hosts`
+- environment variable: `SSH_KNOWN_HOSTS`
+
+If a device is not present in `known_hosts`, tool calls fail with a clear error
+that includes the presented fingerprint and suggests using `trust_host_key`.
+
+To disable host key verification entirely, use either:
+
+- command-line flag: `--insecure-skip-host-key-check`
+- environment variable: `SKIP_HOST_KEY_CHECK=true`
+
+Disabling verification is insecure and should only be used as a temporary
+escape hatch.
 
 ## Installation
 
