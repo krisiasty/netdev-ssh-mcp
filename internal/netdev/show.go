@@ -16,7 +16,7 @@ import (
 type RunShowCommandInput struct {
 	Host     string `json:"host"     jsonschema:"hostname or IP address of the network device"`
 	Command  string `json:"command"  jsonschema:"show command to execute, e.g. 'show bgp summary | json' or 'show interfaces status | json'"`
-	Username string `json:"username" jsonschema:"SSH username"`
+	Username string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port     int    `json:"port"     jsonschema:"SSH port, defaults to 22"`
 }
 

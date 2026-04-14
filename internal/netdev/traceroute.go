@@ -16,7 +16,7 @@ import (
 type RunTracerouteInput struct {
 	Host        string `json:"host"        jsonschema:"hostname or IP address of the network device to connect to"`
 	Destination string `json:"destination" jsonschema:"IP address or hostname to trace the path to"`
-	Username    string `json:"username"    jsonschema:"SSH username"`
+	Username    string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port        int    `json:"port"        jsonschema:"SSH port, defaults to 22"`
 	MaxHops     int    `json:"max_hops"    jsonschema:"maximum number of hops (TTL); defaults to device default (usually 30)"`
 	Timeout     int    `json:"timeout"     jsonschema:"per-probe timeout in seconds"`

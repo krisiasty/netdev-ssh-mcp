@@ -16,7 +16,7 @@ import (
 type RunPingInput struct {
 	Host        string `json:"host"        jsonschema:"hostname or IP address of the network device to connect to"`
 	Destination string `json:"destination" jsonschema:"IP address or hostname to ping"`
-	Username    string `json:"username"    jsonschema:"SSH username"`
+	Username    string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port        int    `json:"port"        jsonschema:"SSH port, defaults to 22"`
 	Count       int    `json:"count"       jsonschema:"number of echo requests to send"`
 	Source      string `json:"source"      jsonschema:"source IP address or interface name"`

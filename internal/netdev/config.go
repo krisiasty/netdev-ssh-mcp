@@ -15,7 +15,7 @@ import (
 // GetConfigInput defines the input parameters for the get_config tool.
 type GetConfigInput struct {
 	Host       string `json:"host"        jsonschema:"hostname or IP address of the network device"`
-	Username   string `json:"username"    jsonschema:"SSH username"`
+	Username   string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port       int    `json:"port"        jsonschema:"SSH port, defaults to 22"`
 	ConfigType string `json:"config_type" jsonschema:"configuration type: running (default) or startup"`
 }
