@@ -1,16 +1,16 @@
 # netdev-ssh-mcp
 
 MCP server for interacting with network devices (switches, routers) over SSH.
-Supports Arista EOS, Cisco NX-OS, and Cisco IOS/IOS-XE. Exposes network
-device operations as tools for use with Claude Code and Claude Desktop (and
-other MCP clients)
+Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE and Juniper JunOS.
+Exposes network device operations as tools for use with Claude Code / Claude Desktop / Codex
+(and other MCP clients)
 
 ## Tools
 
 ### `get_config`
 
 Retrieves the running or startup configuration from an Arista, Cisco Nexus,
-or Cisco Catalyst device. Sensitive values (passwords, secrets, SNMP community
+Cisco Catalyst or Juniper JunOS device. Sensitive values (passwords, secrets, SNMP community
 names, BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with
 deterministic SHA-256 hashes:
 
@@ -33,8 +33,8 @@ secrets.
 
 ### `run_show_command`
 
-Runs any `show` command on an Arista, Cisco Nexus, or Cisco Catalyst device
-and returns the output. The command must start with `show`. Append `| json`
+Runs any `show` command on network device and returns the output.
+The command must start with `show`. Append `| json`
 for structured output where supported, or `| no-more` to disable pagination
 for text output.
 
@@ -61,8 +61,8 @@ show ip route | json
 
 ### `run_ping`
 
-Runs a ping command on an Arista, Cisco Nexus, or Cisco Catalyst device and
-returns the output. Useful for verifying reachability from the device's
+Runs a ping command on network device and returns the output.
+Useful for verifying reachability from the device's
 perspective — for example, testing connectivity to a BGP peer, next-hop, or
 management target.
 
