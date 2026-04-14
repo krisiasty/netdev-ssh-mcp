@@ -51,6 +51,19 @@ var sensitivePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(\s*pre-shared-key(?:\s+(?:local|remote))?(?:\s+\d+)?\s+)(\S+)(.*)$`),
 	// password [type] <value>  (Cisco line vty/con/aux context)
 	regexp.MustCompile(`(?i)^(\s*password(?:\s+\d+)?\s+)(\S+)(.*)$`),
+
+	// JunOS: encrypted-password "<hash>"; — user login password
+	regexp.MustCompile(`(?i)^(\s*encrypted-password\s+")([^"]+)(".*)`),
+	// JunOS: authentication-key "<key>"; — BGP/routing protocol authentication
+	regexp.MustCompile(`(?i)^(\s*authentication-key\s+")([^"]+)(".*)`),
+	// JunOS: md5 N key "<key>"; — OSPF MD5 authentication key
+	regexp.MustCompile(`(?i)^(\s*md5\s+\d+\s+key\s+")([^"]+)(".*)`),
+	// JunOS: pre-shared-key ascii-text "<key>"; — IKE pre-shared key
+	regexp.MustCompile(`(?i)^(\s*pre-shared-key\s+ascii-text\s+")([^"]+)(".*)`),
+	// JunOS: authentication-password/privacy-password "<key>"; — SNMPv3 auth/priv passwords
+	regexp.MustCompile(`(?i)^(\s*(?:authentication|privacy)-password\s+")([^"]+)(".*)`),
+	// JunOS: community <name> { or community <name>; — SNMP community names
+	regexp.MustCompile(`(?i)^(\s*community\s+)(\S+)(\s*[\{;].*)`),
 }
 
 // Obfuscate controls whether sensitive values are replaced with hashes in
@@ -60,7 +73,7 @@ var Obfuscate = true
 // obfuscateConfig replaces sensitive values in a running-config with
 // deterministic SHA-256 hashes. Two configs with identical secret values
 // will produce identical hashes, making the output safe to compare or diff.
-// Supports Arista EOS, Cisco NX-OS, and Cisco IOS/IOS-XE syntax.
+// Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, and Juniper JunOS syntax.
 func obfuscateConfig(config string) string {
 	if !Obfuscate {
 		return config

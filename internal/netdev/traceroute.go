@@ -22,8 +22,8 @@ type RunTracerouteInput struct {
 	Timeout     int    `json:"timeout"     jsonschema:"per-probe timeout in seconds"`
 	Probe       int    `json:"probe"       jsonschema:"number of probes per hop"`
 	Source      string `json:"source"      jsonschema:"source IP address or interface name"`
-	VRF         string `json:"vrf"         jsonschema:"VRF name"`
-	DeviceType  string `json:"device_type" jsonschema:"device type controlling traceroute syntax: eos (Arista), ios (Cisco IOS/IOS-XE), or nxos (Cisco NX-OS)"`
+	VRF         string `json:"vrf"         jsonschema:"VRF name; maps to routing-instance on JunOS"`
+	DeviceType  string `json:"device_type" jsonschema:"device type controlling traceroute syntax: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), or junos (Juniper JunOS)"`
 }
 
 // RunTraceroute executes a traceroute command on a network device.
@@ -41,8 +41,8 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
 	dt := strings.ToLower(args.DeviceType)
-	if dt != "" && dt != "eos" && dt != "ios" && dt != "nxos" {
-		return nil, nil, fmt.Errorf("device_type must be 'eos', 'ios', or 'nxos', got %q", args.DeviceType)
+	if dt != "" && dt != "eos" && dt != "ios" && dt != "nxos" && dt != "junos" {
+		return nil, nil, fmt.Errorf("device_type must be 'eos', 'ios', 'nxos', or 'junos', got %q", args.DeviceType)
 	}
 	if args.MaxHops < 0 {
 		return nil, nil, fmt.Errorf("max_hops must be a positive integer")
@@ -76,8 +76,11 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 
 // buildTracerouteCommand constructs the traceroute command string.
 // On IOS, VRF must precede the destination; on EOS and NX-OS it follows.
+// On JunOS, routing-instance replaces vrf, ttl replaces maximum-hops,
+// wait replaces timeout, and probe has no equivalent (ignored).
 func buildTracerouteCommand(destination, deviceType string, maxHops, timeout, probe int, source, vrf string) string {
 	parts := []string{"traceroute"}
+	junos := deviceType == "junos"
 
 	if vrf != "" && deviceType == "ios" {
 		parts = append(parts, "vrf", vrf)
@@ -86,19 +89,31 @@ func buildTracerouteCommand(destination, deviceType string, maxHops, timeout, pr
 	parts = append(parts, destination)
 
 	if maxHops > 0 {
-		parts = append(parts, "maximum-hops", fmt.Sprintf("%d", maxHops))
+		if junos {
+			parts = append(parts, "ttl", fmt.Sprintf("%d", maxHops))
+		} else {
+			parts = append(parts, "maximum-hops", fmt.Sprintf("%d", maxHops))
+		}
 	}
 	if timeout > 0 {
-		parts = append(parts, "timeout", fmt.Sprintf("%d", timeout))
+		if junos {
+			parts = append(parts, "wait", fmt.Sprintf("%d", timeout))
+		} else {
+			parts = append(parts, "timeout", fmt.Sprintf("%d", timeout))
+		}
 	}
-	if probe > 0 {
+	if probe > 0 && !junos {
 		parts = append(parts, "probe", fmt.Sprintf("%d", probe))
 	}
 	if source != "" {
 		parts = append(parts, "source", source)
 	}
 	if vrf != "" && deviceType != "ios" {
-		parts = append(parts, "vrf", vrf)
+		if junos {
+			parts = append(parts, "routing-instance", vrf)
+		} else {
+			parts = append(parts, "vrf", vrf)
+		}
 	}
 
 	return strings.Join(parts, " ")

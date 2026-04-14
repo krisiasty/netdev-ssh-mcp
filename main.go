@@ -68,44 +68,49 @@ func main() {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "get_config",
-		Description: "Connect to an Arista, Cisco Nexus, or Cisco Catalyst switch via SSH and retrieve its " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco Catalyst, or Juniper JunOS device via SSH and retrieve its " +
 			"running or startup configuration. Sensitive values (passwords, secrets, SNMP community names, " +
 			"BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically obfuscated with deterministic hashes, " +
-			"allowing safe comparison across devices.",
+			"allowing safe comparison across devices. " +
+			"Set device_type='junos' for Juniper routers — this issues 'show configuration' instead of " +
+			"'show running-config'. JunOS does not support config_type='startup'.",
 	}, netdev.GetConfig)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_show_command",
-		Description: "Connect to an Arista, Cisco Nexus, or Cisco Catalyst switch via SSH and run a show command. " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco Catalyst, or Juniper JunOS device via SSH and run a show command. " +
 			"The command must start with 'show'. " +
 			"Running-config and startup-config are not allowed here — use the get_config tool instead. " +
-			"Append '| json' for structured output where supported, or '| no-more' to disable pagination for text output. " +
+			"For JunOS, set device_type='junos'; 'show configuration' is also blocked and redirected to get_config. " +
+			"Append '| json' for structured output (Arista/Cisco), or '| no-more' to disable pagination. " +
 			"Examples: 'show bgp summary | json', 'show interfaces status | json', " +
 			"'show lldp neighbors detail | json', 'show inventory | json', 'show version | json'.",
 	}, netdev.RunShowCommand)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_ping",
-		Description: "Connect to an Arista, Cisco Nexus, or Cisco Catalyst switch via SSH and run a ping command. " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco Catalyst, or Juniper JunOS device via SSH and run a ping command. " +
 			"Useful for verifying reachability from the device's perspective — for example, testing connectivity " +
 			"to a BGP peer, next-hop, or management target. " +
-			"Use device_type to select the correct syntax: 'eos' (Arista), 'ios' (Cisco IOS/IOS-XE), or 'nxos' " +
-			"(Cisco NX-OS). If device_type is omitted, EOS/IOS syntax is used (repeat, size keywords). " +
+			"Use device_type to select the correct syntax: 'eos' (Arista), 'ios' (Cisco IOS/IOS-XE), 'nxos' " +
+			"(Cisco NX-OS), or 'junos' (Juniper JunOS). If device_type is omitted, EOS/IOS syntax is used. " +
 			"Optional parameters: count (number of probes), source (source IP or interface), " +
-			"vrf (VRF name), size (packet size in bytes).",
+			"vrf (VRF or routing-instance name on JunOS), size (packet size in bytes).",
 	}, netdev.RunPing)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_traceroute",
-		Description: "Connect to an Arista, Cisco Nexus, or Cisco Catalyst switch via SSH and run a traceroute. " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco Catalyst, or Juniper JunOS device via SSH and run a traceroute. " +
 			"Shows the hop-by-hop path to a destination and per-hop latency. " +
 			"Useful for locating where connectivity breaks, verifying traffic follows the expected path, " +
 			"and identifying which hop introduces latency. " +
-			"Use device_type to select the correct syntax: 'eos' (Arista), 'ios' (Cisco IOS/IOS-XE), or 'nxos' " +
-			"(Cisco NX-OS). On IOS, vrf must be specified via device_type='ios' so it is placed correctly " +
-			"before the destination in the command. " +
-			"Optional parameters: max_hops, timeout (per-probe seconds), probe (probes per hop), " +
-			"source (source IP or interface), vrf.",
+			"Use device_type to select the correct syntax: 'eos' (Arista), 'ios' (Cisco IOS/IOS-XE), 'nxos' " +
+			"(Cisco NX-OS), or 'junos' (Juniper JunOS). On IOS, vrf must be specified via device_type='ios' " +
+			"so it is placed correctly before the destination in the command. " +
+			"On JunOS, max_hops maps to the ttl keyword, timeout maps to wait, probe is not supported, " +
+			"and vrf maps to routing-instance. " +
+			"Optional parameters: max_hops, timeout (per-probe seconds), probe (probes per hop, not used on JunOS), " +
+			"source (source IP or interface), vrf (routing-instance on JunOS).",
 	}, netdev.RunTraceroute)
 
 	mcp.AddTool(server, &mcp.Tool{

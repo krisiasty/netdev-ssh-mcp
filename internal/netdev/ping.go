@@ -22,7 +22,7 @@ type RunPingInput struct {
 	Source      string `json:"source"      jsonschema:"source IP address or interface name"`
 	VRF         string `json:"vrf"         jsonschema:"VRF name"`
 	Size        int    `json:"size"        jsonschema:"packet size in bytes"`
-	DeviceType  string `json:"device_type" jsonschema:"device type controlling ping syntax: eos (Arista), ios (Cisco IOS/IOS-XE), or nxos (Cisco NX-OS); defaults to eos/ios syntax if omitted"`
+	DeviceType  string `json:"device_type" jsonschema:"device type controlling ping syntax: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), or junos (Juniper JunOS); defaults to eos/ios syntax if omitted"`
 }
 
 // RunPing executes a ping command on a network device.
@@ -40,8 +40,8 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
 	dt := strings.ToLower(args.DeviceType)
-	if dt != "" && dt != "eos" && dt != "ios" && dt != "nxos" {
-		return nil, nil, fmt.Errorf("device_type must be 'eos', 'ios', or 'nxos', got %q", args.DeviceType)
+	if dt != "" && dt != "eos" && dt != "ios" && dt != "nxos" && dt != "junos" {
+		return nil, nil, fmt.Errorf("device_type must be 'eos', 'ios', 'nxos', or 'junos', got %q", args.DeviceType)
 	}
 	if args.Count < 0 {
 		return nil, nil, fmt.Errorf("count must be a positive integer")
@@ -73,9 +73,10 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 func buildPingCommand(destination, deviceType string, count, size int, source, vrf string) string {
 	parts := []string{"ping", destination}
 	nxos := deviceType == "nxos"
+	junos := deviceType == "junos"
 
 	if count > 0 {
-		if nxos {
+		if nxos || junos {
 			parts = append(parts, "count", fmt.Sprintf("%d", count))
 		} else {
 			parts = append(parts, "repeat", fmt.Sprintf("%d", count))
@@ -92,7 +93,11 @@ func buildPingCommand(destination, deviceType string, count, size int, source, v
 		parts = append(parts, "source", source)
 	}
 	if vrf != "" {
-		parts = append(parts, "vrf", vrf)
+		if junos {
+			parts = append(parts, "routing-instance", vrf)
+		} else {
+			parts = append(parts, "vrf", vrf)
+		}
 	}
 
 	return strings.Join(parts, " ")
