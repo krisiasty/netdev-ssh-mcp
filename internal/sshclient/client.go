@@ -69,7 +69,11 @@ func Configure(opts Options) error {
 		resolved.KnownHostsPath = defaultPath
 	}
 	if resolved.KnownHostsPath != "" {
-		resolved.KnownHostsPath = filepath.Clean(resolved.KnownHostsPath)
+		validatedPath, err := validateKnownHostsPath(resolved.KnownHostsPath)
+		if err != nil {
+			return err
+		}
+		resolved.KnownHostsPath = validatedPath
 	}
 	currentOptions = resolved
 	return nil
@@ -82,6 +86,15 @@ func DefaultKnownHostsPath() (string, error) {
 		return "", fmt.Errorf("resolve home directory for known_hosts: %w", err)
 	}
 	return filepath.Join(home, ".ssh", "known_hosts"), nil
+}
+
+func validateKnownHostsPath(path string) (string, error) {
+	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("known_hosts path must be absolute: %s", path)
+	}
+
+	return cleaned, nil
 }
 
 // RunCommand dials the SSH host, executes cmd, and returns stdout.
@@ -383,7 +396,7 @@ func upsertKnownHost(info HostKeyInfo, replace bool) error {
 
 	lines = append(lines, strings.TrimSpace(info.KnownHostsLine))
 	content := strings.Join(lines, "\n") + "\n"
-	if err := os.WriteFile(info.KnownHostsPath, []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(info.KnownHostsPath, []byte(content), 0o600); err != nil { //nolint:gosec // KnownHostsPath is validated in Configure to be a cleaned absolute path before use.
 		return fmt.Errorf("write %s: %w", info.KnownHostsPath, err)
 	}
 	return nil
