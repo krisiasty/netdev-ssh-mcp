@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/krisiasty/netdev-ssh-mcp/internal/sshclient"
 )
 
 // RunPingInput defines the input parameters for the run_ping tool.
@@ -19,10 +17,12 @@ type RunPingInput struct {
 	Username    string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port        int    `json:"port"        jsonschema:"SSH port, defaults to 22"`
 	Count       int    `json:"count"       jsonschema:"number of echo requests to send"`
+	Timeout     int    `json:"timeout"     jsonschema:"per-probe timeout in seconds; supported on FortiOS"`
 	Source      string `json:"source"      jsonschema:"source IP address or interface name"`
 	VRF         string `json:"vrf"         jsonschema:"VRF name"`
 	Size        int    `json:"size"        jsonschema:"packet size in bytes"`
-	DeviceType  string `json:"device_type" jsonschema:"device type controlling ping syntax: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), or junos (Juniper JunOS); defaults to eos/ios syntax if omitted"`
+	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface for FortiOS ping"`
+	DeviceType  string `json:"device_type" jsonschema:"device type controlling ping syntax: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS); defaults to eos/ios syntax if omitted"`
 }
 
 // RunPing executes a ping command on a network device.
@@ -39,26 +39,34 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 	if args.Username == "" {
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
-	dt := strings.ToLower(args.DeviceType)
-	if dt != "" && dt != "eos" && dt != "ios" && dt != "nxos" && dt != "junos" {
-		return nil, nil, fmt.Errorf("device_type must be 'eos', 'ios', 'nxos', or 'junos', got %q", args.DeviceType)
+	dt, err := normalizeDeviceType(args.DeviceType)
+	if err != nil {
+		return nil, nil, err
 	}
 	if args.Count < 0 {
 		return nil, nil, fmt.Errorf("count must be a positive integer")
+	}
+	if args.Timeout < 0 {
+		return nil, nil, fmt.Errorf("timeout must be a positive integer")
 	}
 	if args.Size < 0 {
 		return nil, nil, fmt.Errorf("size must be a positive integer")
 	}
 
-	cmd := buildPingCommand(args.Destination, dt, args.Count, args.Size, args.Source, args.VRF)
+	commands, err := buildPingCommands(args.Destination, dt, args.Count, args.Size, args.Timeout, args.Source, args.VRF, args.OutgoingIf)
+	if err != nil {
+		return nil, nil, err
+	}
+	commandLog := strings.Join(commands, "\n")
 
-	slog.Info("run_ping", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "cmd", sanitizeLog(cmd)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
+	slog.Info("run_ping", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "cmd", sanitizeLog(commandLog)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
-	out, err := sshclient.RunCommand(sshclient.ConnConfig{
-		Host:     args.Host,
-		Port:     args.Port,
-		Username: args.Username,
-	}, cmd)
+	var out string
+	if dt == deviceTypeFortiOS {
+		out, err = runCommands(connConfig(args.Host, args.Port, args.Username), commands)
+	} else {
+		out, err = runCommand(connConfig(args.Host, args.Port, args.Username), commands[0])
+	}
 	if err != nil {
 		slog.Error("run_ping failed", "host", args.Host, "destination", args.Destination, "err", err)
 		return nil, nil, fmt.Errorf("run_ping: %w", err)
@@ -68,37 +76,4 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: out}},
 	}, nil, nil
-}
-
-func buildPingCommand(destination, deviceType string, count, size int, source, vrf string) string {
-	parts := []string{"ping", destination}
-	nxos := deviceType == "nxos"
-	junos := deviceType == "junos"
-
-	if count > 0 {
-		if nxos || junos {
-			parts = append(parts, "count", fmt.Sprintf("%d", count))
-		} else {
-			parts = append(parts, "repeat", fmt.Sprintf("%d", count))
-		}
-	}
-	if size > 0 {
-		if nxos {
-			parts = append(parts, "packet-size", fmt.Sprintf("%d", size))
-		} else {
-			parts = append(parts, "size", fmt.Sprintf("%d", size))
-		}
-	}
-	if source != "" {
-		parts = append(parts, "source", source)
-	}
-	if vrf != "" {
-		if junos {
-			parts = append(parts, "routing-instance", vrf)
-		} else {
-			parts = append(parts, "vrf", vrf)
-		}
-	}
-
-	return strings.Join(parts, " ")
 }

@@ -64,6 +64,13 @@ var sensitivePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^(\s*(?:authentication|privacy)-password\s+")([^"]+)(".*)`),
 	// JunOS: community <name> { or community <name>; — SNMP community names
 	regexp.MustCompile(`(?i)^(\s*community\s+)(\S+)(\s*[\{;].*)`),
+
+	// FortiOS: set <secret field> ENC <value> — encrypted passwords, passphrases, PSKs, and key material
+	regexp.MustCompile(`(?i)^(\s*set\s+(?:passwd|password|passphrase|auth-passwd|group-password|psksecret(?:-remote|-local)?|ppk-secret|secret|community|snmp-community|private-key|local-key|peer-key|server-key|client-key|key)\s+ENC\s+)(\S+)(.*)$`),
+	// FortiOS: set community "<name>" / set snmp-community "<name>" — SNMP community names
+	regexp.MustCompile(`(?i)^(\s*set\s+(?:community|snmp-community)\s+")([^"]+)(".*)$`),
+	// FortiOS: set key "<value>" / set password "<value>" — clear-text key-like values in config syntax
+	regexp.MustCompile(`(?i)^(\s*set\s+(?:passwd|password|passphrase|auth-passwd|group-password|psksecret(?:-remote|-local)?|ppk-secret|secret|private-key|local-key|peer-key|server-key|client-key|key)\s+")([^"]+)(".*)$`),
 }
 
 // Obfuscate controls whether sensitive values are replaced with hashes in
@@ -73,7 +80,7 @@ var Obfuscate = true
 // obfuscateConfig replaces sensitive values in a running-config with
 // deterministic SHA-256 hashes. Two configs with identical secret values
 // will produce identical hashes, making the output safe to compare or diff.
-// Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, and Juniper JunOS syntax.
+// Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, and FortiOS syntax.
 func obfuscateConfig(config string) string {
 	if !Obfuscate {
 		return config

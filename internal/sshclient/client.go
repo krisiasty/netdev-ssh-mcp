@@ -100,6 +100,33 @@ func validateKnownHostsPath(path string) (string, error) {
 // RunCommand dials the SSH host, executes cmd, and returns stdout.
 // A new connection is created for each call.
 func RunCommand(cfg ConnConfig, cmd string) (string, error) {
+	if strings.TrimSpace(cmd) == "" {
+		return "", fmt.Errorf("command is required")
+	}
+
+	return runSessionCommand(cfg, cmd)
+}
+
+// RunCommands dials the SSH host, executes multiple newline-delimited commands
+// in a single non-PTY exec session, and returns stdout.
+func RunCommands(cfg ConnConfig, commands []string) (string, error) {
+	if len(commands) == 0 {
+		return "", fmt.Errorf("at least one command is required")
+	}
+
+	joined := make([]string, 0, len(commands))
+	for _, command := range commands {
+		command = strings.TrimSpace(command)
+		if command == "" {
+			return "", fmt.Errorf("command is required")
+		}
+		joined = append(joined, command)
+	}
+
+	return runSessionCommand(cfg, strings.Join(joined, "\n"))
+}
+
+func runSessionCommand(cfg ConnConfig, cmd string) (string, error) {
 	port := normalizedPort(cfg.Port)
 
 	methods, err := buildAuthMethods()

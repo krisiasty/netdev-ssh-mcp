@@ -5,20 +5,17 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/krisiasty/netdev-ssh-mcp/internal/sshclient"
 )
 
 // RunShowCommandInput defines the input parameters for the run_show_command tool.
 type RunShowCommandInput struct {
 	Host       string `json:"host"       jsonschema:"hostname or IP address of the network device"`
-	Command    string `json:"command"    jsonschema:"show command to execute, e.g. 'show bgp summary | json' or 'show interfaces status | json'"`
+	Command    string `json:"command"    jsonschema:"command to execute: use 'show ...' on Arista/Cisco/JunOS or 'get ...' on FortiOS"`
 	Username   string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port       int    `json:"port"       jsonschema:"SSH port, defaults to 22"`
-	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), or junos (Juniper JunOS)"`
+	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS)"`
 }
 
 // RunShowCommand executes an arbitrary show command on a network device.
@@ -32,26 +29,21 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 	if args.Username == "" {
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
-	cmd := strings.ToLower(strings.TrimSpace(args.Command))
-	if !strings.HasPrefix(cmd, "show") {
-		return nil, nil, fmt.Errorf("command must start with 'show'")
-	}
-	if strings.HasPrefix(cmd, "show ru") || strings.HasPrefix(cmd, "show sta") {
-		return nil, nil, fmt.Errorf("use the get_config tool for running-config and startup-config")
-	}
-	if strings.ToLower(args.DeviceType) == "junos" && strings.HasPrefix(cmd, "show configuration") {
-		return nil, nil, fmt.Errorf("use the get_config tool to retrieve device configuration")
-	}
 
-	slog.Info("run_show_command", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "command", sanitizeLog(args.Command)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
-
-	out, err := sshclient.RunCommand(sshclient.ConnConfig{
-		Host:     args.Host,
-		Port:     args.Port,
-		Username: args.Username,
-	}, args.Command)
+	dt, err := normalizeDeviceType(args.DeviceType)
 	if err != nil {
-		slog.Error("run_show_command failed", "host", args.Host, "command", args.Command, "err", err)
+		return nil, nil, err
+	}
+	command, err := normalizeOperationalCommand(args.Command, dt)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	slog.Info("run_show_command", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "command", sanitizeLog(command)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
+
+	out, err := runCommand(connConfig(args.Host, args.Port, args.Username), command)
+	if err != nil {
+		slog.Error("run_show_command failed", "host", args.Host, "command", command, "err", err)
 		return nil, nil, fmt.Errorf("run_show_command: %w", err)
 	}
 

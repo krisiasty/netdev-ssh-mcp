@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/krisiasty/netdev-ssh-mcp/internal/sshclient"
 )
 
 // RunTracerouteInput defines the input parameters for the run_traceroute tool.
@@ -23,7 +21,8 @@ type RunTracerouteInput struct {
 	Probe       int    `json:"probe"       jsonschema:"number of probes per hop"`
 	Source      string `json:"source"      jsonschema:"source IP address or interface name"`
 	VRF         string `json:"vrf"         jsonschema:"VRF name; maps to routing-instance on JunOS"`
-	DeviceType  string `json:"device_type" jsonschema:"device type controlling traceroute syntax: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), or junos (Juniper JunOS)"`
+	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface for FortiOS traceroute"`
+	DeviceType  string `json:"device_type" jsonschema:"device type controlling traceroute syntax: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS)"`
 }
 
 // RunTraceroute executes a traceroute command on a network device.
@@ -40,9 +39,9 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 	if args.Username == "" {
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
-	dt := strings.ToLower(args.DeviceType)
-	if dt != "" && dt != "eos" && dt != "ios" && dt != "nxos" && dt != "junos" {
-		return nil, nil, fmt.Errorf("device_type must be 'eos', 'ios', 'nxos', or 'junos', got %q", args.DeviceType)
+	dt, err := normalizeDeviceType(args.DeviceType)
+	if err != nil {
+		return nil, nil, err
 	}
 	if args.MaxHops < 0 {
 		return nil, nil, fmt.Errorf("max_hops must be a positive integer")
@@ -54,15 +53,20 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 		return nil, nil, fmt.Errorf("probe must be a positive integer")
 	}
 
-	cmd := buildTracerouteCommand(args.Destination, dt, args.MaxHops, args.Timeout, args.Probe, args.Source, args.VRF)
+	commands, err := buildTracerouteCommands(args.Destination, dt, args.MaxHops, args.Timeout, args.Probe, args.Source, args.VRF, args.OutgoingIf)
+	if err != nil {
+		return nil, nil, err
+	}
+	commandLog := strings.Join(commands, "\n")
 
-	slog.Info("run_traceroute", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "cmd", sanitizeLog(cmd)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
+	slog.Info("run_traceroute", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "cmd", sanitizeLog(commandLog)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
-	out, err := sshclient.RunCommand(sshclient.ConnConfig{
-		Host:     args.Host,
-		Port:     args.Port,
-		Username: args.Username,
-	}, cmd)
+	var out string
+	if dt == deviceTypeFortiOS {
+		out, err = runCommands(connConfig(args.Host, args.Port, args.Username), commands)
+	} else {
+		out, err = runCommand(connConfig(args.Host, args.Port, args.Username), commands[0])
+	}
 	if err != nil {
 		slog.Error("run_traceroute failed", "host", args.Host, "destination", args.Destination, "err", err)
 		return nil, nil, fmt.Errorf("run_traceroute: %w", err)
@@ -72,49 +76,4 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: out}},
 	}, nil, nil
-}
-
-// buildTracerouteCommand constructs the traceroute command string.
-// On IOS, VRF must precede the destination; on EOS and NX-OS it follows.
-// On JunOS, routing-instance replaces vrf, ttl replaces maximum-hops,
-// wait replaces timeout, and probe has no equivalent (ignored).
-func buildTracerouteCommand(destination, deviceType string, maxHops, timeout, probe int, source, vrf string) string {
-	parts := []string{"traceroute"}
-	junos := deviceType == "junos"
-
-	if vrf != "" && deviceType == "ios" {
-		parts = append(parts, "vrf", vrf)
-	}
-
-	parts = append(parts, destination)
-
-	if maxHops > 0 {
-		if junos {
-			parts = append(parts, "ttl", fmt.Sprintf("%d", maxHops))
-		} else {
-			parts = append(parts, "maximum-hops", fmt.Sprintf("%d", maxHops))
-		}
-	}
-	if timeout > 0 {
-		if junos {
-			parts = append(parts, "wait", fmt.Sprintf("%d", timeout))
-		} else {
-			parts = append(parts, "timeout", fmt.Sprintf("%d", timeout))
-		}
-	}
-	if probe > 0 && !junos {
-		parts = append(parts, "probe", fmt.Sprintf("%d", probe))
-	}
-	if source != "" {
-		parts = append(parts, "source", source)
-	}
-	if vrf != "" && deviceType != "ios" {
-		if junos {
-			parts = append(parts, "routing-instance", vrf)
-		} else {
-			parts = append(parts, "vrf", vrf)
-		}
-	}
-
-	return strings.Join(parts, " ")
 }

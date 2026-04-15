@@ -1,7 +1,7 @@
 # netdev-ssh-mcp
 
-MCP server for interacting with network devices (switches, routers) over SSH.
-Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE and Juniper JunOS.
+MCP server for interacting with network devices (switches, routers, firewalls) over SSH.
+Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, and FortiGate FortiOS.
 Exposes network device operations as tools for use with Claude Code / Claude Desktop / Codex
 (and other MCP clients)
 
@@ -10,7 +10,7 @@ Exposes network device operations as tools for use with Claude Code / Claude Des
 ### `get_config`
 
 Retrieves the running or startup configuration from an Arista, Cisco Nexus,
-Cisco Catalyst or Juniper JunOS device. Sensitive values (passwords, secrets, SNMP community
+Cisco Catalyst, Juniper JunOS, or FortiGate FortiOS device. Sensitive values (passwords, secrets, SNMP community
 names, BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with
 deterministic SHA-256 hashes:
 
@@ -29,21 +29,28 @@ secrets.
 | `host` | string | yes | — | Hostname or IP address of the device |
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
-| `config_type` | string | no | `running` | `running` or `startup` |
+| `config_type` | string | no | `running` | `running` or `startup`; `startup` is not supported on JunOS or FortiOS |
+| `device_type` | string | no | — | `eos`, `ios`, `nxos`, `junos`, or `fortios`; `fortigate` is accepted as an alias for `fortios` |
+
+FortiOS notes:
+
+- Use `device_type=fortios` to retrieve config with `show full-configuration`.
+- FortiOS does not support `config_type=startup`.
 
 ### `run_show_command`
 
-Runs any `show` command on network device and returns the output.
-The command must start with `show`. Append `| json`
-for structured output where supported, or `| no-more` to disable pagination
-for text output.
+Runs operational read commands on a network device and returns the output.
+For Arista/Cisco/JunOS, the command must start with `show`. For FortiOS, the
+command must start with `get`. Append `| json` for structured output where
+supported, or `| no-more` to disable pagination for text output.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `host` | string | yes | — | Hostname or IP address of the device |
-| `command` | string | yes | — | The show command to run |
+| `command` | string | yes | — | The operational read command to run |
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
+| `device_type` | string | no | — | `eos`, `ios`, `nxos`, `junos`, or `fortios` |
 
 Example commands:
 
@@ -54,10 +61,15 @@ show lldp neighbors detail | json
 show inventory | json
 show version | json
 show ip route | json
+get system status
+get router info routing-table all
 ```
 
 > `show running-config` and `show startup-config` are not allowed here — use
 > the `get_config` tool instead.
+>
+> On FortiOS, `show`, `config`, `execute`, and `diagnose` commands are blocked
+> here. Use `get_config`, `run_ping`, or `run_traceroute` instead.
 
 ### `run_ping`
 
@@ -67,7 +79,9 @@ perspective — for example, testing connectivity to a BGP peer, next-hop, or
 management target.
 
 Use `device_type` to select the correct command syntax for the target platform.
-If omitted, EOS/IOS syntax is used (`repeat`, `size` keywords).
+If omitted, EOS/IOS syntax is used (`repeat`, `size` keywords). On FortiOS,
+the tool uses `execute ping-options ...`, runs `execute ping`, then resets the
+options within the same SSH session.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -76,10 +90,17 @@ If omitted, EOS/IOS syntax is used (`repeat`, `size` keywords).
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
 | `count` | int | no | — | Number of echo requests to send |
+| `timeout` | int | no | — | Per-probe timeout in seconds; supported on FortiOS |
 | `source` | string | no | — | Source IP address or interface name |
 | `vrf` | string | no | — | VRF name |
 | `size` | int | no | — | Packet size in bytes |
-| `device_type` | string | no | — | `eos`, `ios`, or `nxos` — controls ping syntax |
+| `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
+| `device_type` | string | no | — | `eos`, `ios`, `nxos`, `junos`, or `fortios` — controls ping syntax |
+
+FortiOS limitations:
+
+- `vrf` is not supported in this tool for FortiOS 7.4+.
+- `| json` is not supported for FortiOS operational output.
 
 ### `run_traceroute`
 
@@ -89,7 +110,8 @@ expected path, and identifying which hop introduces latency.
 
 Use `device_type` to ensure correct syntax. On IOS, `vrf` must precede the
 destination in the command — specifying `device_type=ios` handles this
-automatically.
+automatically. On FortiOS, the tool uses `execute traceroute-options ...`,
+runs `execute traceroute`, then resets the options within the same SSH session.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -102,7 +124,13 @@ automatically.
 | `probe` | int | no | — | Number of probes per hop |
 | `source` | string | no | — | Source IP address or interface name |
 | `vrf` | string | no | — | VRF name |
-| `device_type` | string | no | — | `eos`, `ios`, or `nxos` — controls traceroute syntax |
+| `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
+| `device_type` | string | no | — | `eos`, `ios`, `nxos`, `junos`, or `fortios` — controls traceroute syntax |
+
+FortiOS limitations:
+
+- `vrf`, `max_hops`, and `timeout` are not supported in this tool for FortiOS 7.4+.
+- `| json` is not supported for FortiOS operational output.
 
 ### `trust_host_key`
 

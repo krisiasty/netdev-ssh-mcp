@@ -8,8 +8,6 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/krisiasty/netdev-ssh-mcp/internal/sshclient"
 )
 
 // GetConfigInput defines the input parameters for the get_config tool.
@@ -17,8 +15,8 @@ type GetConfigInput struct {
 	Host       string `json:"host"        jsonschema:"hostname or IP address of the network device"`
 	Username   string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port       int    `json:"port"        jsonschema:"SSH port, defaults to 22"`
-	ConfigType string `json:"config_type" jsonschema:"configuration type: running (default) or startup; startup is not supported for JunOS"`
-	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), or junos (Juniper JunOS); affects the config retrieval command used"`
+	ConfigType string `json:"config_type" jsonschema:"configuration type: running (default) or startup; startup is not supported for JunOS or FortiOS"`
+	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS); affects the config retrieval command used"`
 }
 
 // GetConfig retrieves the running or startup configuration from a network device.
@@ -33,31 +31,22 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
 
-	configType := args.ConfigType
-	if configType == "" {
-		configType = "running"
+	dt, err := normalizeDeviceType(args.DeviceType)
+	if err != nil {
+		return nil, nil, err
 	}
-	if configType != "running" && configType != "startup" {
-		return nil, nil, fmt.Errorf("config_type must be 'running' or 'startup', got %q", configType)
+	configType, err := normalizeConfigType(args.ConfigType)
+	if err != nil {
+		return nil, nil, err
 	}
-
-	var cmd string
-	if strings.ToLower(args.DeviceType) == "junos" {
-		if configType == "startup" {
-			return nil, nil, fmt.Errorf("JunOS does not have a startup-config; use config_type 'running' or omit it")
-		}
-		cmd = "show configuration | no-more"
-	} else {
-		cmd = fmt.Sprintf("show %s-config | no-more", configType)
+	cmd, err := buildConfigCommand(configType, dt)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	slog.Info("get_config", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "config_type", configType) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
-	out, err := sshclient.RunCommand(sshclient.ConnConfig{
-		Host:     args.Host,
-		Port:     args.Port,
-		Username: args.Username,
-	}, cmd)
+	out, err := runCommand(connConfig(args.Host, args.Port, args.Username), cmd)
 	if err != nil {
 		slog.Error("get_config failed", "host", args.Host, "err", err)
 		return nil, nil, fmt.Errorf("get_config: %w", err)
