@@ -30,11 +30,12 @@ secrets.
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
 | `config_type` | string | no | `running` | `running` or `startup`; `startup` is not supported on JunOS or FortiOS |
-| `device_type` | string | no | — | `eos`, `ios`, `nxos`, `junos`, or `fortios`; `fortigate` is accepted as an alias for `fortios` |
+| `device_type` | string | no | — | `eos`, `ios`, `nxos`, `junos`, or `fortios` |
 
 FortiOS notes:
 
 - Use `device_type=fortios` to retrieve config with `show full-configuration`.
+- `fortigate` is accepted as an alias for `fortios`.
 - FortiOS does not support `config_type=startup`.
 
 ### `run_show_command`
