@@ -47,13 +47,13 @@ archives:
       - binary
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
   - id: archives
-    builds:
+    ids:
       - darwin
     formats:
       - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
-brews:
+homebrew_casks:
   - name: netdev-ssh-mcp
     ids:
       - archives
@@ -64,8 +64,12 @@ brews:
       owner: krisiasty
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    install: |
-      bin.install "netdev-ssh-mcp"
+    binaries:
+      - netdev-ssh-mcp
+    hooks:
+      post:
+        install: |
+          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", staged_path]
 
 checksum:
   name_template: "checksums.txt"
