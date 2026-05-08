@@ -73,7 +73,7 @@ checksum:
 changelog:
   sort: asc
   abbrev: 8
-  format: "- [{{ .SHA }}](https://github.com{{ .SHA }}) {{ .Message }}"
+  format: "- [{{ .SHA }}](https://github.com/krisiasty/netdev-ssh-mcp/commit/{{ .SHA }}) {{ .Message }}"
   filters:
     exclude:
       - "^docs:"
