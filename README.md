@@ -220,8 +220,7 @@ escape hatch.
 ### macOS (Homebrew)
 
 ```bash
-brew tap krisiasty/tap
-brew install netdev-ssh-mcp
+brew install --cask krisiasty/tap/netdev-ssh-mcp
 ```
 
 The binary is installed to `$(brew --prefix)/bin/netdev-ssh-mcp`. The prefix
