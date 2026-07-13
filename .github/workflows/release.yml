@@ -18,7 +18,7 @@ jobs:
         run: sudo apt-get install -y upx
 
       - name: checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0  # goreleaser needs full history for changelog
 
