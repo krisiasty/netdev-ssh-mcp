@@ -49,7 +49,7 @@ jobs:
           govulncheck ./...
 
       - name: markdownlint
-        uses: DavidAnson/markdownlint-cli2-action@v24
+        uses: DavidAnson/markdownlint-cli2-action@v24.1.0
         with:
           globs: "**/*.md"
 
