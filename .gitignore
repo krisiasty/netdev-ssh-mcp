@@ -36,3 +36,6 @@ go.work.sum
 # binaries and releases
 dist/
 netdev-ssh-mcp
+
+# graphify knowledge graph output
+graphify-out/
