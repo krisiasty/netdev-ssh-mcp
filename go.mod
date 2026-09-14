@@ -3,7 +3,7 @@ module github.com/krisiasty/netdev-ssh-mcp
 go 1.27.1
 
 require (
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	golang.org/x/crypto v0.57.0
 )
 
