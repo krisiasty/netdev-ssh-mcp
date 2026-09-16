@@ -14,9 +14,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: install upx
-        run: sudo apt-get install -y upx
-
       - name: checkout
         uses: actions/checkout@v7
         with:
