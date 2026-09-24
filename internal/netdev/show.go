@@ -47,9 +47,10 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 		return nil, nil, fmt.Errorf("run_show_command: %w", err)
 	}
 
-	out = obfuscateConfig(out)
+	res, err := obfuscatedResult(out)
+	if err != nil {
+		return nil, nil, fmt.Errorf("run_show_command: %w", err)
+	}
 	slog.Info("run_show_command done", "host", args.Host, "bytes", len(out))
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: out}},
-	}, nil, nil
+	return res, nil, nil
 }
