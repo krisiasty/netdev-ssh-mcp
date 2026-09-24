@@ -85,8 +85,8 @@ func normalizeOperationalCommand(command string, dt deviceType) (string, error) 
 		return normalizeFortiOSOperationalCommand(trimmed, lower)
 	}
 
-	if !strings.HasPrefix(lower, "show") {
-		return "", fmt.Errorf("command must start with 'show'")
+	if err := checkOperationalCommand(trimmed, "show", dt); err != nil {
+		return "", err
 	}
 	if strings.HasPrefix(lower, "show ru") || strings.HasPrefix(lower, "show sta") {
 		return "", fmt.Errorf("use the get_config tool for running-config and startup-config")
@@ -112,12 +112,17 @@ func normalizeFortiOSOperationalCommand(command, lower string) (string, error) {
 		return "", fmt.Errorf("FortiOS diagnose commands are not supported by run_show_command")
 	case !strings.HasPrefix(lower, "get"):
 		return "", fmt.Errorf("FortiOS operational reads must use a 'get' command")
-	default:
-		return command, nil
 	}
+	if err := checkOperationalCommand(command, "get", deviceTypeFortiOS); err != nil {
+		return "", err
+	}
+	return command, nil
 }
 
 func buildPingCommands(destination string, dt deviceType, count, size, timeout int, source, vrf, outgoingInterface string) ([]string, error) {
+	if err := checkCommandArgs(destination, source, vrf, outgoingInterface); err != nil {
+		return nil, err
+	}
 	if dt == deviceTypeFortiOS {
 		if vrf != "" {
 			return nil, fmt.Errorf("FortiOS 7.4+ does not support vrf for run_ping")
@@ -186,6 +191,9 @@ func buildPingCommands(destination string, dt deviceType, count, size, timeout i
 }
 
 func buildTracerouteCommands(destination string, dt deviceType, maxHops, timeout, probe int, source, vrf, outgoingInterface string) ([]string, error) {
+	if err := checkCommandArgs(destination, source, vrf, outgoingInterface); err != nil {
+		return nil, err
+	}
 	if dt == deviceTypeFortiOS {
 		switch {
 		case vrf != "":

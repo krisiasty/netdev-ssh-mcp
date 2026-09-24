@@ -72,6 +72,27 @@ get router info routing-table all
 > On FortiOS, `show`, `config`, `execute`, and `diagnose` commands are blocked
 > here. Use `get_config`, `run_ping`, or `run_traceroute` instead.
 
+The command must be a single line holding a single command (no `;`), may not
+use `<` or `>` redirection, and may only pipe into output filters. Filters that write files, send messages or run
+other commands (such as `save`, `redirect`, `tee` and `append`) are refused.
+The allowed filters are:
+
+| `device_type` | Allowed after `\|` |
+| --- | --- |
+| `eos` | `json`, `no-more`, `include`, `exclude`, `begin`, `section` |
+| `ios` | `include`, `exclude`, `begin`, `section`, `count` |
+| `nxos` | the `ios` filters, plus `json`, `json-pretty`, `xml`, `no-more`, `grep`, `egrep`, `last`, `head` |
+| `junos` | `display json`/`xml`/`set`, `no-more`, `match`, `except`, `count`, `last`, `find`, `trim` |
+| `fortios` | `grep` |
+| not set | the `eos` and `ios` filters combined |
+
+A `|` inside a filter's pattern is read as another pipe, so use separate
+filters rather than regular-expression alternation. A literal `;` cannot be
+sent either. The closest filter is the regular-expression wildcard `.`, which
+matches any single character: `| include foo.bar` matches `foo;bar`, but also
+`foo-bar` or `foo bar`, so it can return extra lines. Include more of the
+surrounding text in the pattern to narrow it.
+
 ### `run_ping`
 
 Runs a ping command on network device and returns the output.
@@ -97,6 +118,10 @@ options within the same SSH session.
 | `size` | int | no | — | Packet size in bytes |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
 | `device_type` | string | no | — | `eos`, `ios`, `nxos`, `junos`, or `fortios` — controls ping syntax |
+
+`destination`, `source`, `vrf` and `outgoing_interface` may only contain
+letters, digits and `. _ : / @ % -`, which covers addresses, hostnames and
+interface names. Anything else is refused before the device is contacted.
 
 FortiOS limitations:
 
@@ -127,6 +152,9 @@ runs `execute traceroute`, then resets the options within the same SSH session.
 | `vrf` | string | no | — | VRF name |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
 | `device_type` | string | no | — | `eos`, `ios`, `nxos`, `junos`, or `fortios` — controls traceroute syntax |
+
+The same character restrictions as `run_ping` apply to `destination`, `source`,
+`vrf` and `outgoing_interface`.
 
 FortiOS limitations:
 
