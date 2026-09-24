@@ -52,11 +52,12 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 		return nil, nil, fmt.Errorf("get_config: %w", err)
 	}
 
-	out = obfuscateConfig(out)
+	res, err := obfuscatedResult(out)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get_config: %w", err)
+	}
 	slog.Info("get_config done", "host", args.Host, "bytes", len(out))
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: out}},
-	}, nil, nil
+	return res, nil, nil
 }
 
 // sanitizeLog strips ASCII control characters from s to prevent log injection.

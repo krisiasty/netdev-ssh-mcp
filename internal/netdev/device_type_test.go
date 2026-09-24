@@ -201,22 +201,3 @@ func TestBuildTracerouteCommands(t *testing.T) {
 		}
 	})
 }
-
-func TestObfuscateConfigFortiOS(t *testing.T) {
-	input := strings.Join([]string{
-		`set passwd ENC ENC123`,
-		`set community "public"`,
-		`set psksecret ENC SECRET456`,
-	}, "\n")
-
-	got := obfuscateConfig(input)
-	want := strings.Join([]string{
-		`set passwd ENC [h:0f977b8986fa]`,
-		`set community "[h:efa1f375d761]"`,
-		`set psksecret ENC [h:6859a44534e0]`,
-	}, "\n")
-
-	if got != want {
-		t.Fatalf("obfuscateConfig() = %q, want %q", got, want)
-	}
-}

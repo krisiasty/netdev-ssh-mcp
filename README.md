@@ -11,18 +11,18 @@ Exposes network device operations as tools for use with Claude Code / Claude Des
 
 Retrieves the running or startup configuration from an Arista, Cisco Nexus,
 Cisco Catalyst, Juniper JunOS, or FortiGate FortiOS device. Sensitive values (passwords, secrets, SNMP community
-names, BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with
-deterministic SHA-256 hashes:
+names, BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with keyed
+hash tokens:
 
 ```text
-enable secret [h:a3f4b2c1d5e6]
-snmp-server community [h:f9e1d2b4c3a7] ro
-username admin privilege 15 secret [h:a3f4b2c1d5e6]
+enable secret 5 [h:3c91e0a47b2d]
+snmp-server community [h:8f02d6c51e9a] ro
+username admin privilege 15 secret 5 [h:3c91e0a47b2d]
 ```
 
-The same secret value always produces the same hash, so configs from different
-devices can be safely compared and diffed — identical hashes mean identical
-secrets.
+Under the same key, the same secret always produces the same token, so configs
+from different devices can be compared and diffed — identical tokens mean
+identical secrets. See [Obfuscation](#obfuscation) for how the key is chosen.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -254,6 +254,11 @@ binary. If installed via Homebrew, run `brew --prefix` to determine the correct
 path (`/opt/homebrew` on Apple Silicon, `/usr/local` on Intel), then append
 `/bin/netdev-ssh-mcp`.
 
+Replace `<path-to-key-file>` with the absolute path to your obfuscation key
+file. Create one before configuring the server — see
+[Obfuscation key](#obfuscation-key). Without it the server uses a random key
+for each run, so obfuscated secrets cannot be compared across sessions.
+
 ### Claude Code
 
 Add a project-local `.mcp.json` at the root of your repository:
@@ -262,7 +267,10 @@ Add a project-local `.mcp.json` at the root of your repository:
 {
   "mcpServers": {
     "netdev-ssh-mcp": {
-      "command": "<path-to-binary>"
+      "command": "<path-to-binary>",
+      "env": {
+        "OBFUSCATION_KEY_FILE": "<path-to-key-file>"
+      }
     }
   }
 }
@@ -276,7 +284,8 @@ With a default username:
     "netdev-ssh-mcp": {
       "command": "<path-to-binary>",
       "env": {
-        "DEVICE_USERNAME": "admin"
+        "DEVICE_USERNAME": "admin",
+        "OBFUSCATION_KEY_FILE": "<path-to-key-file>"
       }
     }
   }
@@ -296,7 +305,8 @@ Alternatively, using password authentication:
       "command": "<path-to-binary>",
       "env": {
         "DEVICE_USERNAME": "admin",
-        "DEVICE_PASSWORD": "mysecret"
+        "DEVICE_PASSWORD": "mysecret",
+        "OBFUSCATION_KEY_FILE": "<path-to-key-file>"
       }
     }
   }
@@ -306,7 +316,7 @@ Alternatively, using password authentication:
 Alternatively, register the server globally with the Claude Code CLI:
 
 ```bash
-claude mcp add netdev-ssh-mcp <path-to-binary>
+claude mcp add netdev-ssh-mcp -e OBFUSCATION_KEY_FILE=<path-to-key-file> -- <path-to-binary>
 ```
 
 ### Claude Desktop
@@ -318,7 +328,10 @@ or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 {
   "mcpServers": {
     "netdev-ssh-mcp": {
-      "command": "<path-to-binary>"
+      "command": "<path-to-binary>",
+      "env": {
+        "OBFUSCATION_KEY_FILE": "<path-to-key-file>"
+      }
     }
   }
 }
@@ -340,7 +353,8 @@ Then add it to the config:
       "command": "<path-to-binary>",
       "env": {
         "DEVICE_USERNAME": "admin",
-        "SSH_AUTH_SOCK": "/private/tmp/com.apple.launchd.XXXXX/Listeners"
+        "SSH_AUTH_SOCK": "/private/tmp/com.apple.launchd.XXXXX/Listeners",
+        "OBFUSCATION_KEY_FILE": "<path-to-key-file>"
       }
     }
   }
@@ -359,7 +373,8 @@ Alternatively, using password authentication:
       "command": "<path-to-binary>",
       "env": {
         "DEVICE_USERNAME": "admin",
-        "DEVICE_PASSWORD": "mysecret"
+        "DEVICE_PASSWORD": "mysecret",
+        "OBFUSCATION_KEY_FILE": "<path-to-key-file>"
       }
     }
   }
@@ -390,8 +405,50 @@ Restart Claude Desktop after editing the config.
 ## Obfuscation
 
 Sensitive values are obfuscated by default in `get_config` and
-`run_show_command` output. The `run_ping` tool is not affected — ping output
-contains no sensitive values. To disable obfuscation, pass `--no-obfuscate`:
+`run_show_command` output. The `run_ping` and `run_traceroute` tools are not
+affected — their output contains no sensitive values.
+
+Each secret is replaced with a token of the form `[h:<12 hex digits>]`: a
+truncated HMAC-SHA256 of the secret under an obfuscation key. Without the key,
+a token cannot be checked against guessed values, so short secrets such as SNMP
+communities cannot be recovered from the output.
+
+### Obfuscation key
+
+**Supply your own key.** Generate a random key file once:
+
+```bash
+mkdir -p ~/.config
+(umask 077 && openssl rand -hex 32 > ~/.config/netdev-ssh-mcp.key)
+```
+
+Then point the server at it with `--obfuscation-key-file` or the
+`OBFUSCATION_KEY_FILE` environment variable (as in the
+[Integration](#integration) examples), or pass the key itself in the
+`OBFUSCATION_KEY` environment variable. Set only one. The value is trimmed of
+surrounding whitespace and must be at least 16 bytes. The server only reads the
+key and never writes it anywhere.
+
+The same key gives the same tokens on every machine, so share the key file to
+compare output collected on different machines or by different people.
+
+If you supply no key, the server generates a random key in memory for each
+run. That is safe — the key never leaves the process, so tokens cannot be
+checked against guessed values — but tokens only match within one server run.
+Tokens from earlier sessions, other machines or other people are not
+comparable. While no key is configured, the server:
+
+- logs a warning on every start,
+- tells the calling agent in its MCP server instructions,
+- appends a short note to every `get_config` and `run_show_command` result
+  that contains obfuscated secrets, suggesting that you configure a key.
+
+Tokens produced by v1.6.6 and earlier were unkeyed and are not comparable with
+current tokens.
+
+### Disabling obfuscation
+
+To disable obfuscation, pass `--no-obfuscate`:
 
 ```bash
 netdev-ssh-mcp --no-obfuscate

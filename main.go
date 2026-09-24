@@ -30,6 +30,7 @@ func main() {
 	}
 
 	noObfuscate := flag.Bool("no-obfuscate", false, "disable obfuscation of sensitive values in tool output")
+	obfuscationKeyFile := flag.String("obfuscation-key-file", os.Getenv(netdev.EnvObfuscationKeyFile), "path to a file holding the key for obfuscation tokens; share it to get matching tokens across machines")
 	knownHostsPath := flag.String("known-hosts", knownHostsDefault, "path to OpenSSH known_hosts file used for SSH host verification")
 	skipHostKeyValidation := flag.Bool("insecure-skip-host-key-check", skipHostKeyValidationDefault, "disable SSH host key verification (insecure)")
 	printVersion := flag.Bool("version", false, "print version information and exit")
@@ -61,17 +62,31 @@ func main() {
 		"date", date,
 	)
 
+	if netdev.Obfuscate {
+		key, source, err := netdev.LoadObfuscationKey(os.Getenv(netdev.EnvObfuscationKey), *obfuscationKeyFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "configure obfuscation: %v\n", err)
+			os.Exit(1)
+		}
+		netdev.SetObfuscationKey(key, source)
+		if source == netdev.KeySourceEphemeral {
+			slog.Warn(netdev.EphemeralKeyLogMessage, "source", source)
+		} else {
+			slog.Info("obfuscation key loaded", "source", source)
+		}
+	}
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "netdev-ssh-mcp",
 		Version: version,
-	}, nil)
+	}, &mcp.ServerOptions{Instructions: netdev.ServerInstructions()})
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "get_config",
 		Description: "Connect to an Arista, Cisco Nexus, Cisco Catalyst, Juniper JunOS, or FortiGate FortiOS device via SSH and retrieve its " +
 			"running or startup configuration. Sensitive values (passwords, secrets, SNMP community names, " +
-			"BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically obfuscated with deterministic hashes, " +
-			"allowing safe comparison across devices. " +
+			"BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with keyed hash tokens; " +
+			"identical tokens mean identical secrets, so configs from different devices can be compared. " +
 			"Set device_type='junos' for Juniper routers — this issues 'show configuration' instead of " +
 			"'show running-config'. Set device_type='fortios' for FortiGate firewalls — this issues " +
 			"'show full-configuration'. JunOS and FortiOS do not support config_type='startup'.",
