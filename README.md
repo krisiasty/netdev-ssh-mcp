@@ -441,6 +441,16 @@ truncated HMAC-SHA256 of the secret under an obfuscation key. Without the key,
 a token cannot be checked against guessed values, so short secrets such as SNMP
 communities cannot be recovered from the output.
 
+> **Obfuscation is best-effort.** Secrets are found by matching known
+> configuration syntax for each supported platform. A secret in syntax the
+> server does not recognise — a new or rarely used command, an unusual
+> platform version, or free-form `show` output — can appear in clear text.
+> Treat tool output as sensitive even with obfuscation on, and review it before
+> sharing it further. If you find a secret that is not obfuscated, please
+> report it privately through
+> [GitHub security advisories](https://github.com/krisiasty/netdev-ssh-mcp/security/advisories/new)
+> rather than in a public issue.
+
 ### Obfuscation key
 
 **Supply your own key.** Generate a random key file once:
