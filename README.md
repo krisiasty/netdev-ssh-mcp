@@ -447,9 +447,8 @@ communities cannot be recovered from the output.
 > platform version, or free-form `show` output — can appear in clear text.
 > Treat tool output as sensitive even with obfuscation on, and review it before
 > sharing it further. If you find a secret that is not obfuscated, please
-> report it privately through
-> [GitHub security advisories](https://github.com/krisiasty/netdev-ssh-mcp/security/advisories/new)
-> rather than in a public issue.
+> report it privately as described in [SECURITY.md](SECURITY.md) rather than
+> in a public issue.
 
 ### Obfuscation key
 
