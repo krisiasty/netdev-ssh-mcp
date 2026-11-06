@@ -15,14 +15,14 @@ type RunPingInput struct {
 	Host        string `json:"host"        jsonschema:"hostname or IP address of the network device to connect to"`
 	Destination string `json:"destination" jsonschema:"IP address or hostname to ping"`
 	Username    string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
-	Port        int    `json:"port"        jsonschema:"SSH port, defaults to 22"`
-	Count       int    `json:"count"       jsonschema:"number of echo requests to send"`
-	Timeout     int    `json:"timeout"     jsonschema:"per-probe timeout in seconds; supported on FortiOS"`
-	Source      string `json:"source"      jsonschema:"source IP address or interface name"`
-	VRF         string `json:"vrf"         jsonschema:"VRF name"`
-	Size        int    `json:"size"        jsonschema:"packet size in bytes"`
+	Port        int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
+	Count       int    `json:"count,omitempty" jsonschema:"number of echo requests to send"`
+	Timeout     int    `json:"timeout,omitempty" jsonschema:"per-probe timeout in seconds; supported on FortiOS"`
+	Source      string `json:"source,omitempty" jsonschema:"source IP address or interface name"`
+	VRF         string `json:"vrf,omitempty" jsonschema:"VRF name"`
+	Size        int    `json:"size,omitempty" jsonschema:"packet size in bytes"`
 	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface for FortiOS ping"`
-	DeviceType  string `json:"device_type" jsonschema:"device type controlling ping syntax: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS); defaults to eos/ios syntax if omitted"`
+	DeviceType  string `json:"device_type,omitempty" jsonschema:"device type controlling ping syntax: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS); defaults to eos/ios syntax if omitted"`
 }
 
 // RunPing executes a ping command on a network device.

@@ -15,14 +15,14 @@ type RunTracerouteInput struct {
 	Host        string `json:"host"        jsonschema:"hostname or IP address of the network device to connect to"`
 	Destination string `json:"destination" jsonschema:"IP address or hostname to trace the path to"`
 	Username    string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
-	Port        int    `json:"port"        jsonschema:"SSH port, defaults to 22"`
-	MaxHops     int    `json:"max_hops"    jsonschema:"maximum number of hops (TTL); defaults to device default (usually 30)"`
-	Timeout     int    `json:"timeout"     jsonschema:"per-probe timeout in seconds"`
-	Probe       int    `json:"probe"       jsonschema:"number of probes per hop"`
-	Source      string `json:"source"      jsonschema:"source IP address or interface name"`
-	VRF         string `json:"vrf"         jsonschema:"VRF name; maps to routing-instance on JunOS"`
+	Port        int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
+	MaxHops     int    `json:"max_hops,omitempty" jsonschema:"maximum number of hops (TTL); defaults to device default (usually 30)"`
+	Timeout     int    `json:"timeout,omitempty" jsonschema:"per-probe timeout in seconds"`
+	Probe       int    `json:"probe,omitempty" jsonschema:"number of probes per hop"`
+	Source      string `json:"source,omitempty" jsonschema:"source IP address or interface name"`
+	VRF         string `json:"vrf,omitempty" jsonschema:"VRF name; maps to routing-instance on JunOS"`
 	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface for FortiOS traceroute"`
-	DeviceType  string `json:"device_type" jsonschema:"device type controlling traceroute syntax: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS)"`
+	DeviceType  string `json:"device_type,omitempty" jsonschema:"device type controlling traceroute syntax: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS)"`
 }
 
 // RunTraceroute executes a traceroute command on a network device.

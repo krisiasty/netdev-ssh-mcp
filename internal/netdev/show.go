@@ -14,7 +14,7 @@ type RunShowCommandInput struct {
 	Host       string `json:"host"       jsonschema:"hostname or IP address of the network device"`
 	Command    string `json:"command"    jsonschema:"command to execute: use 'show ...' on Arista/Cisco/JunOS or 'get ...' on FortiOS"`
 	Username   string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
-	Port       int    `json:"port"       jsonschema:"SSH port, defaults to 22"`
+	Port       int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
 	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS)"`
 }
 
