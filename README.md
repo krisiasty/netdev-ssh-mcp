@@ -10,7 +10,7 @@ Exposes network device operations as tools for use with Claude Code / Claude Des
 ### `get_config`
 
 Retrieves the running or startup configuration from an Arista, Cisco Nexus,
-Cisco Catalyst, Juniper JunOS, or FortiGate FortiOS device. Sensitive values (passwords, secrets, SNMP community
+Cisco IOS/IOS-XE, Juniper JunOS, or FortiGate FortiOS device. Sensitive values (passwords, secrets, SNMP community
 names, BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with keyed
 hash tokens:
 
@@ -31,6 +31,12 @@ identical secrets. See [Obfuscation](#obfuscation) for how the key is chosen.
 | `port` | int | no | 22 | SSH port |
 | `config_type` | string | no | `running` | `running` or `startup`; `startup` is not supported on JunOS or FortiOS |
 | `device_type` | string | no | — | `eos`, `ios`, `nxos`, `junos`, or `fortios` |
+
+Cisco IOS notes:
+
+- Use `device_type=ios` for any Cisco IOS or IOS-XE device — Catalyst switches, ISR/ASR routers, and others.
+- IOS does not support `| no-more`. With `device_type=ios` the config is retrieved with plain `show running-config` or
+  `show startup-config`; without it, `| no-more` is appended and IOS rejects the command.
 
 FortiOS notes:
 

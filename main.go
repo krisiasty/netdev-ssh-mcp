@@ -83,18 +83,21 @@ func main() {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "get_config",
-		Description: "Connect to an Arista, Cisco Nexus, Cisco Catalyst, Juniper JunOS, or FortiGate FortiOS device via SSH and retrieve its " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, or FortiGate FortiOS device via SSH and retrieve its " +
 			"running or startup configuration. Sensitive values (passwords, secrets, SNMP community names, " +
 			"BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with keyed hash tokens; " +
 			"identical tokens mean identical secrets, so configs from different devices can be compared. " +
 			"Set device_type='junos' for Juniper routers — this issues 'show configuration' instead of " +
 			"'show running-config'. Set device_type='fortios' for FortiGate firewalls — this issues " +
-			"'show full-configuration'. JunOS and FortiOS do not support config_type='startup'.",
+			"'show full-configuration'. Set device_type='ios' for any Cisco IOS or IOS-XE device " +
+			"(Catalyst switches, ISR/ASR routers, and others) — IOS does not support the '| no-more' " +
+			"suffix that is added for other platforms, so omitting device_type makes the command fail. " +
+			"JunOS and FortiOS do not support config_type='startup'.",
 	}, netdev.GetConfig)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_show_command",
-		Description: "Connect to an Arista, Cisco Nexus, Cisco Catalyst, Juniper JunOS, or FortiGate FortiOS device via SSH and run an operational read command. " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, or FortiGate FortiOS device via SSH and run an operational read command. " +
 			"Arista/Cisco/JunOS commands must start with 'show'. FortiOS commands must start with 'get'. " +
 			"Running-config and startup-config are not allowed here — use the get_config tool instead. " +
 			"For JunOS, set device_type='junos'; 'show configuration' is also blocked and redirected to get_config. " +
@@ -110,7 +113,7 @@ func main() {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_ping",
-		Description: "Connect to an Arista, Cisco Nexus, Cisco Catalyst, Juniper JunOS, or FortiGate FortiOS device via SSH and run a ping command. " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, or FortiGate FortiOS device via SSH and run a ping command. " +
 			"Useful for verifying reachability from the device's perspective — for example, testing connectivity " +
 			"to a BGP peer, next-hop, or management target. " +
 			"Use device_type to select the correct syntax: 'eos' (Arista), 'ios' (Cisco IOS/IOS-XE), 'nxos' " +
@@ -122,7 +125,7 @@ func main() {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_traceroute",
-		Description: "Connect to an Arista, Cisco Nexus, Cisco Catalyst, Juniper JunOS, or FortiGate FortiOS device via SSH and run a traceroute. " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, or FortiGate FortiOS device via SSH and run a traceroute. " +
 			"Shows the hop-by-hop path to a destination and per-hop latency. " +
 			"Useful for locating where connectivity breaks, verifying traffic follows the expected path, " +
 			"and identifying which hop introduces latency. " +

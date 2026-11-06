@@ -47,6 +47,12 @@ func TestBuildConfigCommand(t *testing.T) {
 		wantErr    string
 	}{
 		{name: "default running", configType: "running", want: "show running-config | no-more"},
+		{name: "default startup", configType: "startup", want: "show startup-config | no-more"},
+		{name: "ios running", configType: "running", deviceType: deviceTypeIOS, want: "show running-config"},
+		{name: "ios startup", configType: "startup", deviceType: deviceTypeIOS, want: "show startup-config"},
+		{name: "nxos running", configType: "running", deviceType: deviceTypeNXOS, want: "show running-config | no-more"},
+		{name: "nxos startup", configType: "startup", deviceType: deviceTypeNXOS, want: "show startup-config | no-more"},
+		{name: "eos running", configType: "running", deviceType: deviceTypeEOS, want: "show running-config | no-more"},
 		{name: "junos running", configType: "running", deviceType: deviceTypeJunos, want: "show configuration | no-more"},
 		{name: "fortios running", configType: "running", deviceType: deviceTypeFortiOS, want: "show full-configuration"},
 		{name: "junos startup rejected", configType: "startup", deviceType: deviceTypeJunos, wantErr: "JunOS does not have a startup-config"},

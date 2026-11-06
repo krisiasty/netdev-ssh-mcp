@@ -72,6 +72,8 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 			return "", fmt.Errorf("FortiOS does not have a startup-config; use config_type 'running' or omit it")
 		}
 		return "show full-configuration", nil
+	case deviceTypeIOS:
+		return fmt.Sprintf("show %s-config", configType), nil
 	default:
 		return fmt.Sprintf("show %s-config | no-more", configType), nil
 	}
