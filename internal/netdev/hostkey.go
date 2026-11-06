@@ -14,9 +14,9 @@ import (
 // TrustHostKeyInput defines the input parameters for the trust_host_key tool.
 type TrustHostKeyInput struct {
 	Host            string `json:"host"             jsonschema:"hostname or IP address of the network device"`
-	Port            int    `json:"port"             jsonschema:"SSH port, defaults to 22"`
-	Confirm         bool   `json:"confirm"          jsonschema:"when false, only fetch and display the presented host key; when true, add it to known_hosts"`
-	ReplaceExisting bool   `json:"replace_existing" jsonschema:"replace an existing mismatched key after you verify the new fingerprint"`
+	Port            int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
+	Confirm         bool   `json:"confirm,omitempty" jsonschema:"when false, only fetch and display the presented host key; when true, add it to known_hosts"`
+	ReplaceExisting bool   `json:"replace_existing,omitempty" jsonschema:"replace an existing mismatched key after you verify the new fingerprint"`
 }
 
 // TrustHostKey fetches and optionally stores an SSH host key in known_hosts.
