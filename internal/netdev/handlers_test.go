@@ -31,6 +31,47 @@ func TestGetConfigFortiOSUsesShowFullConfiguration(t *testing.T) {
 	}
 }
 
+func TestGetConfigIOSOmitsNoMore(t *testing.T) {
+	tests := []struct {
+		name       string
+		deviceType string
+		configType string
+		want       string
+	}{
+		{name: "ios running", deviceType: "ios", want: "show running-config"},
+		{name: "ios startup", deviceType: "ios", configType: "startup", want: "show startup-config"},
+		{name: "ios mixed case and spaces", deviceType: " IOS ", want: "show running-config"},
+		{name: "nxos keeps no-more", deviceType: "nxos", want: "show running-config | no-more"},
+		{name: "unset keeps no-more", want: "show running-config | no-more"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := runCommand
+			defer func() { runCommand = original }()
+
+			var gotCmd string
+			runCommand = func(cfg sshclient.ConnConfig, cmd string) (string, error) {
+				gotCmd = cmd
+				return "ok", nil
+			}
+
+			_, _, err := GetConfig(context.Background(), nil, GetConfigInput{
+				Host:       "rtr1",
+				Username:   "admin",
+				DeviceType: tt.deviceType,
+				ConfigType: tt.configType,
+			})
+			if err != nil {
+				t.Fatalf("GetConfig() error = %v", err)
+			}
+			if gotCmd != tt.want {
+				t.Fatalf("GetConfig() command = %q, want %q", gotCmd, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetConfigFortiOSRejectsStartup(t *testing.T) {
 	_, _, err := GetConfig(context.Background(), nil, GetConfigInput{
 		Host:       "fw1",
