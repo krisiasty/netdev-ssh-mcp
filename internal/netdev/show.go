@@ -57,8 +57,8 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 
 	out, err := runCommand(ctx, cfg, command)
 	if err != nil {
-		logFailure("run_show_command", err, "host", args.Host, "command", command)
-		return nil, nil, runError("run_show_command", cfg, rt, err)
+		logFailure(ctx, "run_show_command", err, "host", args.Host, "command", command)
+		return nil, nil, runError(ctx, "run_show_command", cfg, rt, err)
 	}
 
 	res, err := obfuscatedResult(out)

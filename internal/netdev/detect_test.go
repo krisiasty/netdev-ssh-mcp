@@ -416,7 +416,7 @@ func TestRunErrorAddsHint(t *testing.T) {
 		Err:     errors.New("process exited with status 1"),
 		Output:  []byte("% Invalid input detected at '^' marker.\nenable secret 5 $1$abcd$efgh\n"),
 	}
-	err := runError("get_config", cfg, resolvedType{dt: deviceTypeIOS, source: sourceExplicit}, rejected)
+	err := runError(t.Context(), "get_config", cfg, resolvedType{dt: deviceTypeIOS, source: sourceExplicit}, rejected)
 	if !strings.Contains(err.Error(), "get_config: ") || !strings.Contains(err.Error(), "omit device_type") {
 		t.Fatalf("runError() = %v, want the tool prefix and the hint", err)
 	}
@@ -429,7 +429,7 @@ func TestRunErrorAddsHint(t *testing.T) {
 		errors.New("dial sw1:22: connection refused"),
 		errors.New("% Invalid input detected at '^' marker."),
 	} {
-		if err := runError("get_config", cfg, resolvedType{dt: deviceTypeIOS, source: sourceExplicit}, plain); !errors.Is(err, plain) || strings.Contains(err.Error(), "omit device_type") {
+		if err := runError(t.Context(), "get_config", cfg, resolvedType{dt: deviceTypeIOS, source: sourceExplicit}, plain); !errors.Is(err, plain) || strings.Contains(err.Error(), "omit device_type") {
 			t.Fatalf("runError(%v) = %v, want the wrapped error without a hint", plain, err)
 		}
 	}

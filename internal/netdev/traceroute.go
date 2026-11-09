@@ -74,8 +74,8 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 		out, err = runCommand(ctx, cfg, commands[0])
 	}
 	if err != nil {
-		logFailure("run_traceroute", err, "host", args.Host, "destination", args.Destination)
-		return nil, nil, runError("run_traceroute", cfg, rt, err)
+		logFailure(ctx, "run_traceroute", err, "host", args.Host, "destination", args.Destination)
+		return nil, nil, runError(ctx, "run_traceroute", cfg, rt, err)
 	}
 
 	slog.Info("run_traceroute done", "host", args.Host, "bytes", len(out))

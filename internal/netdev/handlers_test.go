@@ -509,16 +509,86 @@ func TestCancelledRequestLogsAtInfo(t *testing.T) {
 	resetDetection(t)
 	runProbe = (&fakeProbe{ident: identEOS, outputs: map[string]string{probeShowVersion: readFixture(t, "eos_show_version.txt")}}).probe
 	stubRunCommand(t, "", fmt.Errorf("run \"show version\" on sw1:22: %w", context.Canceled))
-	var logs bytes.Buffer
-	orig := slog.Default()
-	t.Cleanup(func() { slog.SetDefault(orig) })
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	logs := captureLogs(t)
+	// The fakes ignore ctx, so the call reaches the command and fails there
+	// as it would had the client cancelled during the command.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
 
-	_, _, err := RunShowCommand(t.Context(), nil, RunShowCommandInput{Host: "sw1", Username: "u", Command: "show version"})
+	_, _, err := RunShowCommand(ctx, nil, RunShowCommandInput{Host: "sw1", Username: "u", Command: "show version"})
 	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "device_type") {
 		t.Fatalf("RunShowCommand() error = %v, want the cancellation without a detection notice", err)
 	}
 	if strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "run_show_command cancelled by the client") {
 		t.Fatalf("logs = %q, want the cancellation at INFO and no ERROR", logs.String())
 	}
+}
+
+// TestDeviceTimeoutIsNotCancellation checks that a timeout towards the device
+// is reported as a device failure while the client is still waiting. A TCP
+// connect or DNS timeout matches context.DeadlineExceeded under errors.Is,
+// just as the client's own deadline would.
+func TestDeviceTimeoutIsNotCancellation(t *testing.T) {
+	resetDetection(t)
+	runProbe = (&fakeProbe{ident: identEOS, outputs: map[string]string{probeShowVersion: readFixture(t, "eos_show_version.txt")}}).probe
+	if _, err := resolveDeviceType(t.Context(), connConfig("sw1", 0, "u"), "", false); err != nil {
+		t.Fatal(err)
+	}
+	stubRunCommand(t, "", fmt.Errorf("dial sw1:22: dial tcp 192.0.2.1:22: %w", context.DeadlineExceeded))
+	logs := captureLogs(t)
+
+	_, _, err := RunShowCommand(t.Context(), nil, RunShowCommandInput{Host: "sw1", Username: "u", Command: "show version"})
+	if err == nil || !strings.Contains(err.Error(), "auto-detected earlier and cached") {
+		t.Fatalf("RunShowCommand() error = %v, want the cached detection notice", err)
+	}
+	if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "run_show_command failed") {
+		t.Fatalf("logs = %q, want the failure at ERROR", logs.String())
+	}
+}
+
+// TestProbeFailureLogged checks that a failed detection probe is logged like
+// a failed command: at Error, or at Info when the client cancelled.
+func TestProbeFailureLogged(t *testing.T) {
+	tests := []struct {
+		name      string
+		cancelled bool
+		want      string
+		wantError bool
+	}{
+		{"failure", false, "platform detection failed", true},
+		{"cancelled", true, "platform detection cancelled by the client", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetDetection(t)
+			probeErr := errors.New("dial sw1:22: connection refused")
+			if tt.cancelled {
+				probeErr = fmt.Errorf("SSH handshake with sw1:22: %w", context.Canceled)
+			}
+			runProbe = (&fakeProbe{err: probeErr}).probe
+			logs := captureLogs(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.cancelled {
+				cancel()
+			}
+
+			if _, _, err := DetectPlatform(ctx, nil, DetectPlatformInput{Host: "sw1", Username: "u"}); !errors.Is(err, probeErr) {
+				t.Fatalf("DetectPlatform() error = %v, want the probe error", err)
+			}
+			if !strings.Contains(logs.String(), tt.want) || strings.Contains(logs.String(), "level=ERROR") != tt.wantError {
+				t.Fatalf("logs = %q, want %q (at ERROR: %v)", logs.String(), tt.want, tt.wantError)
+			}
+		})
+	}
+}
+
+// captureLogs sends the default logger to a buffer for the rest of the test.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	orig := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	return &logs
 }

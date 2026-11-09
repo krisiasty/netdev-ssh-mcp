@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -268,12 +269,19 @@ func TestTrustHostKeyCancelledWritesNothing(t *testing.T) {
 func TestTrustHostKeyCancelledAfterFetch(t *testing.T) {
 	addr := startHostKeyServer(t, newSigner(t, "ed25519"))
 	path := useKnownHosts(t, addr)
+	knownHosts, err := loadKnownHosts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := inspectHostKey(t.Context(), addr.IP.String(), addr.Port, knownHosts)
+	if err != nil {
+		t.Fatalf("inspectHostKey() error = %v", err)
+	}
 	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(func() { testHookBeforeKnownHostsWrite = nil })
-	testHookBeforeKnownHostsWrite = cancel
+	cancel()
 
-	if _, err := TrustHostKey(ctx, addr.IP.String(), addr.Port, false); !errors.Is(err, context.Canceled) {
-		t.Fatalf("TrustHostKey() error = %v, want context.Canceled", err)
+	if _, err := trustFetchedKey(ctx, info, knownHosts, false); !errors.Is(err, context.Canceled) {
+		t.Fatalf("trustFetchedKey() error = %v, want context.Canceled", err)
 	}
 	if fi, err := os.Stat(path); err != nil || fi.Size() != 0 {
 		t.Fatalf("known_hosts stat = %v, %v; want it left empty", fi, err)
@@ -297,8 +305,9 @@ func TestRunCommandAlreadyCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	if _, err := RunCommand(ctx, srv.connConfig(), "show version"); !errors.Is(err, context.Canceled) {
-		t.Fatalf("RunCommand() error = %v, want context.Canceled", err)
+	_, err := RunCommand(ctx, srv.connConfig(), "show version")
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), srv.addr.String()) {
+		t.Fatalf("RunCommand() error = %v, want context.Canceled naming %s", err, srv.addr)
 	}
 
 	// Connections are accepted in order, so once a later connection has been
@@ -315,7 +324,9 @@ func TestRunCommandAlreadyCancelled(t *testing.T) {
 }
 
 // TestRunOnClientCancelledSendsNothing checks that a command whose request is
-// already cancelled when the connection is ready is never sent to the device.
+// already cancelled when the connection is ready is never sent to the device:
+// the connection is closed before a session is requested. That the close
+// comes first is checked deterministically in TestCloseOnLimit.
 func TestRunOnClientCancelledSendsNothing(t *testing.T) {
 	srv := startStallingServer(t, stallCommand)
 	usePasswordAuth(t)
@@ -330,13 +341,9 @@ func TestRunOnClientCancelledSendsNothing(t *testing.T) {
 	if _, err := runOnClient(ctx, client, addr, "show version", time.Hour); !errors.Is(err, context.Canceled) {
 		t.Fatalf("runOnClient() error = %v, want context.Canceled", err)
 	}
-
-	// A command sent on the same connection afterwards arrives after any the
-	// cancelled call sent.
-	go func() { _, _ = runOnClient(t.Context(), client, addr, "marker", time.Hour) }()
-	waitFor(t, srv.reached, "the marker command")
-	if got := srv.commands(); !slices.Equal(got, []string{"marker"}) {
-		t.Fatalf("device received %q, want only the marker", got)
+	waitFor(t, srv.closed, "the connection to close")
+	if got := srv.commands(); len(got) != 0 {
+		t.Fatalf("device received %q, want nothing", got)
 	}
 }
 
@@ -420,30 +427,39 @@ func TestHandshakeTimeoutWhileWaitingOnAgent(t *testing.T) {
 	waitFor(t, agentClosed, "the agent connection to close")
 }
 
-// countingCloser counts Close calls.
-type countingCloser struct{ n atomic.Int32 }
+// closeRecorder records calls to its close method and signals the first.
+type closeRecorder struct {
+	n      atomic.Int32
+	closed chan struct{}
+}
 
-func (c *countingCloser) Close() error { c.n.Add(1); return nil }
+func newCloseRecorder() *closeRecorder { return &closeRecorder{closed: make(chan struct{})} }
+
+func (c *closeRecorder) close() {
+	if c.n.Add(1) == 1 {
+		close(c.closed)
+	}
+}
 
 func TestCloseOnLimit(t *testing.T) {
 	t.Run("stopped first", func(t *testing.T) {
-		c := &countingCloser{}
+		c := newCloseRecorder()
 		ctx, cancel := context.WithCancel(t.Context())
-		stop := closeOnLimit(ctx, 50*time.Millisecond, c)
+		stop := closeOnLimit(ctx, time.Hour, c.close)
 		if reason := stop(); reason != nil {
 			t.Fatalf("stop() = %v, want nil", reason)
 		}
+		// stop has deregistered the close, so cancelling cannot run it.
 		cancel()
-		time.Sleep(100 * time.Millisecond)
 		if c.n.Load() != 0 {
 			t.Fatal("closed after stop")
 		}
 	})
 
 	t.Run("limit", func(t *testing.T) {
-		c := &countingCloser{}
-		stop := closeOnLimit(t.Context(), 20*time.Millisecond, c)
-		time.Sleep(100 * time.Millisecond)
+		c := newCloseRecorder()
+		stop := closeOnLimit(t.Context(), 20*time.Millisecond, c.close)
+		waitFor(t, c.closed, "the close at the limit")
 		if reason := stop(); !errors.Is(reason, errLimitReached) || c.n.Load() != 1 {
 			t.Fatalf("stop() = %v, closes = %d; want errLimitReached and one close", reason, c.n.Load())
 		}
@@ -455,22 +471,37 @@ func TestCloseOnLimit(t *testing.T) {
 	t.Run("cancelled with a cause", func(t *testing.T) {
 		// go-sdk cancels in-flight requests with the transport's read error
 		// (io.EOF) as the cause when the client disconnects.
-		c := &countingCloser{}
+		c := newCloseRecorder()
 		ctx, cancel := context.WithCancelCause(t.Context())
-		stop := closeOnLimit(ctx, time.Hour, c)
+		stop := closeOnLimit(ctx, time.Hour, c.close)
 		cancel(io.EOF)
-		time.Sleep(100 * time.Millisecond)
+		waitFor(t, c.closed, "the close on cancellation")
 		if reason := stop(); !errors.Is(reason, context.Canceled) || c.n.Load() != 1 {
 			t.Fatalf("stop() = %v, closes = %d; want context.Canceled and one close", reason, c.n.Load())
 		}
 	})
 
 	t.Run("cancelled", func(t *testing.T) {
-		c := &countingCloser{}
+		c := newCloseRecorder()
 		ctx, cancel := context.WithCancel(t.Context())
-		stop := closeOnLimit(ctx, time.Hour, c)
+		stop := closeOnLimit(ctx, time.Hour, c.close)
 		cancel()
-		time.Sleep(100 * time.Millisecond)
+		waitFor(t, c.closed, "the close on cancellation")
+		if reason := stop(); !errors.Is(reason, context.Canceled) || c.n.Load() != 1 {
+			t.Fatalf("stop() = %v, closes = %d; want context.Canceled and one close", reason, c.n.Load())
+		}
+	})
+
+	t.Run("already cancelled", func(t *testing.T) {
+		// The close must have happened by the time closeOnLimit returns,
+		// before the caller can use the connection.
+		c := newCloseRecorder()
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		stop := closeOnLimit(ctx, time.Hour, c.close)
+		if c.n.Load() != 1 {
+			t.Fatalf("closes = %d when closeOnLimit returned; want one", c.n.Load())
+		}
 		if reason := stop(); !errors.Is(reason, context.Canceled) || c.n.Load() != 1 {
 			t.Fatalf("stop() = %v, closes = %d; want context.Canceled and one close", reason, c.n.Load())
 		}

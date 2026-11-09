@@ -52,8 +52,8 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 
 	out, err := runCommand(ctx, cfg, cmd)
 	if err != nil {
-		logFailure("get_config", err, "host", args.Host)
-		return nil, nil, runError("get_config", cfg, rt, err)
+		logFailure(ctx, "get_config", err, "host", args.Host)
+		return nil, nil, runError(ctx, "get_config", cfg, rt, err)
 	}
 
 	res, err := obfuscatedResult(out)

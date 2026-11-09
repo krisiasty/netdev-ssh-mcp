@@ -277,6 +277,7 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 		return probeCommandFor(classifyIdent(serverVersion), serverVersion)
 	})
 	if err != nil {
+		logFailure(ctx, "platform detection", err, "host", cfg.Host)
 		// Connection, authentication and host key errors would fail the
 		// command as well, so suggesting device_type would not help.
 		return resolvedType{}, fmt.Errorf("detect platform: %w", err)
@@ -340,16 +341,18 @@ func firstLines(s string, n int) string {
 	return s[:i]
 }
 
-// requestCancelled reports whether err comes from the MCP client cancelling
-// the request, or its deadline passing, rather than from the device.
-func requestCancelled(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+// requestCancelled reports whether the MCP client cancelled the request ctx
+// belongs to. It looks at ctx rather than at the error: a TCP connect or DNS
+// timeout towards the device also matches context.DeadlineExceeded, and must
+// still be reported as a device failure.
+func requestCancelled(ctx context.Context) bool {
+	return ctx.Err() != nil
 }
 
 // logFailure logs a failed tool call. A cancelled request is a normal client
 // action, not a device failure, so it is logged at Info rather than Error.
-func logFailure(tool string, err error, attrs ...any) {
-	if requestCancelled(err) {
+func logFailure(ctx context.Context, tool string, err error, attrs ...any) {
+	if requestCancelled(ctx) {
 		slog.Info(tool+" cancelled by the client", attrs...)
 		return
 	}
@@ -403,8 +406,8 @@ func afterRun(cfg sshclient.ConnConfig, r resolvedType, output string, runErr er
 
 // runError wraps a failed command, adding the same notice afterRun would
 // have appended to a successful result.
-func runError(tool string, cfg sshclient.ConnConfig, r resolvedType, err error) error {
-	if requestCancelled(err) {
+func runError(ctx context.Context, tool string, cfg sshclient.ConnConfig, r resolvedType, err error) error {
+	if requestCancelled(ctx) {
 		// The caller has gone; a detection notice or hint means nothing.
 		return fmt.Errorf("%s: %w", tool, err)
 	}

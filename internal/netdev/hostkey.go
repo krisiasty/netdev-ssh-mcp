@@ -41,7 +41,7 @@ func TrustHostKey(ctx context.Context, req *mcp.CallToolRequest, args TrustHostK
 	if !args.Confirm {
 		info, err := inspectHostKey(ctx, args.Host, port)
 		if err != nil {
-			logFailure("trust_host_key inspect", err, "host", args.Host, "port", port)
+			logFailure(ctx, "trust_host_key inspect", err, "host", args.Host, "port", port)
 			return nil, nil, fmt.Errorf("trust_host_key: %w", err)
 		}
 		text := strings.Join([]string{
@@ -58,7 +58,7 @@ func TrustHostKey(ctx context.Context, req *mcp.CallToolRequest, args TrustHostK
 
 	result, err := trustHostKey(ctx, args.Host, port, args.ReplaceExisting)
 	if err != nil {
-		logFailure("trust_host_key", err, "host", args.Host, "port", port)
+		logFailure(ctx, "trust_host_key", err, "host", args.Host, "port", port)
 		return nil, nil, fmt.Errorf("trust_host_key: %w", err)
 	}
 
