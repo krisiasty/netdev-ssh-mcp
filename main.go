@@ -178,7 +178,7 @@ func main() {
 const deviceTypeGuidance = "device_type selects the platform syntax: 'eos' (Arista), 'ios' (Cisco IOS/IOS-XE), 'nxos' (Cisco NX-OS), " +
 	"'junos' (Juniper JunOS) or 'fortios' (FortiGate/FortiOS). Pass it when you know the platform, for example from an inventory " +
 	"system. If it is omitted, the platform is auto-detected over SSH, cached for the host, and reported in a note after the output; " +
-	"pass that value on later calls. "
+	"pass that value on later calls. To work through many hosts, call detect_platform for each one first. "
 
 func logLevel() slog.Level {
 	switch os.Getenv("LOG_LEVEL") {
