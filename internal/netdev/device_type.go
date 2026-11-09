@@ -1,8 +1,10 @@
 package netdev
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/krisiasty/netdev-ssh-mcp/internal/sshclient"
 )
@@ -22,6 +24,12 @@ var (
 	runCommands = sshclient.RunCommands
 )
 
+// longCommandTimeout is the command timeout for ping and traceroute, which
+// wait on the network rather than the device: a traceroute towards an
+// unreachable destination can probe every hop until it gives up, which takes
+// minutes. A longer --command-timeout still wins.
+const longCommandTimeout = 5 * time.Minute
+
 func connConfig(host string, port int, username string) sshclient.ConnConfig {
 	return sshclient.ConnConfig{
 		Host:     host,
@@ -30,6 +38,13 @@ func connConfig(host string, port int, username string) sshclient.ConnConfig {
 	}
 }
 
+// errDeviceTypeUnresolved guards the command builders: callers must resolve
+// an omitted device_type (resolveDeviceType) before building a command, so
+// no platform's syntax is ever assumed.
+var errDeviceTypeUnresolved = errors.New("device type is not resolved")
+
+// normalizeDeviceType parses a caller-supplied device_type. An empty value
+// returns "" and means "detect it".
 func normalizeDeviceType(raw string) (deviceType, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "":
@@ -74,12 +89,17 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 		return "show full-configuration", nil
 	case deviceTypeIOS:
 		return fmt.Sprintf("show %s-config", configType), nil
-	default:
+	case deviceTypeEOS, deviceTypeNXOS:
 		return fmt.Sprintf("show %s-config | no-more", configType), nil
+	default:
+		return "", fmt.Errorf("%w: %q", errDeviceTypeUnresolved, dt)
 	}
 }
 
 func normalizeOperationalCommand(command string, dt deviceType) (string, error) {
+	if dt == "" {
+		return "", errDeviceTypeUnresolved
+	}
 	trimmed := strings.TrimSpace(command)
 	lower := strings.ToLower(trimmed)
 
@@ -122,6 +142,9 @@ func normalizeFortiOSOperationalCommand(command, lower string) (string, error) {
 }
 
 func buildPingCommands(destination string, dt deviceType, count, size, timeout int, source, vrf, outgoingInterface string) ([]string, error) {
+	if dt == "" {
+		return nil, errDeviceTypeUnresolved
+	}
 	if err := checkCommandArgs(destination, source, vrf, outgoingInterface); err != nil {
 		return nil, err
 	}
@@ -193,6 +216,9 @@ func buildPingCommands(destination string, dt deviceType, count, size, timeout i
 }
 
 func buildTracerouteCommands(destination string, dt deviceType, maxHops, timeout, probe int, source, vrf, outgoingInterface string) ([]string, error) {
+	if dt == "" {
+		return nil, errDeviceTypeUnresolved
+	}
 	if err := checkCommandArgs(destination, source, vrf, outgoingInterface); err != nil {
 		return nil, err
 	}

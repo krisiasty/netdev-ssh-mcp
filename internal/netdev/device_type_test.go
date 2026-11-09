@@ -1,6 +1,7 @@
 package netdev
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -46,8 +47,8 @@ func TestBuildConfigCommand(t *testing.T) {
 		want       string
 		wantErr    string
 	}{
-		{name: "default running", configType: "running", want: "show running-config | no-more"},
-		{name: "default startup", configType: "startup", want: "show startup-config | no-more"},
+		{name: "unresolved running", configType: "running", wantErr: "device type is not resolved"},
+		{name: "unresolved startup", configType: "startup", wantErr: "device type is not resolved"},
 		{name: "ios running", configType: "running", deviceType: deviceTypeIOS, want: "show running-config"},
 		{name: "ios startup", configType: "startup", deviceType: deviceTypeIOS, want: "show startup-config"},
 		{name: "nxos running", configType: "running", deviceType: deviceTypeNXOS, want: "show running-config | no-more"},
@@ -86,7 +87,8 @@ func TestNormalizeOperationalCommand(t *testing.T) {
 		want       string
 		wantErr    string
 	}{
-		{name: "show on eos", command: "show version", want: "show version"},
+		{name: "show on eos", command: "show version", deviceType: deviceTypeEOS, want: "show version"},
+		{name: "unresolved type", command: "show version", wantErr: "device type is not resolved"},
 		{name: "junos config blocked", command: "show configuration", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
 		{name: "fortios get allowed", command: "get system status", deviceType: deviceTypeFortiOS, want: "get system status"},
 		{name: "fortios show blocked", command: "show system interface", deviceType: deviceTypeFortiOS, wantErr: "use the get_config tool"},
@@ -206,4 +208,21 @@ func TestBuildTracerouteCommands(t *testing.T) {
 			t.Fatalf("buildTracerouteCommands() = %#v, want %#v", got, []string{want})
 		}
 	})
+}
+
+// TestBuildersRejectUnresolvedType checks that no builder falls back to a
+// default platform when the device type was never resolved.
+func TestBuildersRejectUnresolvedType(t *testing.T) {
+	if _, err := buildConfigCommand("running", ""); !errors.Is(err, errDeviceTypeUnresolved) {
+		t.Errorf("buildConfigCommand() error = %v", err)
+	}
+	if _, err := normalizeOperationalCommand("show version", ""); !errors.Is(err, errDeviceTypeUnresolved) {
+		t.Errorf("normalizeOperationalCommand() error = %v", err)
+	}
+	if _, err := buildPingCommands("192.0.2.1", "", 0, 0, 0, "", "", ""); !errors.Is(err, errDeviceTypeUnresolved) {
+		t.Errorf("buildPingCommands() error = %v", err)
+	}
+	if _, err := buildTracerouteCommands("192.0.2.1", "", 0, 0, 0, "", "", ""); !errors.Is(err, errDeviceTypeUnresolved) {
+		t.Errorf("buildTracerouteCommands() error = %v", err)
+	}
 }

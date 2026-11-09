@@ -2,6 +2,7 @@ package sshclient
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/fips140"
@@ -26,6 +27,12 @@ const (
 	dialTimeout              = 15 * time.Second
 	EnvKnownHostsPath        = "SSH_KNOWN_HOSTS"
 	EnvSkipHostKeyValidation = "SKIP_HOST_KEY_CHECK"
+	EnvCommandTimeout        = "SSH_COMMAND_TIMEOUT"
+
+	// DefaultCommandTimeout bounds how long a command may run once the
+	// session is open. Large configurations on big chassis can take tens of
+	// seconds, so it is generous.
+	DefaultCommandTimeout = 60 * time.Second
 )
 
 var errHostKeyCaptured = errors.New("ssh host key captured")
@@ -34,13 +41,6 @@ var errHostKeyCaptured = errors.New("ssh host key captured")
 // ClientConfig.Timeout does not cover: it applies only to the TCP connect in
 // gossh.Dial. It is a variable so tests can shorten it.
 var handshakeTimeout = 15 * time.Second
-
-// commandTimeout bounds everything after the handshake: opening the session
-// and running the command. It is generous, because a traceroute or a large
-// configuration can take minutes, but a device that authenticates and then
-// never answers no longer hangs the tool call forever. It is a variable so
-// tests can shorten it.
-var commandTimeout = 10 * time.Minute
 
 // closeAfter closes c once d has passed, unless the returned stop function is
 // called first. stop reports whether the timer had already closed c.
@@ -58,17 +58,29 @@ func handshakeTimeoutError(addr string) error {
 	return fmt.Errorf("SSH handshake with %s did not finish within %v: %w", addr, handshakeTimeout, os.ErrDeadlineExceeded)
 }
 
+// ErrCommandTimeout is returned when a device accepts a command but does not
+// finish answering within the command timeout. Devices that do not support
+// SSH exec requests (for example the Cisco Business switch OS) behave this way.
+var ErrCommandTimeout = errors.New("no response within the command timeout")
+
 // ConnConfig holds SSH connection parameters.
 type ConnConfig struct {
 	Host     string
 	Port     int
 	Username string
+	// CommandTimeout, when longer than the configured command timeout, is
+	// used instead of it for commands run with this config. Commands known
+	// to take longer, such as ping and traceroute, set it.
+	CommandTimeout time.Duration
 }
 
-// Options controls SSH host key handling.
+// Options controls SSH host key handling and command timeouts.
 type Options struct {
 	KnownHostsPath           string
 	InsecureSkipHostKeyCheck bool
+	// CommandTimeout bounds each command after the session opens. Zero or
+	// negative means DefaultCommandTimeout.
+	CommandTimeout time.Duration
 }
 
 // HostKeyInfo describes the host key currently presented by an SSH server.
@@ -109,8 +121,24 @@ func Configure(opts Options) error {
 		}
 		resolved.KnownHostsPath = validatedPath
 	}
+	if resolved.CommandTimeout <= 0 {
+		resolved.CommandTimeout = DefaultCommandTimeout
+	}
 	currentOptions = resolved
 	return nil
+}
+
+func commandTimeout() time.Duration {
+	if currentOptions.CommandTimeout <= 0 {
+		return DefaultCommandTimeout
+	}
+	return currentOptions.CommandTimeout
+}
+
+// commandTimeoutFor returns the command timeout for cfg: the configured one,
+// or cfg.CommandTimeout when that is longer.
+func commandTimeoutFor(cfg ConnConfig) time.Duration {
+	return max(commandTimeout(), cfg.CommandTimeout)
 }
 
 // DefaultKnownHostsPath returns the default OpenSSH known_hosts path for the current user.
@@ -160,24 +188,77 @@ func RunCommands(cfg ConnConfig, commands []string) (string, error) {
 	return runSessionCommand(cfg, strings.Join(joined, "\n"))
 }
 
+// ProbeResult is what Probe learned about a device.
+type ProbeResult struct {
+	// ServerVersion is the SSH identification string the server sent, such
+	// as "SSH-2.0-OpenSSH_9.9". It is chosen by the device and is untrusted.
+	ServerVersion string
+	// Command is the command that was run, or "" if choose ran none.
+	Command string
+	// Output is the command's stdout. It is kept even when the command exits
+	// non-zero, because an error message also identifies a platform.
+	Output string
+}
+
+// Probe dials the SSH host and passes the server's identification string to
+// choose, which returns the command to run on the same connection. If choose
+// returns an error, Probe returns it without running anything; if it returns
+// "", Probe runs nothing.
+func Probe(cfg ConnConfig, choose func(serverVersion string) (string, error)) (ProbeResult, error) {
+	client, addr, err := dial(cfg)
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	defer func() { _ = client.Close() }()
+
+	res := ProbeResult{ServerVersion: string(client.ServerVersion())}
+	cmd, err := choose(res.ServerVersion)
+	if err != nil || cmd == "" {
+		return res, err
+	}
+	res.Command = cmd
+
+	out, err := runOnClient(client, addr, cmd, commandTimeout())
+	res.Output = out
+	var exitErr *gossh.ExitError
+	if err != nil && !errors.As(err, &exitErr) {
+		return res, err
+	}
+	return res, nil
+}
+
 func runSessionCommand(cfg ConnConfig, cmd string) (string, error) {
+	client, addr, err := dial(cfg)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = client.Close() }()
+
+	out, err := runOnClient(client, addr, cmd, commandTimeoutFor(cfg))
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+func dial(cfg ConnConfig) (*gossh.Client, string, error) {
 	port := normalizedPort(cfg.Port)
 
 	methods, closeAgent, err := buildAuthMethods()
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	defer closeAgent()
 
 	hostKeyCallback, knownHosts, err := buildHostKeyCallback(cfg.Host, port)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 
 	addr := joinHostPort(cfg.Host, port)
 	conn, err := (&net.Dialer{Timeout: dialTimeout}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
-		return "", fmt.Errorf("dial %s: %w", addr, err)
+		return nil, "", fmt.Errorf("dial %s: %w", addr, err)
 	}
 
 	sshCfg := &gossh.ClientConfig{
@@ -193,39 +274,77 @@ func runSessionCommand(cfg ConnConfig, cmd string) (string, error) {
 		if err == nil {
 			_ = sshConn.Close()
 		}
-		return "", handshakeTimeoutError(addr)
+		return nil, "", handshakeTimeoutError(addr)
 	}
 	if err != nil {
 		_ = conn.Close()
-		return "", fmt.Errorf("dial %s: %w", addr, err)
+		return nil, "", fmt.Errorf("dial %s: %w", addr, err)
 	}
-	client := gossh.NewClient(sshConn, chans, reqs)
-	defer func() { _ = client.Close() }()
+	return gossh.NewClient(sshConn, chans, reqs), addr, nil
+}
 
-	commandExpired := closeAfter(commandTimeout, client)
-	defer commandExpired()
+// runOnClient runs cmd in a new exec session on client. If opening the
+// session and running the command take longer than timeout, the connection
+// is closed and ErrCommandTimeout is returned. On a non-zero exit status it
+// returns the output together with an error wrapping *ssh.ExitError.
+func runOnClient(client *gossh.Client, addr, cmd string, timeout time.Duration) (string, error) {
+	// Start the timer before opening the session: a device can also stall
+	// on the session request.
+	expired := closeAfter(timeout, client)
+	defer expired()
 	timeoutErr := func() error {
-		return fmt.Errorf("run %q on %s: no reply within %v: %w", cmd, addr, commandTimeout, os.ErrDeadlineExceeded)
+		return fmt.Errorf("run %q on %s: %w (%s); the device may not support SSH exec requests, or the command needs more time than the command timeout allows",
+			cmd, addr, ErrCommandTimeout, timeout)
 	}
 
 	session, err := client.NewSession()
 	if err != nil {
-		if commandExpired() {
+		if expired() {
 			return "", timeoutErr()
 		}
 		return "", fmt.Errorf("new session: %w", err)
 	}
 	defer func() { _ = session.Close() }()
 
+	var stderr bytes.Buffer
+	session.Stderr = &stderr
+
 	out, err := session.Output(cmd)
-	if commandExpired() {
+	if expired() {
 		return "", timeoutErr()
 	}
 	if err != nil {
-		return "", fmt.Errorf("run %q: %w", cmd, err)
+		// Devices report a rejected command in the output; keep the start of
+		// it, on its own line, so the caller can see why it failed.
+		detail := stderr.Bytes()
+		if len(bytes.TrimSpace(detail)) == 0 {
+			detail = out
+		}
+		if excerpt := outputExcerpt(detail); excerpt != "" {
+			return string(out), fmt.Errorf("run %q: %w\n%s", cmd, err, excerpt)
+		}
+		return string(out), fmt.Errorf("run %q: %w", cmd, err)
 	}
-
 	return string(out), nil
+}
+
+// outputExcerpt returns the start of device output for an error message, with
+// control characters other than newlines removed.
+func outputExcerpt(b []byte) string {
+	const maxLen = 300
+	s := strings.TrimSpace(string(b))
+	if len(s) > maxLen {
+		s = s[:maxLen] + "..."
+	}
+	return strings.Map(func(r rune) rune {
+		if r == '\n' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // InspectHostKey fetches the host key presented by a remote SSH server without trusting it.

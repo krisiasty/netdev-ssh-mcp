@@ -22,7 +22,7 @@ type RunTracerouteInput struct {
 	Source      string `json:"source,omitempty" jsonschema:"source IP address or interface name"`
 	VRF         string `json:"vrf,omitempty" jsonschema:"VRF name; maps to routing-instance on JunOS"`
 	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface for FortiOS traceroute"`
-	DeviceType  string `json:"device_type,omitempty" jsonschema:"device type controlling traceroute syntax: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS)"`
+	DeviceType  string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS); if omitted, the platform is auto-detected over SSH and reported in the result"`
 }
 
 // RunTraceroute executes a traceroute command on a network device.
@@ -39,10 +39,6 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 	if args.Username == "" {
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
-	dt, err := normalizeDeviceType(args.DeviceType)
-	if err != nil {
-		return nil, nil, err
-	}
 	if args.MaxHops < 0 {
 		return nil, nil, fmt.Errorf("max_hops must be a positive integer")
 	}
@@ -52,8 +48,17 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 	if args.Probe < 0 {
 		return nil, nil, fmt.Errorf("probe must be a positive integer")
 	}
+	// Reject unsafe arguments before detection opens a connection.
+	if err := checkCommandArgs(args.Destination, args.Source, args.VRF, args.OutgoingIf); err != nil {
+		return nil, nil, err
+	}
 
-	commands, err := buildTracerouteCommands(args.Destination, dt, args.MaxHops, args.Timeout, args.Probe, args.Source, args.VRF, args.OutgoingIf)
+	cfg := connConfig(args.Host, args.Port, args.Username)
+	rt, err := resolveDeviceType(cfg, args.DeviceType, false)
+	if err != nil {
+		return nil, nil, fmt.Errorf("run_traceroute: %w", err)
+	}
+	commands, err := buildTracerouteCommands(args.Destination, rt.dt, args.MaxHops, args.Timeout, args.Probe, args.Source, args.VRF, args.OutgoingIf)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -61,19 +66,20 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 
 	slog.Info("run_traceroute", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "cmd", sanitizeLog(commandLog)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
+	cfg.CommandTimeout = longCommandTimeout
 	var out string
-	if dt == deviceTypeFortiOS {
-		out, err = runCommands(connConfig(args.Host, args.Port, args.Username), commands)
+	if rt.dt == deviceTypeFortiOS {
+		out, err = runCommands(cfg, commands)
 	} else {
-		out, err = runCommand(connConfig(args.Host, args.Port, args.Username), commands[0])
+		out, err = runCommand(cfg, commands[0])
 	}
 	if err != nil {
 		slog.Error("run_traceroute failed", "host", args.Host, "destination", args.Destination, "err", err)
-		return nil, nil, fmt.Errorf("run_traceroute: %w", err)
+		return nil, nil, runError("run_traceroute", cfg, rt, err)
 	}
 
 	slog.Info("run_traceroute done", "host", args.Host, "bytes", len(out))
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: out}},
+		Content: append([]mcp.Content{&mcp.TextContent{Text: out}}, afterRun(cfg, rt, out, nil)...),
 	}, nil, nil
 }
