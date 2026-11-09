@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -314,38 +315,42 @@ func runOnClient(client *gossh.Client, addr, cmd string, timeout time.Duration) 
 		return "", timeoutErr()
 	}
 	if err != nil {
-		// Devices report a rejected command in the output; keep the start of
-		// it, on its own line, so the caller can see why it failed.
-		detail := stderr.Bytes()
-		if len(bytes.TrimSpace(detail)) == 0 {
-			detail = out
-		}
-		if excerpt := outputExcerpt(detail); excerpt != "" {
-			return string(out), fmt.Errorf("run %q: %w\n%s", cmd, err, excerpt)
-		}
-		return string(out), fmt.Errorf("run %q: %w", cmd, err)
+		return string(out), &CommandError{Command: cmd, Err: err, Output: append(stderr.Bytes(), out...)}
 	}
 	return string(out), nil
 }
 
-// outputExcerpt returns the start of device output for an error message, with
-// control characters other than newlines removed.
-func outputExcerpt(b []byte) string {
-	const maxLen = 300
-	s := strings.TrimSpace(string(b))
-	if len(s) > maxLen {
-		s = s[:maxLen] + "..."
-	}
-	return strings.Map(func(r rune) rune {
-		if r == '\n' {
-			return r
-		}
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, s)
+// CommandError is returned when a command fails after it was sent, usually
+// with a non-zero exit status. Its message holds only the command and the
+// exit status: device output is untrusted, can hold secrets, and would reach
+// the caller and the logs without obfuscation, so it is kept in Output for
+// callers that need to classify the failure and never put in the message.
+type CommandError struct {
+	Command string
+	// Err is the underlying error, usually a *ssh.ExitError.
+	Err error
+	// Output is what the device wrote to stderr followed by stdout. Treat it
+	// as untrusted and do not show it to callers.
+	Output []byte
 }
+
+func (e *CommandError) Error() string {
+	// ExitError's own message appends the device-chosen exit-signal reason,
+	// so describe it from the status and signal only. The signal name also
+	// comes from the device, so it is shown only if it looks like one.
+	var exitErr *gossh.ExitError
+	if errors.As(e.Err, &exitErr) {
+		if signalNameRe.MatchString(exitErr.Signal()) {
+			return fmt.Sprintf("run %q: process exited with status %d from signal %s", e.Command, exitErr.ExitStatus(), exitErr.Signal())
+		}
+		return fmt.Sprintf("run %q: process exited with status %d", e.Command, exitErr.ExitStatus())
+	}
+	return fmt.Sprintf("run %q: %v", e.Command, e.Err)
+}
+
+func (e *CommandError) Unwrap() error { return e.Err }
+
+var signalNameRe = regexp.MustCompile(`^[A-Z0-9]{1,10}$`)
 
 // InspectHostKey fetches the host key presented by a remote SSH server without trusting it.
 func InspectHostKey(host string, port int) (HostKeyInfo, error) {

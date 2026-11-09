@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -28,6 +29,15 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 	}
 	if args.Username == "" {
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
+	}
+
+	// Without device_type, detection would log in to the device first, so
+	// reject a command that no platform accepts before it does. With one,
+	// the platform's own check below gives the more specific message.
+	if strings.TrimSpace(args.DeviceType) == "" {
+		if err := checkCommandOnAnyPlatform(args.Command); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	cfg := connConfig(args.Host, args.Port, args.Username)

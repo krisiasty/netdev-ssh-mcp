@@ -24,6 +24,7 @@ const (
 	identC1200    = "SSH-2.0-OpenSSH_7.3p1.RL"
 	identUbuntu   = "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.10" // not captured
 	identDropbear = "SSH-2.0-dropbear_2022.83"                 // not captured
+	identFortiSSH = "SSH-2.0-FortiSSH_3.0"                     // older FortiOS, not captured
 )
 
 func readFixture(t *testing.T, name string) string {
@@ -87,6 +88,7 @@ func TestClassifyIdent(t *testing.T) {
 		{identNXOS, identPKIX},
 		{identIOS, identCisco},
 		{identFortiOS, identObfuscated},
+		{identFortiSSH, identObfuscated},
 		{identCumulus, identLinux},
 		{identUbuntu, identLinux},
 		{identC1200, identCiscoBusiness},
@@ -157,6 +159,16 @@ func TestMatchProbeOutput(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("ios device named Arista", func(t *testing.T) {
+		out := strings.ReplaceAll(readFixture(t, "ios_show_version.txt"), "switch1 uptime", "Arista uptime")
+		if !strings.Contains(out, "\nArista uptime is") {
+			t.Fatal("fixture no longer has the uptime line this test edits")
+		}
+		if got, err := matchProbeOutput(probeShowVersion, out); err != nil || got != deviceTypeIOS {
+			t.Fatalf("matchProbeOutput() = %q, %v; want ios", got, err)
+		}
+	})
 
 	t.Run("crlf line endings", func(t *testing.T) {
 		out := strings.ReplaceAll(readFixture(t, "junos_show_version.txt"), "\n", "\r\n")
@@ -350,9 +362,27 @@ func TestAfterRun(t *testing.T) {
 	t.Run("detected syntax error drops cache", func(t *testing.T) {
 		resetDetection(t)
 		storeType(key, detected)
-		afterRun(cfg, detected, "show foo\n% Invalid input\n", nil)
+		got := contentTexts(afterRun(cfg, detected, "show foo\n% Invalid input\n", nil))
 		if _, ok := cachedType(key); ok {
 			t.Fatal("cache entry kept after a syntax error")
+		}
+		if len(got) != 2 || got[1] != detectedRejectedNotice {
+			t.Fatalf("afterRun() = %q, want the detection notice and the rejection notice", got)
+		}
+	})
+
+	t.Run("rejection text later in the output is ignored", func(t *testing.T) {
+		resetDetection(t)
+		storeType(key, detected)
+		out := strings.Repeat("hostname sw1\n", syntaxCheckLines) + "banner motd ^\nSyntax error: unauthorised access\n^\n"
+		if got := contentTexts(afterRun(cfg, detected, out, nil)); len(got) != 1 {
+			t.Fatalf("afterRun() = %q, want only the detection notice", got)
+		}
+		if _, ok := cachedType(key); !ok {
+			t.Fatal("cache entry dropped for a rejection message in the configuration")
+		}
+		if got := afterRun(cfg, resolvedType{dt: deviceTypeIOS, source: sourceExplicit}, out, nil); len(got) != 0 {
+			t.Fatalf("afterRun() = %q, want no hint", contentTexts(got))
 		}
 	})
 
@@ -380,13 +410,45 @@ func TestAfterRun(t *testing.T) {
 
 func TestRunErrorAddsHint(t *testing.T) {
 	cfg := sshclient.ConnConfig{Host: "sw1", Username: "u"}
-	err := runError("get_config", cfg, resolvedType{dt: deviceTypeIOS, source: sourceExplicit}, errors.New("run \"x\": Process exited with status 1\n% Invalid input detected at '^' marker."))
+	rejected := &sshclient.CommandError{
+		Command: "show running-config",
+		Err:     errors.New("process exited with status 1"),
+		Output:  []byte("% Invalid input detected at '^' marker.\nenable secret 5 $1$abcd$efgh\n"),
+	}
+	err := runError("get_config", cfg, resolvedType{dt: deviceTypeIOS, source: sourceExplicit}, rejected)
 	if !strings.Contains(err.Error(), "get_config: ") || !strings.Contains(err.Error(), "omit device_type") {
 		t.Fatalf("runError() = %v, want the tool prefix and the hint", err)
 	}
-	plain := errors.New("dial sw1:22: connection refused")
-	if err := runError("get_config", cfg, resolvedType{dt: deviceTypeIOS, source: sourceExplicit}, plain); !errors.Is(err, plain) || strings.Contains(err.Error(), "omit device_type") {
-		t.Fatalf("runError() = %v, want the wrapped error without a hint", err)
+	if strings.Contains(err.Error(), "Invalid input") || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("runError() = %v, want no device output in the message", err)
+	}
+
+	// Only the output kept in a CommandError is classified, never error text.
+	for _, plain := range []error{
+		errors.New("dial sw1:22: connection refused"),
+		errors.New("% Invalid input detected at '^' marker."),
+	} {
+		if err := runError("get_config", cfg, resolvedType{dt: deviceTypeIOS, source: sourceExplicit}, plain); !errors.Is(err, plain) || strings.Contains(err.Error(), "omit device_type") {
+			t.Fatalf("runError(%v) = %v, want the wrapped error without a hint", plain, err)
+		}
+	}
+}
+
+func TestFirstLines(t *testing.T) {
+	for _, tt := range []struct {
+		in   string
+		n    int
+		want string
+	}{
+		{"a\nb\nc\n", 2, "a\nb\n"},
+		{"a\nb", 5, "a\nb"},
+		{"a\nb\n", 2, "a\nb\n"},
+		{"", 3, ""},
+		{"a\n", 0, ""},
+	} {
+		if got := firstLines(tt.in, tt.n); got != tt.want {
+			t.Errorf("firstLines(%q, %d) = %q, want %q", tt.in, tt.n, got, tt.want)
+		}
 	}
 }
 

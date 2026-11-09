@@ -51,6 +51,10 @@ func main() {
 		return
 	}
 
+	if *commandTimeout <= 0 {
+		fmt.Fprintf(os.Stderr, "invalid --command-timeout: expected a positive duration such as 90s, got %s\n", *commandTimeout)
+		os.Exit(1)
+	}
 	if *noObfuscate {
 		netdev.Obfuscate = false
 	}

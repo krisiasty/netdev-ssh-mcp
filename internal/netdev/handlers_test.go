@@ -1,8 +1,10 @@
 package netdev
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -232,6 +234,68 @@ func TestHandlersExplicitDeviceTypeSyntaxErrorHint(t *testing.T) {
 	if texts := contentTexts(res.Content); len(texts) != 2 || !strings.Contains(texts[1], "omit device_type to auto-detect") {
 		t.Fatalf("content = %q, want the output followed by the hint", texts)
 	}
+}
+
+// TestHandlersFailedCommandHidesDeviceOutput checks that when a command
+// fails, nothing the device printed reaches the tool error or the log, while
+// the rejection is still reported.
+func TestHandlersFailedCommandHidesDeviceOutput(t *testing.T) {
+	resetDetection(t)
+	const secret = "enable secret 5 $1$abcd$efgh"
+	stubRunCommand(t, "", &sshclient.CommandError{
+		Command: "show running-config",
+		Err:     errors.New("process exited with status 1"),
+		Output:  []byte("% Invalid input detected at '^' marker.\n" + secret + "\n"),
+	})
+	var logs bytes.Buffer
+	orig := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+
+	_, _, err := GetConfig(context.Background(), nil, GetConfigInput{Host: "sw1", Username: "u", DeviceType: "ios"})
+	if err == nil || !strings.Contains(err.Error(), "rejected the command syntax") {
+		t.Fatalf("GetConfig() error = %v, want the rejection reported", err)
+	}
+	for name, text := range map[string]string{"error": err.Error(), "log": logs.String()} {
+		if strings.Contains(text, "secret") || strings.Contains(text, "Invalid input") {
+			t.Fatalf("%s contains device output: %q", name, text)
+		}
+	}
+}
+
+// TestRunShowCommandInvalidCommandSkipsDetection checks that a command no
+// platform accepts is rejected before detection logs in to the device, and
+// that a command some platform accepts still goes through detection.
+func TestRunShowCommandInvalidCommandSkipsDetection(t *testing.T) {
+	for _, cmd := range []string{"reload", "show version ; configure terminal", "show version | redirect flash:x", "show version\nconf t"} {
+		t.Run(cmd, func(t *testing.T) {
+			resetDetection(t)
+			f := &fakeProbe{ident: identEOS}
+			runProbe = f.probe
+			ran := stubRunCommand(t, "output", nil)
+
+			if _, _, err := RunShowCommand(context.Background(), nil, RunShowCommandInput{Host: "sw1", Username: "u", Command: cmd}); err == nil {
+				t.Fatal("RunShowCommand() error = nil, want the command rejected")
+			}
+			if f.calls != 0 || len(*ran) != 0 {
+				t.Fatalf("probes = %d, ran %q; want no connection", f.calls, *ran)
+			}
+		})
+	}
+
+	t.Run("get system status is valid on FortiOS", func(t *testing.T) {
+		resetDetection(t)
+		f := &fakeProbe{ident: identFortiOS, outputs: map[string]string{probeSystemStatus: readFixture(t, "fortios_get_system_status.txt")}}
+		runProbe = f.probe
+		stubRunCommand(t, "output", nil)
+
+		if _, _, err := RunShowCommand(context.Background(), nil, RunShowCommandInput{Host: "fw1", Username: "u", Command: "get system status"}); err != nil {
+			t.Fatalf("RunShowCommand() error = %v", err)
+		}
+		if f.calls != 1 {
+			t.Fatalf("probes = %d, want detection to run", f.calls)
+		}
+	})
 }
 
 func TestHandlersUnsupportedPlatformRunsNothing(t *testing.T) {

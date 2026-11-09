@@ -16,19 +16,28 @@ When `device_type` is omitted, the server detects the platform over SSH before r
    likely platform accepts.
 2. It runs that read-only probe on the same connection: `show version`, or `get system status` when the server looks
    like a FortiGate.
-3. It matches platform-specific lines at the start of the probe output: `Arista` (EOS), `Junos:` (JunOS),
+3. It matches platform-specific lines at the start of the probe output: the `Arista <model>` line (EOS), `Junos:` (JunOS),
    `Cisco Nexus Operating System` (NX-OS), `Cisco IOS Software` / `Cisco IOS XE Software` (IOS), and
    `Version: FortiGate` (FortiOS). Exactly one platform must match; otherwise the call fails and asks for
    `device_type` instead of guessing.
 
 The result is cached per host and port for an hour, so only the first call to a host pays for the extra connection.
-A command that fails with a syntax error drops the cached entry, so the next call probes again.
+A command that fails with a syntax error drops the cached entry, so the next call probes again. Only the start of a
+successful command's output is checked for a rejection message, so text later in it, such as a login banner in a
+configuration, is not mistaken for one.
 
 Calls that used detection end with a note such as
 `device_type: junos (auto-detected over SSH). Pass device_type=junos on later calls to this host to skip detection.`,
 kept as a separate content block after the device output. If a command run with an explicit `device_type` is rejected
 as invalid syntax, the result ends with a hint that the type may be wrong. Use [`detect_platform`](#detect_platform)
 to resolve a list of hosts up front.
+
+Without `device_type`, `run_show_command` rejects a command that no supported platform accepts (for example `reload`
+or a command joined with `;`) before detection logs in to the device.
+
+When a command fails, the error names the command and its exit status and, if the device rejected the syntax, says so.
+It never includes what the device printed: that output is untrusted, can contain secrets, and would bypass the
+obfuscation applied to successful output.
 
 Some platforms are recognised from the SSH identification string and refused before any command runs:
 

@@ -105,7 +105,7 @@ func TestBuildCommandsRejectUnsafeArgs(t *testing.T) {
 		"192.0.2.1;reload",
 		strings.Repeat("a", maxArgLen+1),
 	}
-	platforms := []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos, deviceTypeFortiOS}
+	platforms := allDeviceTypes
 
 	for _, dt := range platforms {
 		for _, v := range bad {

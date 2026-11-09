@@ -96,6 +96,26 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 	}
 }
 
+// allDeviceTypes lists every supported platform.
+var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos, deviceTypeFortiOS}
+
+// checkCommandOnAnyPlatform rejects a run_show_command command that no
+// supported platform would accept, so it fails before detection logs in to
+// the device. The platform's own check still runs once the type is known.
+func checkCommandOnAnyPlatform(command string) error {
+	var firstErr error
+	for _, dt := range allDeviceTypes {
+		_, err := normalizeOperationalCommand(command, dt)
+		if err == nil {
+			return nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 func normalizeOperationalCommand(command string, dt deviceType) (string, error) {
 	if dt == "" {
 		return "", errDeviceTypeUnresolved

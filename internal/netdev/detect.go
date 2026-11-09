@@ -66,7 +66,7 @@ const (
 	identPlainOpenSSH             // Arista EOS, Juniper JunOS
 	identPKIX                     // Cisco NX-OS (PKIX-SSH)
 	identCisco                    // Cisco IOS / IOS-XE
-	identObfuscated               // FortiOS sends a random token
+	identObfuscated               // FortiOS: a random token, or FortiSSH_x.y on older releases
 	identLinux                    // Debian or Ubuntu based, e.g. Cumulus Linux
 	identCiscoBusiness            // Cisco Business switch OS, e.g. Catalyst 1200
 )
@@ -97,7 +97,7 @@ func classifyIdent(serverVersion string) identClass {
 		return identCisco
 	case plainOpenSSHRe.MatchString(ident):
 		return identPlainOpenSSH
-	case obfuscatedRe.MatchString(ident):
+	case obfuscatedRe.MatchString(ident), strings.HasPrefix(software, "FortiSSH_"):
 		return identObfuscated
 	default:
 		return identUnknown
@@ -141,7 +141,10 @@ func marker(dt deviceType, expr string) platformMarker {
 
 var probeMarkers = map[string][]platformMarker{
 	probeShowVersion: {
-		marker(deviceTypeEOS, `^Arista\s+\S`),
+		// The model line, such as "Arista DCS-7050CX3-32C-R". It must be the
+		// whole line: IOS starts a line with the hostname ("<hostname>
+		// uptime is ..."), so a device named "Arista" must not match.
+		marker(deviceTypeEOS, `^Arista [\w.-]+\s*$`),
 		marker(deviceTypeEOS, `^Software image version:\s+\d`),
 		marker(deviceTypeJunos, `^Junos:\s+\d`),
 		marker(deviceTypeJunos, `^JUNOS Software Release \[`),
@@ -305,6 +308,37 @@ func looksLikeSyntaxError(text string) bool {
 	return syntaxErrorRe.MatchString(text)
 }
 
+// syntaxCheckLines is how much of a successful command's output is checked
+// for a rejection message. Devices print one at the start, while text later
+// in the output (banners, descriptions, logs) is chosen by whoever configured
+// the device and must not be read as a rejection.
+const syntaxCheckLines = 10
+
+// rejectedSyntax reports whether the device rejected the command syntax:
+// from the start of a successful command's output, or from the output kept
+// in a failed command's error. That output is only classified here; it is
+// never shown to the caller, because it is untrusted and can hold secrets.
+func rejectedSyntax(output string, runErr error) bool {
+	if looksLikeSyntaxError(firstLines(output, syntaxCheckLines)) {
+		return true
+	}
+	var cmdErr *sshclient.CommandError
+	return errors.As(runErr, &cmdErr) && looksLikeSyntaxError(string(cmdErr.Output))
+}
+
+// firstLines returns the first n lines of s.
+func firstLines(s string, n int) string {
+	i := 0
+	for ; n > 0; n-- {
+		next := strings.IndexByte(s[i:], '\n')
+		if next < 0 {
+			return s
+		}
+		i += next + 1
+	}
+	return s[:i]
+}
+
 // detectedNotice tells the caller which device type a detected call used, so
 // it can pass it on later calls.
 func detectedNotice(r resolvedType) string {
@@ -324,19 +358,24 @@ func explicitTypeHint(r resolvedType) string {
 	return fmt.Sprintf("The device rejected the command syntax. If device_type=%s is not this device's platform, omit device_type to auto-detect it, or call detect_platform.", r.dt)
 }
 
+// detectedRejectedNotice explains a rejected command after detection: the
+// detected type may be wrong, so it was forgotten.
+const detectedRejectedNotice = "The device rejected the command syntax. The detected device_type was forgotten, so the next call without device_type detects the platform again."
+
 // afterRun inspects a command's outcome. A syntax error on a detected type
 // drops the cached detection so the next call probes again; on an explicit
 // type it yields a hint. It returns the notices to append to the result.
 func afterRun(cfg sshclient.ConnConfig, r resolvedType, output string, runErr error) []mcp.Content {
-	syntaxErr := looksLikeSyntaxError(output) || (runErr != nil && looksLikeSyntaxError(runErr.Error()))
+	syntaxErr := rejectedSyntax(output, runErr)
 
 	var notices []mcp.Content
 	switch r.source {
 	case sourceProbe, sourceCache:
+		notices = append(notices, &mcp.TextContent{Text: detectedNotice(r)})
 		if syntaxErr {
 			forgetType(cacheKey(cfg.Host, cfg.Port))
+			notices = append(notices, &mcp.TextContent{Text: detectedRejectedNotice})
 		}
-		notices = append(notices, &mcp.TextContent{Text: detectedNotice(r)})
 	case sourceExplicit:
 		if syntaxErr {
 			notices = append(notices, &mcp.TextContent{Text: explicitTypeHint(r)})

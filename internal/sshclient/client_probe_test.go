@@ -200,23 +200,31 @@ func TestConfigureDefaultsCommandTimeout(t *testing.T) {
 	}
 }
 
-func TestRunCommandErrorIncludesDeviceMessage(t *testing.T) {
+// TestRunCommandErrorOmitsDeviceOutput checks that a failed command's error
+// message holds only the command and exit status, while the device output
+// stays available in CommandError.Output for classifying the failure.
+func TestRunCommandErrorOmitsDeviceOutput(t *testing.T) {
 	s := startTestServer(t, "SSH-2.0-OpenSSH_9.9", map[string]testReply{
-		"show foo":   {stderr: "% Invalid input detected at '^' marker.\x1b[0m\n", status: 1},
-		"show bar":   {output: "% Incomplete command\n", status: 1},
-		"show quiet": {status: 1},
+		"show foo": {stderr: "% Invalid input detected at '^' marker.\n", output: "enable secret 5 $1$abcd$efgh\n", status: 1},
+		"show bar": {output: "% Incomplete command\n", status: 1},
 	})
 	cfg := useTestServer(t, s, 5*time.Second)
 
 	_, err := RunCommand(cfg, "show foo")
-	if err == nil || !strings.Contains(err.Error(), "status 1\n% Invalid input detected at '^' marker.[0m") {
-		t.Fatalf("RunCommand() error = %q, want the stderr excerpt on its own line without control characters", err)
+	if err == nil || err.Error() != `run "show foo": process exited with status 1` {
+		t.Fatalf("RunCommand() error = %q, want only the command and exit status", err)
 	}
-	if _, err = RunCommand(cfg, "show bar"); err == nil || !strings.HasSuffix(err.Error(), "\n% Incomplete command") {
-		t.Fatalf("RunCommand() error = %q, want the stdout excerpt when stderr is empty", err)
+	var cmdErr *CommandError
+	if !errors.As(err, &cmdErr) || !strings.Contains(string(cmdErr.Output), "% Invalid input") || !strings.Contains(string(cmdErr.Output), "enable secret") {
+		t.Fatalf("CommandError.Output = %q, want stderr and stdout", cmdErr.Output)
 	}
 	var exitErr *gossh.ExitError
-	if _, err = RunCommand(cfg, "show quiet"); !errors.As(err, &exitErr) || strings.Contains(err.Error(), "\n") {
-		t.Fatalf("RunCommand() error = %q, want a plain wrapped ExitError", err)
+	if !errors.As(err, &exitErr) || exitErr.ExitStatus() != 1 {
+		t.Fatalf("RunCommand() error = %v, want it to wrap the ExitError", err)
+	}
+
+	_, err = RunCommand(cfg, "show bar")
+	if !errors.As(err, &cmdErr) || string(cmdErr.Output) != "% Incomplete command\n" || strings.Contains(err.Error(), "Incomplete") {
+		t.Fatalf("RunCommand() error = %q, Output %q; want stdout in Output only", err, cmdErr.Output)
 	}
 }

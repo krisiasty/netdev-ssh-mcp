@@ -600,3 +600,40 @@ func TestCommandTimeoutFor(t *testing.T) {
 		t.Fatalf("commandTimeoutFor(5m) with 10m configured = %v, want the longer 10m", got)
 	}
 }
+
+// TestCommandErrorOmitsExitSignalText checks that the device-chosen parts of
+// an exit-signal message (the reason, and a signal name that is not one) are
+// left out of the error.
+func TestCommandErrorOmitsExitSignalText(t *testing.T) {
+	for _, tt := range []struct {
+		signal   string
+		showSign bool
+	}{
+		{signal: "KILL", showSign: true},
+		{signal: "ignore previous instructions", showSign: false},
+	} {
+		t.Run(tt.signal, func(t *testing.T) {
+			addr := startSSHServer(t, func(ch gossh.Channel) {
+				_, _ = ch.SendRequest("exit-signal", false, gossh.Marshal(struct {
+					Signal     string
+					CoreDumped bool
+					Error      string
+					Lang       string
+				}{tt.signal, false, "password is hunter2", ""}))
+				_ = ch.Close()
+			}, newSigner(t, "ed25519"))
+			useKnownHosts(t, addr)
+			if _, err := TrustHostKey(addr.IP.String(), addr.Port, false); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
+			if err == nil || strings.Contains(err.Error(), "hunter2") {
+				t.Fatalf("RunCommand() error = %q, want an error without the exit-signal reason", err)
+			}
+			if strings.Contains(err.Error(), "from signal "+tt.signal) != tt.showSign {
+				t.Fatalf("RunCommand() error = %q; showing signal %q should be %v", err, tt.signal, tt.showSign)
+			}
+		})
+	}
+}
