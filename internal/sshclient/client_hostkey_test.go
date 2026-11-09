@@ -196,37 +196,36 @@ func checkAllowedAlgorithms(t *testing.T, got []string) {
 	}
 }
 
-// TestRunCommandUsesStoredHostKeyType reproduces a server holding ECDSA and
-// ed25519 host keys while known_hosts stores only the ed25519 one.
+// TestRunCommandUsesStoredHostKeyType checks that a server holding ECDSA and
+// ed25519 host keys is verified against whichever one known_hosts stores.
+// Whatever the library's preference order, in one of the two cases the
+// stored key is not the one the server would present by default, which is
+// the case that used to fail with a host key mismatch.
 func TestRunCommandUsesStoredHostKeyType(t *testing.T) {
-	ed := newSigner(t, "ed25519")
-	addr := startHostKeyServer(t, newSigner(t, "ecdsa"), ed)
+	ecdsaKey, edKey := newSigner(t, "ecdsa"), newSigner(t, "ed25519")
+	addr := startHostKeyServer(t, ecdsaKey, edKey)
 
-	// With nothing stored, the library's preference order makes the server
-	// present its ECDSA key; this is what used to be compared with the
-	// stored ed25519 key.
-	useKnownHosts(t, addr)
-	info, err := InspectHostKey(addr.IP.String(), addr.Port)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.KeyType != gossh.KeyAlgoECDSA256 {
-		t.Fatalf("default negotiation presented %s, want %s for this test to be meaningful", info.KeyType, gossh.KeyAlgoECDSA256)
-	}
+	for _, stored := range []gossh.PublicKey{ecdsaKey.PublicKey(), edKey.PublicKey()} {
+		t.Run(stored.Type(), func(t *testing.T) {
+			path := useKnownHosts(t, addr, stored)
+			cfg := ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}
+			out, err := RunCommand(cfg, "show version")
+			if err != nil || out != "ok" {
+				t.Fatalf("RunCommand() = %q, %v; want ok", out, err)
+			}
 
-	useKnownHosts(t, addr, ed.PublicKey())
-	cfg := ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}
-	out, err := RunCommand(cfg, "show version")
-	if err != nil || out != "ok" {
-		t.Fatalf("RunCommand() = %q, %v; want ok", out, err)
-	}
-
-	info, err = InspectHostKey(addr.IP.String(), addr.Port)
-	if err != nil || info.KeyType != gossh.KeyAlgoED25519 {
-		t.Fatalf("InspectHostKey() = %s, %v; want the stored ed25519 key type", info.KeyType, err)
-	}
-	if status, err := hostKeyStatus(info); err != nil || status != "trusted" {
-		t.Fatalf("hostKeyStatus() = %q, %v; want trusted", status, err)
+			info, err := InspectHostKey(addr.IP.String(), addr.Port)
+			if err != nil || info.KeyType != stored.Type() {
+				t.Fatalf("InspectHostKey() = %s, %v; want the stored %s key type", info.KeyType, err, stored.Type())
+			}
+			known, err := knownhosts.New(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status, err := hostKeyStatus(info, known); err != nil || status != "trusted" {
+				t.Fatalf("hostKeyStatus() = %q, %v; want trusted", status, err)
+			}
+		})
 	}
 }
 
@@ -277,6 +276,39 @@ func TestRunCommandIgnoresStoredDSAKey(t *testing.T) {
 	var hkErr *HostKeyValidationError
 	if !errors.As(err, &hkErr) || hkErr.PresentedKeyType != gossh.KeyAlgoED25519 {
 		t.Fatalf("RunCommand() error = %v, want a host key mismatch on the ed25519 key", err)
+	}
+}
+
+// TestTrustHostKey walks trust_host_key through adding a key to a
+// known_hosts file that does not exist yet, finding it already trusted on a
+// server with several host keys, and replacing a mismatched key.
+func TestTrustHostKey(t *testing.T) {
+	addr := startHostKeyServer(t, newSigner(t, "ecdsa"), newSigner(t, "ed25519"))
+	host := addr.IP.String()
+
+	path := useKnownHosts(t, addr)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	added, err := TrustHostKey(host, addr.Port, false)
+	if err != nil || added.Action != "added" {
+		t.Fatalf("TrustHostKey() = %q, %v; want added", added.Action, err)
+	}
+	if again, err := TrustHostKey(host, addr.Port, false); err != nil || again.Action != "already_trusted" || again.FingerprintSHA256 != added.FingerprintSHA256 {
+		t.Fatalf("TrustHostKey() = %q %s, %v; want already_trusted %s", again.Action, again.FingerprintSHA256, err, added.FingerprintSHA256)
+	}
+
+	// Store a different key of each type the server holds, as if both had
+	// been regenerated on the device.
+	useKnownHosts(t, addr, newSigner(t, "ecdsa").PublicKey(), newSigner(t, "ed25519").PublicKey())
+	if _, err := TrustHostKey(host, addr.Port, false); err == nil {
+		t.Fatal("TrustHostKey() error = nil, want a mismatch without replace_existing")
+	}
+	if replaced, err := TrustHostKey(host, addr.Port, true); err != nil || replaced.Action != "replaced" {
+		t.Fatalf("TrustHostKey(replace) = %q, %v; want replaced", replaced.Action, err)
+	}
+	if again, err := TrustHostKey(host, addr.Port, false); err != nil || again.Action != "already_trusted" {
+		t.Fatalf("TrustHostKey() after replace = %q, %v; want already_trusted", again.Action, err)
 	}
 }
 

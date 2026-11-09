@@ -194,6 +194,21 @@ func runSessionCommand(cfg ConnConfig, cmd string) (string, error) {
 
 // InspectHostKey fetches the host key presented by a remote SSH server without trusting it.
 func InspectHostKey(host string, port int) (HostKeyInfo, error) {
+	// Ask for the key types already stored for this host, so the key shown
+	// is the one known_hosts would be checked against. known_hosts is used
+	// only to order the algorithms, so a file that cannot be loaded (not
+	// created yet, or checking disabled) just leaves the default order.
+	_, knownHosts, err := buildHostKeyCallback(host, normalizedPort(port))
+	if err != nil {
+		knownHosts = nil
+	}
+	return inspectHostKey(host, port, knownHosts)
+}
+
+// inspectHostKey fetches the host key presented by a remote SSH server,
+// asking first for the key types knownHosts stores for it (knownHosts may
+// be nil).
+func inspectHostKey(host string, port int, knownHosts gossh.HostKeyCallback) (HostKeyInfo, error) {
 	port = normalizedPort(port)
 	addr := joinHostPort(host, port)
 
@@ -203,15 +218,6 @@ func InspectHostKey(host string, port int) (HostKeyInfo, error) {
 		return HostKeyInfo{}, fmt.Errorf("dial %s: %w", addr, err)
 	}
 	defer func() { _ = conn.Close() }()
-
-	// Ask for the key types already stored for this host, so the key shown
-	// is the one known_hosts would be checked against.
-	var knownHosts gossh.HostKeyCallback
-	if !currentOptions.InsecureSkipHostKeyCheck && currentOptions.KnownHostsPath != "" {
-		if callback, err := knownhosts.New(currentOptions.KnownHostsPath); err == nil {
-			knownHosts = callback
-		}
-	}
 
 	var captured gossh.PublicKey
 	sshCfg := &gossh.ClientConfig{
@@ -262,12 +268,22 @@ func TrustHostKey(host string, port int, replace bool) (TrustHostKeyResult, erro
 		return TrustHostKeyResult{}, fmt.Errorf("known_hosts path is not configured")
 	}
 
-	info, err := InspectHostKey(host, port)
+	// Load known_hosts once, both to choose the host key algorithms and to
+	// check the presented key. A file that does not exist yet stores nothing.
+	knownHosts, err := knownhosts.New(currentOptions.KnownHostsPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return TrustHostKeyResult{}, fmt.Errorf("load known_hosts file %s: %w", currentOptions.KnownHostsPath, err)
+		}
+		knownHosts = nil
+	}
+
+	info, err := inspectHostKey(host, port, knownHosts)
 	if err != nil {
 		return TrustHostKeyResult{}, err
 	}
 
-	status, err := hostKeyStatus(info)
+	status, err := hostKeyStatus(info, knownHosts)
 	if err != nil {
 		return TrustHostKeyResult{}, err
 	}
@@ -527,17 +543,16 @@ func knownHostAddresses(host string, port int) []string {
 	return []string{knownhosts.Normalize(joinHostPort(host, port))}
 }
 
-func hostKeyStatus(info HostKeyInfo) (string, error) {
-	callback, err := knownhosts.New(info.KnownHostsPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "unknown", nil
-		}
-		return "", fmt.Errorf("load known_hosts file %s: %w", info.KnownHostsPath, err)
+// hostKeyStatus reports whether knownHosts trusts the presented key
+// ("trusted"), stores a different key for the host ("mismatch"), or stores
+// nothing for it ("unknown"). A nil knownHosts stores nothing.
+func hostKeyStatus(info HostKeyInfo, knownHosts gossh.HostKeyCallback) (string, error) {
+	if knownHosts == nil {
+		return "unknown", nil
 	}
 
 	remote := &net.TCPAddr{IP: net.IPv4zero, Port: info.Port}
-	if err := callback(info.Address, remote, info.publicKey); err == nil {
+	if err := knownHosts(info.Address, remote, info.publicKey); err == nil {
 		return "trusted", nil
 	} else {
 		var keyErr *knownhosts.KeyError
