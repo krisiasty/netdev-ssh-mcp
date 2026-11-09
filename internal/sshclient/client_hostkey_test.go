@@ -21,6 +21,7 @@ import (
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
@@ -66,6 +67,17 @@ func newSigner(t *testing.T, kind string) gossh.Signer {
 // accepts any password and answers every exec request with "ok".
 func startHostKeyServer(t *testing.T, hostKeys ...gossh.Signer) *net.TCPAddr {
 	t.Helper()
+	return startSSHServer(t, func(ch gossh.Channel) {
+		_, _ = ch.Write([]byte("ok"))
+		_, _ = ch.SendRequest("exit-status", false, binary.BigEndian.AppendUint32(nil, 0))
+		_ = ch.Close()
+	}, hostKeys...)
+}
+
+// startSSHServer runs an SSH server holding the given host keys. It accepts
+// any password and calls exec for every exec request.
+func startSSHServer(t *testing.T, exec func(gossh.Channel), hostKeys ...gossh.Signer) *net.TCPAddr {
+	t.Helper()
 	cfg := &gossh.ServerConfig{
 		PasswordCallback: func(gossh.ConnMetadata, []byte) (*gossh.Permissions, error) { return nil, nil },
 	}
@@ -101,9 +113,7 @@ func startHostKeyServer(t *testing.T, hostKeys ...gossh.Signer) *net.TCPAddr {
 						for req := range chReqs {
 							_ = req.Reply(req.Type == "exec", nil)
 							if req.Type == "exec" {
-								_, _ = ch.Write([]byte("ok"))
-								_, _ = ch.SendRequest("exit-status", false, binary.BigEndian.AppendUint32(nil, 0))
-								_ = ch.Close()
+								exec(ch)
 							}
 						}
 					}()
@@ -470,5 +480,78 @@ func TestHandshakeTimeout(t *testing.T) {
 				t.Fatalf("%s() still running after 5s, want it to give up after %v", name, handshakeTimeout)
 			}
 		})
+	}
+}
+
+// TestCommandTimeout checks that a device which authenticates and then never
+// answers the command does not hang RunCommand.
+func TestCommandTimeout(t *testing.T) {
+	addr := startSSHServer(t, func(gossh.Channel) {}, newSigner(t, "ed25519"))
+	useKnownHosts(t, addr)
+	if _, err := TrustHostKey(addr.IP.String(), addr.Port, false); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := commandTimeout
+	t.Cleanup(func() { commandTimeout = orig })
+	commandTimeout = 200 * time.Millisecond
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("RunCommand() error = %v, want a command deadline error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("RunCommand() still running after 5s, want it to give up after %v", commandTimeout)
+	}
+}
+
+// TestRunCommandClosesAgentConnection checks that the connection to the SSH
+// agent is closed after each command, so a long-running server does not leak
+// a socket per call.
+func TestRunCommandClosesAgentConnection(t *testing.T) {
+	addr := startHostKeyServer(t, newSigner(t, "ed25519"))
+	useKnownHosts(t, addr)
+	if _, err := TrustHostKey(addr.IP.String(), addr.Port, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// A short directory keeps the socket path under the platform limit.
+	dir, err := os.MkdirTemp("", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "s")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	closed := make(chan struct{}, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		// An empty keyring offers no keys, so password auth is used; the
+		// agent returns once the client closes its end.
+		_ = agent.ServeAgent(agent.NewKeyring(), conn)
+		closed <- struct{}{}
+	}()
+	t.Setenv("SSH_AUTH_SOCK", sock)
+
+	if out, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version"); err != nil || out != "ok" {
+		t.Fatalf("RunCommand() = %q, %v; want ok", out, err)
+	}
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent connection still open after RunCommand returned")
 	}
 }

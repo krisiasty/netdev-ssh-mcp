@@ -35,6 +35,13 @@ var errHostKeyCaptured = errors.New("ssh host key captured")
 // gossh.Dial. It is a variable so tests can shorten it.
 var handshakeTimeout = 15 * time.Second
 
+// commandTimeout bounds everything after the handshake: opening the session
+// and running the command. It is generous, because a traceroute or a large
+// configuration can take minutes, but a device that authenticates and then
+// never answers no longer hangs the tool call forever. It is a variable so
+// tests can shorten it.
+var commandTimeout = 10 * time.Minute
+
 // closeAfter closes c once d has passed, unless the returned stop function is
 // called first. stop reports whether the timer had already closed c.
 //
@@ -44,7 +51,7 @@ var handshakeTimeout = 15 * time.Second
 // could expire before it is cleared and drop a working connection.
 func closeAfter(d time.Duration, c io.Closer) (stop func() (expired bool)) {
 	timer := time.AfterFunc(d, func() { _ = c.Close() })
-	return func() bool { return !timer.Stop() }
+	return sync.OnceValue(func() bool { return !timer.Stop() })
 }
 
 func handshakeTimeoutError(addr string) error {
@@ -156,10 +163,11 @@ func RunCommands(cfg ConnConfig, commands []string) (string, error) {
 func runSessionCommand(cfg ConnConfig, cmd string) (string, error) {
 	port := normalizedPort(cfg.Port)
 
-	methods, err := buildAuthMethods()
+	methods, closeAgent, err := buildAuthMethods()
 	if err != nil {
 		return "", err
 	}
+	defer closeAgent()
 
 	hostKeyCallback, knownHosts, err := buildHostKeyCallback(cfg.Host, port)
 	if err != nil {
@@ -194,13 +202,25 @@ func runSessionCommand(cfg ConnConfig, cmd string) (string, error) {
 	client := gossh.NewClient(sshConn, chans, reqs)
 	defer func() { _ = client.Close() }()
 
+	commandExpired := closeAfter(commandTimeout, client)
+	defer commandExpired()
+	timeoutErr := func() error {
+		return fmt.Errorf("run %q on %s: no reply within %v: %w", cmd, addr, commandTimeout, os.ErrDeadlineExceeded)
+	}
+
 	session, err := client.NewSession()
 	if err != nil {
+		if commandExpired() {
+			return "", timeoutErr()
+		}
 		return "", fmt.Errorf("new session: %w", err)
 	}
 	defer func() { _ = session.Close() }()
 
 	out, err := session.Output(cmd)
+	if commandExpired() {
+		return "", timeoutErr()
+	}
 	if err != nil {
 		return "", fmt.Errorf("run %q: %w", cmd, err)
 	}
@@ -319,14 +339,19 @@ func TrustHostKey(host string, port int, replace bool) (TrustHostKeyResult, erro
 	return TrustHostKeyResult{HostKeyInfo: info, Action: action}, nil
 }
 
-func buildAuthMethods() ([]gossh.AuthMethod, error) {
+// buildAuthMethods returns the available authentication methods, and a
+// function that closes the SSH agent connection they use. The caller must
+// call it once the connection is done with, or every call leaks a socket.
+func buildAuthMethods() ([]gossh.AuthMethod, func(), error) {
 	var methods []gossh.AuthMethod
+	closeAgent := func() {}
 
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		sock = filepath.Clean(sock)
 		if filepath.IsAbs(sock) {
 			conn, err := (&net.Dialer{}).DialContext(context.Background(), "unix", sock) //nolint:gosec // G704: SSH_AUTH_SOCK is set by the system SSH agent, path is validated to be absolute above
 			if err == nil {
+				closeAgent = func() { _ = conn.Close() }
 				methods = append(methods, gossh.PublicKeysCallback(agent.NewClient(conn).Signers))
 			}
 		}
@@ -337,10 +362,10 @@ func buildAuthMethods() ([]gossh.AuthMethod, error) {
 	}
 
 	if len(methods) == 0 {
-		return nil, fmt.Errorf("no auth available: set SSH_AUTH_SOCK or DEVICE_PASSWORD")
+		return nil, nil, fmt.Errorf("no auth available: set SSH_AUTH_SOCK or DEVICE_PASSWORD")
 	}
 
-	return methods, nil
+	return methods, closeAgent, nil
 }
 
 // buildHostKeyCallback returns the callback that verifies a server's host
