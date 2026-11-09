@@ -197,6 +197,32 @@ func TestRunCommandCancelled(t *testing.T) {
 	}
 }
 
+// TestRunCommandCancelledWithCause checks that a request cancelled with a
+// custom cause, as go-sdk does when the client disconnects, still returns an
+// error matching context.Canceled.
+func TestRunCommandCancelledWithCause(t *testing.T) {
+	srv := startStallingServer(t, stallCommand)
+	usePasswordAuth(t)
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := RunCommand(ctx, srv.connConfig(), "show version")
+		done <- err
+	}()
+	waitFor(t, srv.reached, "the command")
+	cancel(io.EOF)
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("RunCommand() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("still running 5s after cancellation")
+	}
+}
+
 func TestRunCommandsCancelled(t *testing.T) {
 	srv := startStallingServer(t, stallCommand)
 	usePasswordAuth(t)
@@ -423,6 +449,19 @@ func TestCloseOnLimit(t *testing.T) {
 		}
 		if reason := stop(); !errors.Is(reason, errLimitReached) {
 			t.Fatalf("second stop() = %v, want the same reason", reason)
+		}
+	})
+
+	t.Run("cancelled with a cause", func(t *testing.T) {
+		// go-sdk cancels in-flight requests with the transport's read error
+		// (io.EOF) as the cause when the client disconnects.
+		c := &countingCloser{}
+		ctx, cancel := context.WithCancelCause(t.Context())
+		stop := closeOnLimit(ctx, time.Hour, c)
+		cancel(io.EOF)
+		time.Sleep(100 * time.Millisecond)
+		if reason := stop(); !errors.Is(reason, context.Canceled) || c.n.Load() != 1 {
+			t.Fatalf("stop() = %v, closes = %d; want context.Canceled and one close", reason, c.n.Load())
 		}
 	})
 

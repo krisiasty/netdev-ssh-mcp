@@ -66,7 +66,14 @@ func closeOnLimit(ctx context.Context, d time.Duration, c io.Closer) (stop func(
 		if stopClose() {
 			return nil // stopped before limitCtx was done: c was not closed
 		}
-		return context.Cause(limitCtx)
+		if errors.Is(context.Cause(limitCtx), errLimitReached) {
+			return errLimitReached
+		}
+		// The caller cancelled. Report the context's error rather than its
+		// cause, which can be anything: go-sdk cancels a request with the
+		// transport's read error (io.EOF) when the client disconnects, and
+		// callers rely on errors.Is(err, context.Canceled).
+		return limitCtx.Err()
 	})
 }
 
