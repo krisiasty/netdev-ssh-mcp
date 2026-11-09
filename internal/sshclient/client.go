@@ -28,6 +28,11 @@ const (
 
 var errHostKeyCaptured = errors.New("ssh host key captured")
 
+// handshakeTimeout bounds the SSH handshake and authentication, which
+// ClientConfig.Timeout does not cover: it applies only to the TCP connect in
+// gossh.Dial. It is a variable so tests can shorten it.
+var handshakeTimeout = 15 * time.Second
+
 // ConnConfig holds SSH connection parameters.
 type ConnConfig struct {
 	Host     string
@@ -154,12 +159,20 @@ func runSessionCommand(cfg ConnConfig, cmd string) (string, error) {
 		Auth:              methods,
 		HostKeyCallback:   hostKeyCallback,
 		HostKeyAlgorithms: preferredHostKeyAlgorithms(knownHosts, addr, conn.RemoteAddr()),
-		Timeout:           dialTimeout,
 	}
 
+	if err := conn.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
+		_ = conn.Close()
+		return "", fmt.Errorf("dial %s: %w", addr, err)
+	}
 	sshConn, chans, reqs, err := gossh.NewClientConn(conn, addr, sshCfg)
 	if err != nil {
 		_ = conn.Close()
+		return "", fmt.Errorf("dial %s: %w", addr, err)
+	}
+	// The deadline covers only the handshake; the command may run longer.
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = sshConn.Close()
 		return "", fmt.Errorf("dial %s: %w", addr, err)
 	}
 	client := gossh.NewClient(sshConn, chans, reqs)
@@ -212,9 +225,11 @@ func InspectHostKey(host string, port int) (HostKeyInfo, error) {
 			return errHostKeyCaptured
 		},
 		HostKeyAlgorithms: preferredHostKeyAlgorithms(knownHosts, addr, conn.RemoteAddr()),
-		Timeout:           dialTimeout,
 	}
 
+	if err := conn.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
+		return HostKeyInfo{}, fmt.Errorf("fetch host key from %s: %w", addr, err)
+	}
 	_, _, _, err = gossh.NewClientConn(conn, addr, sshCfg)
 	if captured == nil {
 		if err != nil {

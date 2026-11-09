@@ -16,6 +16,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -323,4 +324,54 @@ func TestHostKeyCallbackRejectsDSA(t *testing.T) {
 			t.Fatalf("callback() = %v, want other keys accepted", err)
 		}
 	})
+}
+
+// TestHandshakeTimeout checks that a server which accepts the TCP connection
+// and then never speaks SSH does not hang RunCommand or InspectHostKey.
+func TestHandshakeTimeout(t *testing.T) {
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+		}
+	}()
+	addr := ln.Addr().(*net.TCPAddr)
+	useKnownHosts(t, addr, newSigner(t, "ed25519").PublicKey())
+
+	orig := handshakeTimeout
+	t.Cleanup(func() { handshakeTimeout = orig })
+	handshakeTimeout = 200 * time.Millisecond
+
+	calls := map[string]func() error{
+		"RunCommand": func() error {
+			_, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
+			return err
+		},
+		"InspectHostKey": func() error {
+			_, err := InspectHostKey(addr.IP.String(), addr.Port)
+			return err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			done := make(chan error, 1)
+			go func() { done <- call() }()
+			select {
+			case err := <-done:
+				if !errors.Is(err, os.ErrDeadlineExceeded) {
+					t.Fatalf("%s() error = %v, want a handshake deadline error", name, err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("%s() still running after 5s, want it to give up after %v", name, handshakeTimeout)
+			}
+		})
+	}
 }
