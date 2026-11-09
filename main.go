@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -28,11 +29,20 @@ func main() {
 		fmt.Fprintf(os.Stderr, "invalid %s: %v\n", sshclient.EnvSkipHostKeyValidation, err)
 		os.Exit(1)
 	}
+	commandTimeoutDefault := sshclient.DefaultCommandTimeout
+	if v := strings.TrimSpace(os.Getenv(sshclient.EnvCommandTimeout)); v != "" {
+		commandTimeoutDefault, err = time.ParseDuration(v)
+		if err != nil || commandTimeoutDefault <= 0 {
+			fmt.Fprintf(os.Stderr, "invalid %s: expected a positive duration such as 90s, got %q\n", sshclient.EnvCommandTimeout, v)
+			os.Exit(1)
+		}
+	}
 
 	noObfuscate := flag.Bool("no-obfuscate", false, "disable obfuscation of sensitive values in tool output")
 	obfuscationKeyFile := flag.String("obfuscation-key-file", os.Getenv(netdev.EnvObfuscationKeyFile), "path to a file holding the key for obfuscation tokens; share it to get matching tokens across machines")
 	knownHostsPath := flag.String("known-hosts", knownHostsDefault, "path to OpenSSH known_hosts file used for SSH host verification")
 	skipHostKeyValidation := flag.Bool("insecure-skip-host-key-check", skipHostKeyValidationDefault, "disable SSH host key verification (insecure)")
+	commandTimeout := flag.Duration("command-timeout", commandTimeoutDefault, "maximum time a device command may run, counted from the SSH session request (run_ping and run_traceroute get at least 5m)")
 	printVersion := flag.Bool("version", false, "print version information and exit")
 	flag.Parse()
 
@@ -41,12 +51,17 @@ func main() {
 		return
 	}
 
+	if *commandTimeout <= 0 {
+		fmt.Fprintf(os.Stderr, "invalid --command-timeout: expected a positive duration such as 90s, got %s\n", *commandTimeout)
+		os.Exit(1)
+	}
 	if *noObfuscate {
 		netdev.Obfuscate = false
 	}
 	if err := sshclient.Configure(sshclient.Options{
 		KnownHostsPath:           *knownHostsPath,
 		InsecureSkipHostKeyCheck: *skipHostKeyValidation,
+		CommandTimeout:           *commandTimeout,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "configure ssh client: %v\n", err)
 		os.Exit(1)
@@ -87,11 +102,9 @@ func main() {
 			"running or startup configuration. Sensitive values (passwords, secrets, SNMP community names, " +
 			"BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with keyed hash tokens; " +
 			"identical tokens mean identical secrets, so configs from different devices can be compared. " +
-			"Set device_type='junos' for Juniper routers — this issues 'show configuration' instead of " +
-			"'show running-config'. Set device_type='fortios' for FortiGate firewalls — this issues " +
-			"'show full-configuration'. Set device_type='ios' for any Cisco IOS or IOS-XE device " +
-			"(Catalyst switches, ISR/ASR routers, and others) — IOS does not support the '| no-more' " +
-			"suffix that is added for other platforms, so omitting device_type makes the command fail. " +
+			deviceTypeGuidance +
+			"The command depends on the platform: 'show configuration' on JunOS, 'show full-configuration' on FortiOS, " +
+			"'show running-config' on IOS and 'show running-config | no-more' on EOS and NX-OS. " +
 			"JunOS and FortiOS do not support config_type='startup'.",
 	}, netdev.GetConfig)
 
@@ -99,8 +112,9 @@ func main() {
 		Name: "run_show_command",
 		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, or FortiGate FortiOS device via SSH and run an operational read command. " +
 			"Arista/Cisco/JunOS commands must start with 'show'. FortiOS commands must start with 'get'. " +
+			deviceTypeGuidance +
 			"Running-config and startup-config are not allowed here — use the get_config tool instead. " +
-			"For JunOS, set device_type='junos'; 'show configuration' is also blocked and redirected to get_config. " +
+			"On JunOS, 'show configuration' is also blocked and redirected to get_config. " +
 			"For FortiOS, 'show', 'config', 'execute', and 'diagnose' commands are blocked here. " +
 			"Append '| json' for structured output (Arista/Cisco), or '| no-more' to disable pagination. " +
 			"The command must be a single line holding one command, without ';' or '<'/'>' redirection, and may only pipe into output filters " +
@@ -116,8 +130,7 @@ func main() {
 		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, or FortiGate FortiOS device via SSH and run a ping command. " +
 			"Useful for verifying reachability from the device's perspective — for example, testing connectivity " +
 			"to a BGP peer, next-hop, or management target. " +
-			"Use device_type to select the correct syntax: 'eos' (Arista), 'ios' (Cisco IOS/IOS-XE), 'nxos' " +
-			"(Cisco NX-OS), 'junos' (Juniper JunOS), or 'fortios' (FortiGate/FortiOS). If device_type is omitted, EOS/IOS syntax is used. " +
+			deviceTypeGuidance +
 			"Optional parameters: count (number of probes), source (source IP or interface), " +
 			"vrf (VRF or routing-instance name on JunOS), size (packet size in bytes), timeout (FortiOS only), " +
 			"outgoing_interface (FortiOS only). FortiOS 7.4+ does not support vrf for ping via this tool.",
@@ -129,9 +142,8 @@ func main() {
 			"Shows the hop-by-hop path to a destination and per-hop latency. " +
 			"Useful for locating where connectivity breaks, verifying traffic follows the expected path, " +
 			"and identifying which hop introduces latency. " +
-			"Use device_type to select the correct syntax: 'eos' (Arista), 'ios' (Cisco IOS/IOS-XE), 'nxos' " +
-			"(Cisco NX-OS), 'junos' (Juniper JunOS), or 'fortios' (FortiGate/FortiOS). On IOS, vrf must be specified via device_type='ios' " +
-			"so it is placed correctly before the destination in the command. " +
+			deviceTypeGuidance +
+			"On IOS, vrf is placed before the destination in the command. " +
 			"On JunOS, max_hops maps to the ttl keyword, timeout maps to wait, probe is not supported, " +
 			"and vrf maps to routing-instance. " +
 			"On FortiOS 7.4+, probe maps to execute traceroute-options queries, source maps to source, " +
@@ -139,6 +151,15 @@ func main() {
 			"Optional parameters: max_hops, timeout (per-probe seconds), probe (probes per hop, not used on JunOS), " +
 			"source (source IP or interface), vrf (routing-instance on JunOS), outgoing_interface (FortiOS only).",
 	}, netdev.RunTraceroute)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "detect_platform",
+		Description: "Connect to a network device via SSH and identify its platform, returning the device_type to pass to the other tools " +
+			"(eos, ios, nxos, junos or fortios) and a short software version. Detection reads the SSH server identification and runs " +
+			"one read-only command ('show version', or 'get system status' on FortiOS). Results are cached by this server per host; " +
+			"set refresh=true to probe again. Use it to resolve a list of hosts before working through them. " +
+			"Cumulus Linux and the Cisco Business switch OS (e.g. Catalyst 1200) are recognised and reported as unsupported.",
+	}, netdev.DetectPlatform)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "trust_host_key",
@@ -152,6 +173,12 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// deviceTypeGuidance is shared by the tools that take device_type.
+const deviceTypeGuidance = "device_type selects the platform syntax: 'eos' (Arista), 'ios' (Cisco IOS/IOS-XE), 'nxos' (Cisco NX-OS), " +
+	"'junos' (Juniper JunOS) or 'fortios' (FortiGate/FortiOS). Pass it when you know the platform, for example from an inventory " +
+	"system. If it is omitted, the platform is auto-detected over SSH, cached for the host, and reported in a note after the output; " +
+	"pass that value on later calls. To work through many hosts, call detect_platform for each one first. "
 
 func logLevel() slog.Level {
 	switch os.Getenv("LOG_LEVEL") {

@@ -483,34 +483,6 @@ func TestHandshakeTimeout(t *testing.T) {
 	}
 }
 
-// TestCommandTimeout checks that a device which authenticates and then never
-// answers the command does not hang RunCommand.
-func TestCommandTimeout(t *testing.T) {
-	addr := startSSHServer(t, func(gossh.Channel) {}, newSigner(t, "ed25519"))
-	useKnownHosts(t, addr)
-	if _, err := TrustHostKey(addr.IP.String(), addr.Port, false); err != nil {
-		t.Fatal(err)
-	}
-
-	orig := commandTimeout
-	t.Cleanup(func() { commandTimeout = orig })
-	commandTimeout = 200 * time.Millisecond
-
-	done := make(chan error, 1)
-	go func() {
-		_, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if !errors.Is(err, os.ErrDeadlineExceeded) {
-			t.Fatalf("RunCommand() error = %v, want a command deadline error", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("RunCommand() still running after 5s, want it to give up after %v", commandTimeout)
-	}
-}
-
 // TestRunCommandClosesAgentConnection checks that the connection to the SSH
 // agent is closed after each command, so a long-running server does not leak
 // a socket per call.
@@ -553,5 +525,115 @@ func TestRunCommandClosesAgentConnection(t *testing.T) {
 	case <-closed:
 	case <-time.After(5 * time.Second):
 		t.Fatal("agent connection still open after RunCommand returned")
+	}
+}
+
+// TestRunCommandTimesOutOpeningSession checks that the command timeout also
+// covers opening the session: a device that authenticates and then never
+// answers the session request does not hang RunCommand.
+func TestRunCommandTimesOutOpeningSession(t *testing.T) {
+	cfg := &gossh.ServerConfig{
+		PasswordCallback: func(gossh.ConnMetadata, []byte) (*gossh.Permissions, error) { return nil, nil },
+	}
+	cfg.AddHostKey(newSigner(t, "ed25519"))
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				sconn, chans, reqs, err := gossh.NewServerConn(conn, cfg)
+				if err != nil {
+					return
+				}
+				defer func() { _ = sconn.Close() }()
+				go gossh.DiscardRequests(reqs)
+				for range chans { // never accept or reject a channel
+				}
+			}()
+		}
+	}()
+
+	orig := currentOptions
+	t.Cleanup(func() { currentOptions = orig })
+	t.Setenv("SSH_AUTH_SOCK", "")
+	t.Setenv("DEVICE_PASSWORD", "test")
+	if err := Configure(Options{InsecureSkipHostKeyCheck: true, CommandTimeout: 200 * time.Millisecond}); err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().(*net.TCPAddr)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrCommandTimeout) {
+			t.Fatalf("RunCommand() error = %v, want ErrCommandTimeout", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunCommand() still running after 5s, want it to give up after 200ms")
+	}
+}
+
+func TestCommandTimeoutFor(t *testing.T) {
+	orig := currentOptions
+	t.Cleanup(func() { currentOptions = orig })
+	currentOptions = Options{CommandTimeout: time.Minute}
+
+	if got := commandTimeoutFor(ConnConfig{}); got != time.Minute {
+		t.Fatalf("commandTimeoutFor(no override) = %v, want the configured 1m", got)
+	}
+	if got := commandTimeoutFor(ConnConfig{CommandTimeout: 5 * time.Minute}); got != 5*time.Minute {
+		t.Fatalf("commandTimeoutFor(5m) = %v, want the longer 5m", got)
+	}
+	currentOptions = Options{CommandTimeout: 10 * time.Minute}
+	if got := commandTimeoutFor(ConnConfig{CommandTimeout: 5 * time.Minute}); got != 10*time.Minute {
+		t.Fatalf("commandTimeoutFor(5m) with 10m configured = %v, want the longer 10m", got)
+	}
+}
+
+// TestCommandErrorOmitsExitSignalText checks that the device-chosen parts of
+// an exit-signal message (the reason, and a signal name that is not one) are
+// left out of the error.
+func TestCommandErrorOmitsExitSignalText(t *testing.T) {
+	for _, tt := range []struct {
+		signal   string
+		showSign bool
+	}{
+		{signal: "KILL", showSign: true},
+		{signal: "ignore previous instructions", showSign: false},
+	} {
+		t.Run(tt.signal, func(t *testing.T) {
+			addr := startSSHServer(t, func(ch gossh.Channel) {
+				_, _ = ch.SendRequest("exit-signal", false, gossh.Marshal(struct {
+					Signal     string
+					CoreDumped bool
+					Error      string
+					Lang       string
+				}{tt.signal, false, "password is hunter2", ""}))
+				_ = ch.Close()
+			}, newSigner(t, "ed25519"))
+			useKnownHosts(t, addr)
+			if _, err := TrustHostKey(addr.IP.String(), addr.Port, false); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
+			if err == nil || strings.Contains(err.Error(), "hunter2") {
+				t.Fatalf("RunCommand() error = %q, want an error without the exit-signal reason", err)
+			}
+			if strings.Contains(err.Error(), "from signal "+tt.signal) != tt.showSign {
+				t.Fatalf("RunCommand() error = %q; showing signal %q should be %v", err, tt.signal, tt.showSign)
+			}
+		})
 	}
 }

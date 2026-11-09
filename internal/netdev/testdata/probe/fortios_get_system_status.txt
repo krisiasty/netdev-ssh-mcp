@@ -1,0 +1,21 @@
+Version: FortiGate-100F v7.4.4,build2662,240514 (GA.F)
+First GA patch build date: 230509
+Security Level: 1
+Firmware Signature: certified
+Virus-DB: 92.07391(2024-11-08 18:44)
+Serial-Number: FG100F0000000000
+BIOS version: 05000016
+Log hard disk: Not available
+Hostname: fw1
+Private Encryption: Disable
+Operation Mode: NAT
+Current virtual domain: root
+Max number of virtual domains: 10
+Virtual domains status: 1 in NAT mode, 0 in TP mode
+Virtual domain configuration: disable
+FIPS-CC mode: disable
+Current HA mode: standalone
+Branch point: 2662
+Release Version Information: GA
+System time: Mon Nov  9 14:00:00 2026
+Last reboot reason: warm reboot

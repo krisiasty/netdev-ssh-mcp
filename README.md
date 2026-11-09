@@ -5,6 +5,47 @@ Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, and FortiGate
 Exposes network device operations as tools for use with Claude Code / Claude Desktop / Codex
 (and other MCP clients)
 
+## Platform detection
+
+Every tool that talks to a device takes an optional `device_type`: `eos`, `ios`, `nxos`, `junos` or `fortios`
+(`fortigate` is accepted as an alias). Pass it when you know the platform, for example from an inventory system.
+
+When `device_type` is omitted, the server detects the platform over SSH before running the command:
+
+1. It reads the SSH server identification string, which narrows the candidates and picks one probe command that the
+   likely platform accepts.
+2. It runs that read-only probe on the same connection: `show version`, or `get system status` when the server looks
+   like a FortiGate.
+3. It matches platform-specific lines at the start of the probe output: the `Arista <model>` line (EOS), `Junos:` (JunOS),
+   `Cisco Nexus Operating System` (NX-OS), `Cisco IOS Software` / `Cisco IOS XE Software` (IOS), and
+   `Version: FortiGate` (FortiOS). Exactly one platform must match; otherwise the call fails and asks for
+   `device_type` instead of guessing.
+
+The result is cached per host and port for an hour, so only the first call to a host pays for the extra connection.
+A command that fails with a syntax error drops the cached entry, so the next call probes again. Only the start of a
+successful command's output is checked for a rejection message, so text later in it, such as a login banner in a
+configuration, is not mistaken for one.
+
+Calls that used detection end with a note such as
+`device_type: junos (auto-detected over SSH). Pass device_type=junos on later calls to this host to skip detection.`,
+kept as a separate content block after the device output. If a command run with an explicit `device_type` is rejected
+as invalid syntax, the result ends with a hint that the type may be wrong. Use [`detect_platform`](#detect_platform)
+to resolve a list of hosts up front.
+
+Without `device_type`, `run_show_command` rejects a command that no supported platform accepts (for example `reload`
+or a command joined with `;`) before detection logs in to the device.
+
+When a command fails, the error names the command and its exit status and, if the device rejected the syntax, says so.
+It never includes what the device printed: that output is untrusted, can contain secrets, and would bypass the
+obfuscation applied to successful output.
+
+Some platforms are recognised from the SSH identification string and refused before any command runs:
+
+| Platform | Reason |
+| --- | --- |
+| Cumulus Linux and other Debian or Ubuntu based systems | SSH exec reaches a Linux shell; not supported yet |
+| Cisco Business switch OS (Catalyst 1200/1300, CBS) | Does not answer SSH exec requests |
+
 ## Tools
 
 ### `get_config`
@@ -30,13 +71,13 @@ identical secrets. See [Obfuscation](#obfuscation) for how the key is chosen.
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
 | `config_type` | string | no | `running` | `running` or `startup`; `startup` is not supported on JunOS or FortiOS |
-| `device_type` | string | no | — | `eos`, `ios`, `nxos`, `junos`, or `fortios` |
+| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, or `fortios`; see [Platform detection](#platform-detection) |
 
 Cisco IOS notes:
 
-- Use `device_type=ios` for any Cisco IOS or IOS-XE device — Catalyst switches, ISR/ASR routers, and others.
-- IOS does not support `| no-more`. With `device_type=ios` the config is retrieved with plain `show running-config` or
-  `show startup-config`; without it, `| no-more` is appended and IOS rejects the command.
+- `device_type=ios` covers any Cisco IOS or IOS-XE device — Catalyst switches, ISR/ASR routers, and others.
+- IOS does not support `| no-more`, so the config is retrieved with plain `show running-config` or
+  `show startup-config`. On EOS and NX-OS, `| no-more` is appended.
 
 FortiOS notes:
 
@@ -57,7 +98,7 @@ supported, or `| no-more` to disable pagination for text output.
 | `command` | string | yes | — | The operational read command to run |
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
-| `device_type` | string | no | — | `eos`, `ios`, `nxos`, `junos`, or `fortios` |
+| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, or `fortios`; see [Platform detection](#platform-detection) |
 
 Example commands:
 
@@ -106,8 +147,7 @@ Useful for verifying reachability from the device's
 perspective — for example, testing connectivity to a BGP peer, next-hop, or
 management target.
 
-Use `device_type` to select the correct command syntax for the target platform.
-If omitted, EOS/IOS syntax is used (`repeat`, `size` keywords). On FortiOS,
+The command syntax follows the platform (`device_type`, or detected). On FortiOS,
 the tool uses `execute ping-options ...`, runs `execute ping`, then resets the
 options within the same SSH session.
 
@@ -123,7 +163,7 @@ options within the same SSH session.
 | `vrf` | string | no | — | VRF name |
 | `size` | int | no | — | Packet size in bytes |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
-| `device_type` | string | no | — | `eos`, `ios`, `nxos`, `junos`, or `fortios` — controls ping syntax |
+| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, or `fortios` — controls ping syntax |
 
 `destination`, `source`, `vrf` and `outgoing_interface` may only contain
 letters, digits and `. _ : / @ % -`, which covers addresses, hostnames and
@@ -140,9 +180,8 @@ Shows the hop-by-hop path from the device to a destination and per-hop latency.
 Useful for locating where connectivity breaks, verifying traffic follows the
 expected path, and identifying which hop introduces latency.
 
-Use `device_type` to ensure correct syntax. On IOS, `vrf` must precede the
-destination in the command — specifying `device_type=ios` handles this
-automatically. On FortiOS, the tool uses `execute traceroute-options ...`,
+The command syntax follows the platform (`device_type`, or detected). On IOS,
+`vrf` is placed before the destination in the command. On FortiOS, the tool uses `execute traceroute-options ...`,
 runs `execute traceroute`, then resets the options within the same SSH session.
 
 | Parameter | Type | Required | Default | Description |
@@ -157,7 +196,7 @@ runs `execute traceroute`, then resets the options within the same SSH session.
 | `source` | string | no | — | Source IP address or interface name |
 | `vrf` | string | no | — | VRF name |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
-| `device_type` | string | no | — | `eos`, `ios`, `nxos`, `junos`, or `fortios` — controls traceroute syntax |
+| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, or `fortios` — controls traceroute syntax |
 
 The same character restrictions as `run_ping` apply to `destination`, `source`,
 `vrf` and `outgoing_interface`.
@@ -166,6 +205,28 @@ FortiOS limitations:
 
 - `vrf`, `max_hops`, and `timeout` are not supported in this tool for FortiOS 7.4+.
 - `| json` is not supported for FortiOS operational output.
+
+### `detect_platform`
+
+Identifies a device's platform and returns the `device_type` to pass to the other tools, using the same probe and
+cache as [Platform detection](#platform-detection). Useful before working through a list of hosts.
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `host` | string | yes | — | Hostname or IP address of the device |
+| `username` | string | no | `DEVICE_USERNAME` | SSH username |
+| `port` | int | no | 22 | SSH port |
+| `refresh` | bool | no | `false` | Ignore a cached result and probe the device again |
+
+Example result:
+
+```text
+device_type: junos
+version: 23.4R2.13 (reported by the device)
+ssh_server: SSH-2.0-OpenSSH_7.5 (reported by the device)
+detected: now, over SSH
+Pass device_type=junos on later calls to this host to skip detection.
+```
 
 ### `trust_host_key`
 
@@ -259,6 +320,21 @@ To disable host key verification entirely, use either:
 
 Disabling verification is insecure and should only be used as a temporary
 escape hatch.
+
+## Command timeout
+
+Each device command may run for at most 60 seconds, counted from when the SSH session is requested. A device that
+accepts a command but never answers — for example one that ignores SSH exec requests — fails with a timeout error
+instead of blocking the tool call. Raise the limit for very large configurations with either:
+
+- command-line flag: `--command-timeout 2m`
+- environment variable: `SSH_COMMAND_TIMEOUT=2m`
+
+`run_ping` and `run_traceroute` wait on the network rather than the device, so they get at least 5 minutes: a
+traceroute towards an unreachable destination can take minutes to give up. A longer `--command-timeout` applies to
+them too.
+
+The SSH handshake, including authentication, has its own 15-second limit.
 
 ## Installation
 

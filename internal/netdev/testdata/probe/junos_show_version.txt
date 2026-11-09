@@ -1,0 +1,9 @@
+Hostname: Arista-lookalike
+Model: mx204
+Junos: 23.4R2.13
+JUNOS OS Kernel 64-bit  [20240604.39c9257_builder_stable_12_234]
+JUNOS OS libs [20240604.39c9257_builder_stable_12_234]
+JUNOS network stack and utilities [20240705.152839_builder_junos_234_r2]
+JUNOS Routing aggregated [20240705.152839_builder_junos_234_r2]
+JUNOS daemons [20240705.152839_builder_junos_234_r2]
+JUNOS mx daemons [20240705.152839_builder_junos_234_r2]
