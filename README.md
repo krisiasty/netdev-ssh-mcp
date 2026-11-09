@@ -246,6 +246,10 @@ stored for it in `known_hosts`, so a device with several host keys (for example
 ECDSA and ed25519) is checked against the key you trusted rather than reported
 as a mismatch.
 
+DSA (`ssh-dss`) host keys are refused because they are cryptographically weak. A
+device that offers only a DSA host key cannot be connected to or trusted, and a
+DSA key stored in `known_hosts` is ignored.
+
 To disable host key verification entirely, use either:
 
 - command-line flag: `--insecure-skip-host-key-check`

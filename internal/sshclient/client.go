@@ -193,10 +193,10 @@ func InspectHostKey(host string, port int) (HostKeyInfo, error) {
 
 	// Ask for the key types already stored for this host, so the key shown
 	// is the one known_hosts would be checked against.
-	var hostKeyAlgorithms []string
+	var knownHosts gossh.HostKeyCallback
 	if !currentOptions.InsecureSkipHostKeyCheck && currentOptions.KnownHostsPath != "" {
-		if knownHosts, err := knownhosts.New(currentOptions.KnownHostsPath); err == nil {
-			hostKeyAlgorithms = preferredHostKeyAlgorithms(knownHosts, addr, conn.RemoteAddr())
+		if callback, err := knownhosts.New(currentOptions.KnownHostsPath); err == nil {
+			knownHosts = callback
 		}
 	}
 
@@ -205,10 +205,13 @@ func InspectHostKey(host string, port int) (HostKeyInfo, error) {
 		User: "netdev-ssh-mcp-host-key-probe",
 		Auth: []gossh.AuthMethod{gossh.Password("")},
 		HostKeyCallback: func(hostname string, remote net.Addr, key gossh.PublicKey) error {
+			if err := checkHostKeyAllowed(key); err != nil {
+				return err
+			}
 			captured = key
 			return errHostKeyCaptured
 		},
-		HostKeyAlgorithms: hostKeyAlgorithms,
+		HostKeyAlgorithms: preferredHostKeyAlgorithms(knownHosts, addr, conn.RemoteAddr()),
 		Timeout:           dialTimeout,
 	}
 
@@ -302,10 +305,11 @@ func buildAuthMethods() ([]gossh.AuthMethod, error) {
 
 // buildHostKeyCallback returns the callback that verifies a server's host
 // key, and the underlying known_hosts callback (nil when verification is
-// disabled) for preferredHostKeyAlgorithms.
+// disabled) for preferredHostKeyAlgorithms. The callback refuses keys of a
+// prohibited type even when verification is disabled.
 func buildHostKeyCallback(host string, port int) (gossh.HostKeyCallback, gossh.HostKeyCallback, error) {
 	if currentOptions.InsecureSkipHostKeyCheck {
-		return gossh.InsecureIgnoreHostKey(), nil, nil //nolint:gosec
+		return rejectProhibitedHostKey(gossh.InsecureIgnoreHostKey()), nil, nil //nolint:gosec
 	}
 	if currentOptions.KnownHostsPath == "" {
 		return nil, nil, fmt.Errorf("known_hosts path is not configured")
@@ -323,7 +327,31 @@ func buildHostKeyCallback(host string, port int) (gossh.HostKeyCallback, gossh.H
 		return nil, nil, fmt.Errorf("load known_hosts file %s: %w", currentOptions.KnownHostsPath, err)
 	}
 
-	return verifyKnownHost(callback, host, port), callback, nil
+	return rejectProhibitedHostKey(verifyKnownHost(callback, host, port)), callback, nil
+}
+
+// rejectProhibitedHostKey wraps callback so a host key of a prohibited type
+// is refused, even when known_hosts stores it.
+func rejectProhibitedHostKey(callback gossh.HostKeyCallback) gossh.HostKeyCallback {
+	return func(hostname string, remote net.Addr, key gossh.PublicKey) error {
+		if err := checkHostKeyAllowed(key); err != nil {
+			return err
+		}
+		return callback(hostname, remote, key)
+	}
+}
+
+// checkHostKeyAllowed returns an error when key, or the key a certificate
+// certifies, is of a prohibited type.
+func checkHostKeyAllowed(key gossh.PublicKey) error {
+	keyType := key.Type()
+	if cert, ok := key.(*gossh.Certificate); ok {
+		keyType = cert.Key.Type()
+	}
+	if slices.Contains(prohibitedHostKeyAlgorithms, keyType) {
+		return fmt.Errorf("host key type %s is not allowed: DSA keys are cryptographically weak", key.Type())
+	}
+	return nil
 }
 
 // verifyKnownHost wraps a known_hosts callback so unknown and mismatched
@@ -362,59 +390,73 @@ var placeholderHostKey = sync.OnceValue(func() gossh.PublicKey {
 	return key
 })
 
-// storedKeyAlgorithms maps each host key algorithm to the key type it
-// verifies, in the order they are preferred.
-var storedKeyAlgorithms = []struct{ algorithm, keyType string }{
-	{gossh.KeyAlgoED25519, gossh.KeyAlgoED25519},
-	{gossh.KeyAlgoECDSA256, gossh.KeyAlgoECDSA256},
-	{gossh.KeyAlgoECDSA384, gossh.KeyAlgoECDSA384},
-	{gossh.KeyAlgoECDSA521, gossh.KeyAlgoECDSA521},
-	{gossh.KeyAlgoRSASHA512, gossh.KeyAlgoRSA},
-	{gossh.KeyAlgoRSASHA256, gossh.KeyAlgoRSA},
-	{gossh.KeyAlgoRSA, gossh.KeyAlgoRSA},
+// prohibitedHostKeyAlgorithms are never offered to a server, and keys of
+// these types are refused. DSA (ssh-dss) is limited to 1024-bit keys and
+// SHA-1 signatures and is cryptographically weak. The library's default
+// host key algorithms still include it, so HostKeyAlgorithms is always set.
+var prohibitedHostKeyAlgorithms = []string{gossh.InsecureKeyAlgoDSA, gossh.InsecureCertAlgoDSAv01} //nolint:staticcheck // SA1019: referenced only to refuse DSA.
+
+// allowedHostKeyAlgorithms returns every host key algorithm the library
+// implements, except the prohibited ones, in the library's preference order.
+func allowedHostKeyAlgorithms() []string {
+	var algorithms []string
+	for _, a := range slices.Concat(gossh.SupportedAlgorithms().HostKeys, gossh.InsecureAlgorithms().HostKeys) {
+		if !slices.Contains(prohibitedHostKeyAlgorithms, a) && !slices.Contains(algorithms, a) {
+			algorithms = append(algorithms, a)
+		}
+	}
+	return algorithms
+}
+
+// hostKeyType returns the key type a host key algorithm verifies: the RSA
+// SHA-2 signature algorithms verify ssh-rsa keys, and every other algorithm
+// verifies keys of its own name.
+func hostKeyType(algorithm string) string {
+	switch algorithm {
+	case gossh.KeyAlgoRSASHA256, gossh.KeyAlgoRSASHA512:
+		return gossh.KeyAlgoRSA
+	default:
+		return algorithm
+	}
 }
 
 // preferredHostKeyAlgorithms returns the host key algorithms to offer a
 // server: those that verify the key types stored for it in known_hosts
-// first, then every other algorithm the library implements, as OpenSSH does.
+// first, then every other allowed algorithm, as OpenSSH does.
 //
 // Without this the library's default order wins. It prefers ECDSA to
 // ed25519, so a server holding both presents its ECDSA key even when
 // known_hosts stores only the ed25519 one, and the connection fails with a
 // host key mismatch although the stored key is correct.
 //
-// It returns nil, meaning the library default, when nothing is stored for
-// the host or knownHosts is nil.
+// It returns allowedHostKeyAlgorithms unchanged when nothing allowed is
+// stored for the host or knownHosts is nil. It never returns nil, because
+// the library default would offer prohibited algorithms.
 func preferredHostKeyAlgorithms(knownHosts gossh.HostKeyCallback, hostname string, remote net.Addr) []string {
+	allowed := allowedHostKeyAlgorithms()
 	placeholder := placeholderHostKey()
 	if knownHosts == nil || placeholder == nil {
-		return nil
+		return allowed
 	}
 	var keyErr *knownhosts.KeyError
 	if !errors.As(knownHosts(hostname, remote, placeholder), &keyErr) || len(keyErr.Want) == 0 {
-		return nil
+		return allowed
 	}
 
 	stored := make(map[string]bool, len(keyErr.Want))
 	for _, k := range keyErr.Want {
 		stored[k.Key.Type()] = true
 	}
-	var algorithms []string
-	for _, a := range storedKeyAlgorithms {
-		if stored[a.keyType] {
-			algorithms = append(algorithms, a.algorithm)
+	preferred := make([]string, 0, len(allowed))
+	var rest []string
+	for _, a := range allowed {
+		if stored[hostKeyType(a)] {
+			preferred = append(preferred, a)
+		} else {
+			rest = append(rest, a)
 		}
 	}
-	if len(algorithms) == 0 {
-		return nil
-	}
-
-	for _, a := range slices.Concat(gossh.SupportedAlgorithms().HostKeys, gossh.InsecureAlgorithms().HostKeys) {
-		if !slices.Contains(algorithms, a) {
-			algorithms = append(algorithms, a)
-		}
-	}
-	return algorithms
+	return append(preferred, rest...)
 }
 
 // HostKeyValidationError describes an unknown or mismatched SSH host key.
