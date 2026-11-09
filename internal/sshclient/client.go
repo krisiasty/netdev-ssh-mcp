@@ -3,12 +3,16 @@ package sshclient
 import (
 	"bufio"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -134,23 +138,31 @@ func runSessionCommand(cfg ConnConfig, cmd string) (string, error) {
 		return "", err
 	}
 
-	hostKeyCallback, err := buildHostKeyCallback(cfg.Host, port)
+	hostKeyCallback, knownHosts, err := buildHostKeyCallback(cfg.Host, port)
 	if err != nil {
 		return "", err
 	}
 
-	sshCfg := &gossh.ClientConfig{
-		User:            cfg.Username,
-		Auth:            methods,
-		HostKeyCallback: hostKeyCallback,
-		Timeout:         dialTimeout,
-	}
-
 	addr := joinHostPort(cfg.Host, port)
-	client, err := gossh.Dial("tcp", addr, sshCfg)
+	conn, err := (&net.Dialer{Timeout: dialTimeout}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return "", fmt.Errorf("dial %s: %w", addr, err)
 	}
+
+	sshCfg := &gossh.ClientConfig{
+		User:              cfg.Username,
+		Auth:              methods,
+		HostKeyCallback:   hostKeyCallback,
+		HostKeyAlgorithms: preferredHostKeyAlgorithms(knownHosts, addr, conn.RemoteAddr()),
+		Timeout:           dialTimeout,
+	}
+
+	sshConn, chans, reqs, err := gossh.NewClientConn(conn, addr, sshCfg)
+	if err != nil {
+		_ = conn.Close()
+		return "", fmt.Errorf("dial %s: %w", addr, err)
+	}
+	client := gossh.NewClient(sshConn, chans, reqs)
 	defer func() { _ = client.Close() }()
 
 	session, err := client.NewSession()
@@ -179,6 +191,15 @@ func InspectHostKey(host string, port int) (HostKeyInfo, error) {
 	}
 	defer func() { _ = conn.Close() }()
 
+	// Ask for the key types already stored for this host, so the key shown
+	// is the one known_hosts would be checked against.
+	var hostKeyAlgorithms []string
+	if !currentOptions.InsecureSkipHostKeyCheck && currentOptions.KnownHostsPath != "" {
+		if knownHosts, err := knownhosts.New(currentOptions.KnownHostsPath); err == nil {
+			hostKeyAlgorithms = preferredHostKeyAlgorithms(knownHosts, addr, conn.RemoteAddr())
+		}
+	}
+
 	var captured gossh.PublicKey
 	sshCfg := &gossh.ClientConfig{
 		User: "netdev-ssh-mcp-host-key-probe",
@@ -187,7 +208,8 @@ func InspectHostKey(host string, port int) (HostKeyInfo, error) {
 			captured = key
 			return errHostKeyCaptured
 		},
-		Timeout: dialTimeout,
+		HostKeyAlgorithms: hostKeyAlgorithms,
+		Timeout:           dialTimeout,
 	}
 
 	_, _, _, err = gossh.NewClientConn(conn, addr, sshCfg)
@@ -278,26 +300,35 @@ func buildAuthMethods() ([]gossh.AuthMethod, error) {
 	return methods, nil
 }
 
-func buildHostKeyCallback(host string, port int) (gossh.HostKeyCallback, error) {
+// buildHostKeyCallback returns the callback that verifies a server's host
+// key, and the underlying known_hosts callback (nil when verification is
+// disabled) for preferredHostKeyAlgorithms.
+func buildHostKeyCallback(host string, port int) (gossh.HostKeyCallback, gossh.HostKeyCallback, error) {
 	if currentOptions.InsecureSkipHostKeyCheck {
-		return gossh.InsecureIgnoreHostKey(), nil //nolint:gosec
+		return gossh.InsecureIgnoreHostKey(), nil, nil //nolint:gosec
 	}
 	if currentOptions.KnownHostsPath == "" {
-		return nil, fmt.Errorf("known_hosts path is not configured")
+		return nil, nil, fmt.Errorf("known_hosts path is not configured")
 	}
 
 	callback, err := knownhosts.New(currentOptions.KnownHostsPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"SSH known_hosts file not found at %s. Create it or use the trust_host_key tool to add %s before connecting",
 				currentOptions.KnownHostsPath,
 				joinHostPort(host, port),
 			)
 		}
-		return nil, fmt.Errorf("load known_hosts file %s: %w", currentOptions.KnownHostsPath, err)
+		return nil, nil, fmt.Errorf("load known_hosts file %s: %w", currentOptions.KnownHostsPath, err)
 	}
 
+	return verifyKnownHost(callback, host, port), callback, nil
+}
+
+// verifyKnownHost wraps a known_hosts callback so unknown and mismatched
+// keys produce a HostKeyValidationError.
+func verifyKnownHost(callback gossh.HostKeyCallback, host string, port int) gossh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key gossh.PublicKey) error {
 		err := callback(hostname, remote, key)
 		if err == nil {
@@ -314,7 +345,76 @@ func buildHostKeyCallback(host string, port int) (gossh.HostKeyCallback, error) 
 			}
 		}
 		return err
-	}, nil
+	}
+}
+
+// placeholderHostKey returns a key that is in no known_hosts file. Checking
+// it against known_hosts makes the callback list the keys stored for a host.
+var placeholderHostKey = sync.OnceValue(func() gossh.PublicKey {
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil
+	}
+	key, err := gossh.NewPublicKey(pub)
+	if err != nil {
+		return nil
+	}
+	return key
+})
+
+// storedKeyAlgorithms maps each host key algorithm to the key type it
+// verifies, in the order they are preferred.
+var storedKeyAlgorithms = []struct{ algorithm, keyType string }{
+	{gossh.KeyAlgoED25519, gossh.KeyAlgoED25519},
+	{gossh.KeyAlgoECDSA256, gossh.KeyAlgoECDSA256},
+	{gossh.KeyAlgoECDSA384, gossh.KeyAlgoECDSA384},
+	{gossh.KeyAlgoECDSA521, gossh.KeyAlgoECDSA521},
+	{gossh.KeyAlgoRSASHA512, gossh.KeyAlgoRSA},
+	{gossh.KeyAlgoRSASHA256, gossh.KeyAlgoRSA},
+	{gossh.KeyAlgoRSA, gossh.KeyAlgoRSA},
+}
+
+// preferredHostKeyAlgorithms returns the host key algorithms to offer a
+// server: those that verify the key types stored for it in known_hosts
+// first, then every other algorithm the library implements, as OpenSSH does.
+//
+// Without this the library's default order wins. It prefers ECDSA to
+// ed25519, so a server holding both presents its ECDSA key even when
+// known_hosts stores only the ed25519 one, and the connection fails with a
+// host key mismatch although the stored key is correct.
+//
+// It returns nil, meaning the library default, when nothing is stored for
+// the host or knownHosts is nil.
+func preferredHostKeyAlgorithms(knownHosts gossh.HostKeyCallback, hostname string, remote net.Addr) []string {
+	placeholder := placeholderHostKey()
+	if knownHosts == nil || placeholder == nil {
+		return nil
+	}
+	var keyErr *knownhosts.KeyError
+	if !errors.As(knownHosts(hostname, remote, placeholder), &keyErr) || len(keyErr.Want) == 0 {
+		return nil
+	}
+
+	stored := make(map[string]bool, len(keyErr.Want))
+	for _, k := range keyErr.Want {
+		stored[k.Key.Type()] = true
+	}
+	var algorithms []string
+	for _, a := range storedKeyAlgorithms {
+		if stored[a.keyType] {
+			algorithms = append(algorithms, a.algorithm)
+		}
+	}
+	if len(algorithms) == 0 {
+		return nil
+	}
+
+	for _, a := range slices.Concat(gossh.SupportedAlgorithms().HostKeys, gossh.InsecureAlgorithms().HostKeys) {
+		if !slices.Contains(algorithms, a) {
+			algorithms = append(algorithms, a)
+		}
+	}
+	return algorithms
 }
 
 // HostKeyValidationError describes an unknown or mismatched SSH host key.

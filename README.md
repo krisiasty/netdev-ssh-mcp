@@ -241,6 +241,11 @@ You can override the path with either:
 If a device is not present in `known_hosts`, tool calls fail with a clear error
 that includes the presented fingerprint and suggests using `trust_host_key`.
 
+As OpenSSH does, the server first asks a device for the host key types already
+stored for it in `known_hosts`, so a device with several host keys (for example
+ECDSA and ed25519) is checked against the key you trusted rather than reported
+as a mismatch.
+
 To disable host key verification entirely, use either:
 
 - command-line flag: `--insecure-skip-host-key-check`
