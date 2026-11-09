@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/binary"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -139,6 +141,9 @@ func TestPreferredHostKeyAlgorithms(t *testing.T) {
 	addr := &net.TCPAddr{IP: net.IPv4(192, 0, 2, 10), Port: 22}
 	hostname := "192.0.2.10:22"
 	rsaAlgorithms := []string{gossh.KeyAlgoRSASHA512, gossh.KeyAlgoRSASHA256, gossh.KeyAlgoRSA}
+	if fips140.Enabled() {
+		rsaAlgorithms = rsaAlgorithms[:2] // no SHA-1 ssh-rsa
+	}
 
 	tests := []struct {
 		name string
@@ -179,18 +184,61 @@ func TestPreferredHostKeyAlgorithms(t *testing.T) {
 	})
 }
 
+// TestAllowedHostKeyAlgorithmsOrder checks the OpenSSH order used when nothing
+// is stored: certificates first, then ed25519, ECDSA and RSA, with SHA-1
+// ssh-rsa last.
+func TestAllowedHostKeyAlgorithmsOrder(t *testing.T) {
+	got := allowedHostKeyAlgorithms()
+	want := []string{
+		gossh.CertAlgoED25519v01,
+		gossh.CertAlgoECDSA256v01,
+		gossh.CertAlgoRSASHA512v01,
+		gossh.CertAlgoRSAv01,
+		gossh.KeyAlgoED25519,
+		gossh.KeyAlgoECDSA256,
+		gossh.KeyAlgoECDSA384,
+		gossh.KeyAlgoECDSA521,
+		gossh.KeyAlgoRSASHA512,
+		gossh.KeyAlgoRSASHA256,
+		gossh.KeyAlgoRSA,
+	}
+	if fips140.Enabled() {
+		want = slices.DeleteFunc(want, func(a string) bool { return a == gossh.KeyAlgoRSA || a == gossh.CertAlgoRSAv01 })
+	}
+	last := -1
+	for _, a := range want {
+		i := slices.Index(got, a)
+		if i <= last {
+			t.Fatalf("allowedHostKeyAlgorithms() = %v; want %s after %v", got, a, want[:slices.Index(want, a)])
+		}
+		last = i
+	}
+	firstPlain := slices.IndexFunc(got, func(a string) bool { return !strings.Contains(a, "-cert-v01@") })
+	if slices.ContainsFunc(got[firstPlain:], func(a string) bool { return strings.Contains(a, "-cert-v01@") }) {
+		t.Fatalf("allowedHostKeyAlgorithms() = %v; want every certificate algorithm before the plain keys", got)
+	}
+	if fips140.Enabled() {
+		t.Skip("ssh-rsa is not offered in FIPS 140 mode")
+	}
+	if got[len(got)-1] != gossh.KeyAlgoRSA {
+		t.Fatalf("allowedHostKeyAlgorithms() = %v; want ssh-rsa last", got)
+	}
+}
+
 func sameElements(a, b []string) bool {
 	return slices.Equal(slices.Sorted(slices.Values(a)), slices.Sorted(slices.Values(b)))
 }
 
 // checkAllowedAlgorithms fails unless got offers every algorithm the library
-// implements except DSA, so a server that dropped the stored key type still
-// negotiates and reports a mismatch, and never offers DSA.
+// implements except DSA (and SHA-1 ssh-rsa in FIPS 140 mode), so a server
+// that dropped the stored key type still negotiates and reports a mismatch,
+// and never offers DSA.
 func checkAllowedAlgorithms(t *testing.T, got []string) {
 	t.Helper()
 	for _, a := range slices.Concat(gossh.SupportedAlgorithms().HostKeys, gossh.InsecureAlgorithms().HostKeys) {
-		isDSA := a == "ssh-dss" || a == "ssh-dss-cert-v01@openssh.com"
-		if slices.Contains(got, a) == isDSA {
+		excluded := a == "ssh-dss" || a == "ssh-dss-cert-v01@openssh.com" ||
+			fips140.Enabled() && (a == "ssh-rsa" || a == "ssh-rsa-cert-v01@openssh.com")
+		if slices.Contains(got, a) == excluded {
 			t.Fatalf("preferredHostKeyAlgorithms() = %v; want every algorithm except DSA, got %s wrong", got, a)
 		}
 	}
@@ -309,6 +357,23 @@ func TestTrustHostKey(t *testing.T) {
 	}
 	if again, err := TrustHostKey(host, addr.Port, false); err != nil || again.Action != "already_trusted" {
 		t.Fatalf("TrustHostKey() after replace = %q, %v; want already_trusted", again.Action, err)
+	}
+}
+
+// TestMalformedKnownHosts checks both steps of trust_host_key report a
+// known_hosts file that cannot be parsed, rather than one ignoring it.
+func TestMalformedKnownHosts(t *testing.T) {
+	addr := startHostKeyServer(t, newSigner(t, "ed25519"))
+	path := useKnownHosts(t, addr)
+	if err := os.WriteFile(path, []byte("192.0.2.1 ssh-ed25519 not-base64!\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := InspectHostKey(addr.IP.String(), addr.Port); err == nil {
+		t.Fatal("InspectHostKey() error = nil, want the malformed known_hosts reported")
+	}
+	if _, err := TrustHostKey(addr.IP.String(), addr.Port, false); err == nil {
+		t.Fatal("TrustHostKey() error = nil, want the malformed known_hosts reported")
 	}
 }
 

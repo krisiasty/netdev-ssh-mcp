@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"crypto/ed25519"
+	"crypto/fips140"
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -32,6 +34,22 @@ var errHostKeyCaptured = errors.New("ssh host key captured")
 // ClientConfig.Timeout does not cover: it applies only to the TCP connect in
 // gossh.Dial. It is a variable so tests can shorten it.
 var handshakeTimeout = 15 * time.Second
+
+// closeAfter closes c once d has passed, unless the returned stop function is
+// called first. stop reports whether the timer had already closed c.
+//
+// Closing from a timer, rather than setting a deadline on the connection,
+// says exactly whether the limit was hit. x/crypto starts a background reader
+// during the handshake, so a deadline still set when the handshake returns
+// could expire before it is cleared and drop a working connection.
+func closeAfter(d time.Duration, c io.Closer) (stop func() (expired bool)) {
+	timer := time.AfterFunc(d, func() { _ = c.Close() })
+	return func() bool { return !timer.Stop() }
+}
+
+func handshakeTimeoutError(addr string) error {
+	return fmt.Errorf("SSH handshake with %s did not finish within %v: %w", addr, handshakeTimeout, os.ErrDeadlineExceeded)
+}
 
 // ConnConfig holds SSH connection parameters.
 type ConnConfig struct {
@@ -161,18 +179,16 @@ func runSessionCommand(cfg ConnConfig, cmd string) (string, error) {
 		HostKeyAlgorithms: preferredHostKeyAlgorithms(knownHosts, addr, conn.RemoteAddr()),
 	}
 
-	if err := conn.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
-		_ = conn.Close()
-		return "", fmt.Errorf("dial %s: %w", addr, err)
-	}
+	handshakeExpired := closeAfter(handshakeTimeout, conn)
 	sshConn, chans, reqs, err := gossh.NewClientConn(conn, addr, sshCfg)
+	if handshakeExpired() {
+		if err == nil {
+			_ = sshConn.Close()
+		}
+		return "", handshakeTimeoutError(addr)
+	}
 	if err != nil {
 		_ = conn.Close()
-		return "", fmt.Errorf("dial %s: %w", addr, err)
-	}
-	// The deadline covers only the handshake; the command may run longer.
-	if err := conn.SetDeadline(time.Time{}); err != nil {
-		_ = sshConn.Close()
 		return "", fmt.Errorf("dial %s: %w", addr, err)
 	}
 	client := gossh.NewClient(sshConn, chans, reqs)
@@ -195,12 +211,10 @@ func runSessionCommand(cfg ConnConfig, cmd string) (string, error) {
 // InspectHostKey fetches the host key presented by a remote SSH server without trusting it.
 func InspectHostKey(host string, port int) (HostKeyInfo, error) {
 	// Ask for the key types already stored for this host, so the key shown
-	// is the one known_hosts would be checked against. known_hosts is used
-	// only to order the algorithms, so a file that cannot be loaded (not
-	// created yet, or checking disabled) just leaves the default order.
-	_, knownHosts, err := buildHostKeyCallback(host, normalizedPort(port))
+	// is the one known_hosts would be checked against.
+	knownHosts, err := loadKnownHosts()
 	if err != nil {
-		knownHosts = nil
+		return HostKeyInfo{}, err
 	}
 	return inspectHostKey(host, port, knownHosts)
 }
@@ -223,20 +237,18 @@ func inspectHostKey(host string, port int, knownHosts gossh.HostKeyCallback) (Ho
 	sshCfg := &gossh.ClientConfig{
 		User: "netdev-ssh-mcp-host-key-probe",
 		Auth: []gossh.AuthMethod{gossh.Password("")},
-		HostKeyCallback: func(hostname string, remote net.Addr, key gossh.PublicKey) error {
-			if err := checkHostKeyAllowed(key); err != nil {
-				return err
-			}
+		HostKeyCallback: rejectProhibitedHostKey(func(hostname string, remote net.Addr, key gossh.PublicKey) error {
 			captured = key
 			return errHostKeyCaptured
-		},
+		}),
 		HostKeyAlgorithms: preferredHostKeyAlgorithms(knownHosts, addr, conn.RemoteAddr()),
 	}
 
-	if err := conn.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
-		return HostKeyInfo{}, fmt.Errorf("fetch host key from %s: %w", addr, err)
-	}
+	handshakeExpired := closeAfter(handshakeTimeout, conn)
 	_, _, _, err = gossh.NewClientConn(conn, addr, sshCfg)
+	if handshakeExpired() && captured == nil {
+		return HostKeyInfo{}, handshakeTimeoutError(addr)
+	}
 	if captured == nil {
 		if err != nil {
 			return HostKeyInfo{}, fmt.Errorf("fetch host key from %s: %w", addr, err)
@@ -269,13 +281,10 @@ func TrustHostKey(host string, port int, replace bool) (TrustHostKeyResult, erro
 	}
 
 	// Load known_hosts once, both to choose the host key algorithms and to
-	// check the presented key. A file that does not exist yet stores nothing.
-	knownHosts, err := knownhosts.New(currentOptions.KnownHostsPath)
+	// check the presented key.
+	knownHosts, err := loadKnownHosts()
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return TrustHostKeyResult{}, fmt.Errorf("load known_hosts file %s: %w", currentOptions.KnownHostsPath, err)
-		}
-		knownHosts = nil
+		return TrustHostKeyResult{}, err
 	}
 
 	info, err := inspectHostKey(host, port, knownHosts)
@@ -346,19 +355,36 @@ func buildHostKeyCallback(host string, port int) (gossh.HostKeyCallback, gossh.H
 		return nil, nil, fmt.Errorf("known_hosts path is not configured")
 	}
 
-	callback, err := knownhosts.New(currentOptions.KnownHostsPath)
+	callback, err := loadKnownHosts()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil, fmt.Errorf(
-				"SSH known_hosts file not found at %s. Create it or use the trust_host_key tool to add %s before connecting",
-				currentOptions.KnownHostsPath,
-				joinHostPort(host, port),
-			)
-		}
-		return nil, nil, fmt.Errorf("load known_hosts file %s: %w", currentOptions.KnownHostsPath, err)
+		return nil, nil, err
+	}
+	if callback == nil {
+		return nil, nil, fmt.Errorf(
+			"SSH known_hosts file not found at %s. Create it or use the trust_host_key tool to add %s before connecting",
+			currentOptions.KnownHostsPath,
+			joinHostPort(host, port),
+		)
 	}
 
 	return rejectProhibitedHostKey(verifyKnownHost(callback, host, port)), callback, nil
+}
+
+// loadKnownHosts parses the configured known_hosts file. It returns a nil
+// callback, and no error, when host key checking is disabled or the file does
+// not exist yet, since then nothing is stored.
+func loadKnownHosts() (gossh.HostKeyCallback, error) {
+	if currentOptions.InsecureSkipHostKeyCheck || currentOptions.KnownHostsPath == "" {
+		return nil, nil
+	}
+	callback, err := knownhosts.New(currentOptions.KnownHostsPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load known_hosts file %s: %w", currentOptions.KnownHostsPath, err)
+	}
+	return callback, nil
 }
 
 // rejectProhibitedHostKey wraps callback so a host key of a prohibited type
@@ -427,16 +453,56 @@ var placeholderHostKey = sync.OnceValue(func() gossh.PublicKey {
 // host key algorithms still include it, so HostKeyAlgorithms is always set.
 var prohibitedHostKeyAlgorithms = []string{gossh.InsecureKeyAlgoDSA, gossh.InsecureCertAlgoDSAv01} //nolint:staticcheck // SA1019: referenced only to refuse DSA.
 
+// sha1HostKeyAlgorithms sign with SHA-1. x/crypto drops them from its default
+// algorithms in FIPS 140 mode, and so does allowedHostKeyAlgorithms, since it
+// replaces that default.
+var sha1HostKeyAlgorithms = []string{gossh.KeyAlgoRSA, gossh.CertAlgoRSAv01}
+
 // allowedHostKeyAlgorithms returns every host key algorithm the library
-// implements, except the prohibited ones, in the library's preference order.
+// implements, except the prohibited ones, ordered by hostKeyAlgorithmRank.
+// Building it from the library's lists covers new key types without edits.
 func allowedHostKeyAlgorithms() []string {
 	var algorithms []string
 	for _, a := range slices.Concat(gossh.SupportedAlgorithms().HostKeys, gossh.InsecureAlgorithms().HostKeys) {
-		if !slices.Contains(prohibitedHostKeyAlgorithms, a) && !slices.Contains(algorithms, a) {
-			algorithms = append(algorithms, a)
+		if slices.Contains(prohibitedHostKeyAlgorithms, a) || slices.Contains(algorithms, a) {
+			continue
 		}
+		if fips140.Enabled() && slices.Contains(sha1HostKeyAlgorithms, a) {
+			continue
+		}
+		algorithms = append(algorithms, a)
 	}
+	slices.SortStableFunc(algorithms, func(a, b string) int {
+		return hostKeyAlgorithmRank(a) - hostKeyAlgorithmRank(b)
+	})
 	return algorithms
+}
+
+// hostKeyAlgorithmRank orders host key algorithms as OpenSSH does:
+// certificates before plain keys, and within each, ed25519, then ECDSA, then
+// RSA, with SHA-1 ssh-rsa after the SHA-2 variants. Key types OpenSSH does
+// not rank (ML-DSA, and any the library adds later) go between ECDSA and
+// RSA. Equal ranks keep the library's order.
+func hostKeyAlgorithmRank(algorithm string) int {
+	base, _, isCert := strings.Cut(algorithm, "-cert-v01@")
+	rank := 0
+	if !isCert {
+		rank = 10
+	}
+	switch {
+	case base == gossh.KeyAlgoED25519:
+		return rank
+	case strings.HasPrefix(base, "ecdsa-sha2-"):
+		return rank + 1
+	case base == gossh.KeyAlgoRSASHA512:
+		return rank + 3
+	case base == gossh.KeyAlgoRSASHA256:
+		return rank + 4
+	case base == gossh.KeyAlgoRSA:
+		return rank + 5
+	default:
+		return rank + 2
+	}
 }
 
 // hostKeyType returns the key type a host key algorithm verifies: the RSA

@@ -244,11 +244,13 @@ that includes the presented fingerprint and suggests using `trust_host_key`.
 As OpenSSH does, the server first asks a device for the host key types already
 stored for it in `known_hosts`, so a device with several host keys (for example
 ECDSA and ed25519) is checked against the key you trusted rather than reported
-as a mismatch.
+as a mismatch. For a device with nothing stored, it prefers ed25519, then ECDSA,
+then RSA, also as OpenSSH does, so that is the key `trust_host_key` shows.
 
 DSA (`ssh-dss`) host keys are refused because they are cryptographically weak. A
-device that offers only a DSA host key cannot be connected to or trusted, and a
-DSA key stored in `known_hosts` is ignored.
+device that offers only a DSA host key cannot be connected to or trusted. A DSA
+key stored in `known_hosts` is never asked for; if the device presents another
+key, it is reported as a mismatch so you can replace the stored DSA key.
 
 To disable host key verification entirely, use either:
 
