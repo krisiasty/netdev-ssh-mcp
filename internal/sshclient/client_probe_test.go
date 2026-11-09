@@ -125,7 +125,7 @@ func TestProbeReturnsServerVersionAndOutput(t *testing.T) {
 	cfg := useTestServer(t, s, 5*time.Second)
 
 	var seen string
-	res, err := Probe(cfg, func(serverVersion string) (string, error) {
+	res, err := Probe(t.Context(), cfg, func(serverVersion string) (string, error) {
 		seen = serverVersion
 		return "show version", nil
 	})
@@ -146,7 +146,7 @@ func TestProbeKeepsOutputOnNonZeroExit(t *testing.T) {
 	})
 	cfg := useTestServer(t, s, 5*time.Second)
 
-	res, err := Probe(cfg, func(string) (string, error) { return "show version", nil })
+	res, err := Probe(t.Context(), cfg, func(string) (string, error) { return "show version", nil })
 	if err != nil || res.Output != "% Invalid input\n" {
 		t.Fatalf("Probe() = %+v, %v; want the output and no error", res, err)
 	}
@@ -157,7 +157,7 @@ func TestProbeRunsNothingWhenChooseRefuses(t *testing.T) {
 	cfg := useTestServer(t, s, 5*time.Second)
 
 	refused := errors.New("unsupported")
-	res, err := Probe(cfg, func(string) (string, error) { return "", refused })
+	res, err := Probe(t.Context(), cfg, func(string) (string, error) { return "", refused })
 	if !errors.Is(err, refused) || res.Command != "" || res.ServerVersion != "SSH-2.0-OpenSSH_7.3p1.RL" {
 		t.Fatalf("Probe() = %+v, %v; want the refusal, the server version and no command", res, err)
 	}
@@ -168,7 +168,7 @@ func TestRunCommandTimesOut(t *testing.T) {
 	cfg := useTestServer(t, s, 300*time.Millisecond)
 
 	start := time.Now()
-	_, err := RunCommand(cfg, "show version")
+	_, err := RunCommand(t.Context(), cfg, "show version")
 	if !errors.Is(err, ErrCommandTimeout) {
 		t.Fatalf("RunCommand() error = %v, want ErrCommandTimeout", err)
 	}
@@ -183,7 +183,7 @@ func TestRunCommandReturnsOutput(t *testing.T) {
 	})
 	cfg := useTestServer(t, s, 5*time.Second)
 
-	out, err := RunCommand(cfg, "show clock")
+	out, err := RunCommand(t.Context(), cfg, "show clock")
 	if err != nil || out != "12:00:00\n" {
 		t.Fatalf("RunCommand() = %q, %v", out, err)
 	}
@@ -210,7 +210,7 @@ func TestRunCommandErrorOmitsDeviceOutput(t *testing.T) {
 	})
 	cfg := useTestServer(t, s, 5*time.Second)
 
-	_, err := RunCommand(cfg, "show foo")
+	_, err := RunCommand(t.Context(), cfg, "show foo")
 	if err == nil || err.Error() != `run "show foo": process exited with status 1` {
 		t.Fatalf("RunCommand() error = %q, want only the command and exit status", err)
 	}
@@ -223,7 +223,7 @@ func TestRunCommandErrorOmitsDeviceOutput(t *testing.T) {
 		t.Fatalf("RunCommand() error = %v, want it to wrap the ExitError", err)
 	}
 
-	_, err = RunCommand(cfg, "show bar")
+	_, err = RunCommand(t.Context(), cfg, "show bar")
 	if !errors.As(err, &cmdErr) || string(cmdErr.Output) != "% Incomplete command\n" || strings.Contains(err.Error(), "Incomplete") {
 		t.Fatalf("RunCommand() error = %q, Output %q; want stdout in Output only", err, cmdErr.Output)
 	}

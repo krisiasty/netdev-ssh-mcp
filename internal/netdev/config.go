@@ -36,7 +36,7 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 		return nil, nil, err
 	}
 	cfg := connConfig(args.Host, args.Port, args.Username)
-	rt, err := resolveDeviceType(cfg, args.DeviceType, false)
+	rt, err := resolveDeviceType(ctx, cfg, args.DeviceType, false)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get_config: %w", err)
 	}
@@ -50,9 +50,9 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 
 	slog.Info("get_config", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "config_type", configType) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
-	out, err := runCommand(cfg, cmd)
+	out, err := runCommand(ctx, cfg, cmd)
 	if err != nil {
-		slog.Error("get_config failed", "host", args.Host, "err", err)
+		logFailure("get_config", err, "host", args.Host)
 		return nil, nil, runError("get_config", cfg, rt, err)
 	}
 

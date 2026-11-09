@@ -43,20 +43,56 @@ var errHostKeyCaptured = errors.New("ssh host key captured")
 // gossh.Dial. It is a variable so tests can shorten it.
 var handshakeTimeout = 15 * time.Second
 
-// closeAfter closes c once d has passed, unless the returned stop function is
-// called first. stop reports whether the timer had already closed c.
+// errLimitReached is the reason closeOnLimit reports when its time limit
+// passed.
+var errLimitReached = errors.New("time limit reached")
+
+// closeOnLimit closes c once d has passed or ctx is done, whichever comes
+// first, unless the returned stop function is called first. stop reports why
+// c was closed: errLimitReached when d passed, ctx's error when ctx was done
+// (the caller cancelled the request), or nil when it was not closed. Calling
+// stop again returns the same result. If ctx is already done, c is closed
+// and stop reports it, so a cancelled request never carries on.
 //
 // Closing from a timer, rather than setting a deadline on the connection,
 // says exactly whether the limit was hit. x/crypto starts a background reader
 // during the handshake, so a deadline still set when the handshake returns
 // could expire before it is cleared and drop a working connection.
-func closeAfter(d time.Duration, c io.Closer) (stop func() (expired bool)) {
-	timer := time.AfterFunc(d, func() { _ = c.Close() })
-	return sync.OnceValue(func() bool { return !timer.Stop() })
+func closeOnLimit(ctx context.Context, d time.Duration, c io.Closer) (stop func() error) {
+	limitCtx, cancel := context.WithTimeoutCause(ctx, d, errLimitReached)
+	stopClose := context.AfterFunc(limitCtx, func() { _ = c.Close() })
+	return sync.OnceValue(func() error {
+		defer cancel()
+		if stopClose() {
+			return nil // stopped before limitCtx was done: c was not closed
+		}
+		return context.Cause(limitCtx)
+	})
 }
 
-func handshakeTimeoutError(addr string) error {
-	return fmt.Errorf("SSH handshake with %s did not finish within %v: %w", addr, handshakeTimeout, os.ErrDeadlineExceeded)
+// closers closes each of its members, so one limit can cover several
+// connections.
+type closers []io.Closer
+
+func (cs closers) Close() error {
+	var errs []error
+	for _, c := range cs {
+		errs = append(errs, c.Close())
+	}
+	return errors.Join(errs...)
+}
+
+// closerFunc adapts a function to io.Closer.
+type closerFunc func()
+
+func (f closerFunc) Close() error { f(); return nil }
+
+// handshakeError describes a handshake that closeOnLimit cut short.
+func handshakeError(addr string, reason error) error {
+	if errors.Is(reason, errLimitReached) {
+		return fmt.Errorf("SSH handshake with %s did not finish within %v: %w", addr, handshakeTimeout, os.ErrDeadlineExceeded)
+	}
+	return fmt.Errorf("SSH handshake with %s: %w", addr, reason)
 }
 
 // ErrCommandTimeout is returned when a device accepts a command but does not
@@ -161,18 +197,20 @@ func validateKnownHostsPath(path string) (string, error) {
 }
 
 // RunCommand dials the SSH host, executes cmd, and returns stdout.
-// A new connection is created for each call.
-func RunCommand(cfg ConnConfig, cmd string) (string, error) {
+// A new connection is created for each call. Cancelling ctx closes the
+// connection and returns ctx's error.
+func RunCommand(ctx context.Context, cfg ConnConfig, cmd string) (string, error) {
 	if strings.TrimSpace(cmd) == "" {
 		return "", fmt.Errorf("command is required")
 	}
 
-	return runSessionCommand(cfg, cmd)
+	return runSessionCommand(ctx, cfg, cmd)
 }
 
 // RunCommands dials the SSH host, executes multiple newline-delimited commands
-// in a single non-PTY exec session, and returns stdout.
-func RunCommands(cfg ConnConfig, commands []string) (string, error) {
+// in a single non-PTY exec session, and returns stdout. Cancelling ctx closes
+// the connection and returns ctx's error.
+func RunCommands(ctx context.Context, cfg ConnConfig, commands []string) (string, error) {
 	if len(commands) == 0 {
 		return "", fmt.Errorf("at least one command is required")
 	}
@@ -186,7 +224,7 @@ func RunCommands(cfg ConnConfig, commands []string) (string, error) {
 		joined = append(joined, command)
 	}
 
-	return runSessionCommand(cfg, strings.Join(joined, "\n"))
+	return runSessionCommand(ctx, cfg, strings.Join(joined, "\n"))
 }
 
 // ProbeResult is what Probe learned about a device.
@@ -204,9 +242,10 @@ type ProbeResult struct {
 // Probe dials the SSH host and passes the server's identification string to
 // choose, which returns the command to run on the same connection. If choose
 // returns an error, Probe returns it without running anything; if it returns
-// "", Probe runs nothing.
-func Probe(cfg ConnConfig, choose func(serverVersion string) (string, error)) (ProbeResult, error) {
-	client, addr, err := dial(cfg)
+// "", Probe runs nothing. Cancelling ctx closes the connection and returns
+// ctx's error.
+func Probe(ctx context.Context, cfg ConnConfig, choose func(serverVersion string) (string, error)) (ProbeResult, error) {
+	client, addr, err := dial(ctx, cfg)
 	if err != nil {
 		return ProbeResult{}, err
 	}
@@ -219,7 +258,7 @@ func Probe(cfg ConnConfig, choose func(serverVersion string) (string, error)) (P
 	}
 	res.Command = cmd
 
-	out, err := runOnClient(client, addr, cmd, commandTimeout())
+	out, err := runOnClient(ctx, client, addr, cmd, commandTimeout())
 	res.Output = out
 	var exitErr *gossh.ExitError
 	if err != nil && !errors.As(err, &exitErr) {
@@ -228,21 +267,26 @@ func Probe(cfg ConnConfig, choose func(serverVersion string) (string, error)) (P
 	return res, nil
 }
 
-func runSessionCommand(cfg ConnConfig, cmd string) (string, error) {
-	client, addr, err := dial(cfg)
+func runSessionCommand(ctx context.Context, cfg ConnConfig, cmd string) (string, error) {
+	client, addr, err := dial(ctx, cfg)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = client.Close() }()
 
-	out, err := runOnClient(client, addr, cmd, commandTimeoutFor(cfg))
+	out, err := runOnClient(ctx, client, addr, cmd, commandTimeoutFor(cfg))
 	if err != nil {
 		return "", err
 	}
 	return out, nil
 }
 
-func dial(cfg ConnConfig) (*gossh.Client, string, error) {
+func dial(ctx context.Context, cfg ConnConfig) (*gossh.Client, string, error) {
+	// A cancelled request must report the cancellation, not whatever step
+	// first trips over it (such as "no auth available").
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	port := normalizedPort(cfg.Port)
 
 	methods, closeAgent, err := buildAuthMethods()
@@ -257,7 +301,7 @@ func dial(cfg ConnConfig) (*gossh.Client, string, error) {
 	}
 
 	addr := joinHostPort(cfg.Host, port)
-	conn, err := (&net.Dialer{Timeout: dialTimeout}).DialContext(context.Background(), "tcp", addr)
+	conn, err := (&net.Dialer{Timeout: dialTimeout}).DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, "", fmt.Errorf("dial %s: %w", addr, err)
 	}
@@ -269,13 +313,16 @@ func dial(cfg ConnConfig) (*gossh.Client, string, error) {
 		HostKeyAlgorithms: preferredHostKeyAlgorithms(knownHosts, addr, conn.RemoteAddr()),
 	}
 
-	handshakeExpired := closeAfter(handshakeTimeout, conn)
+	// The limit closes the agent connection too: authentication can be stuck
+	// waiting on the agent (for example one that asks the user to confirm
+	// each use), and closing the TCP connection alone does not unblock it.
+	stop := closeOnLimit(ctx, handshakeTimeout, closers{conn, closerFunc(closeAgent)})
 	sshConn, chans, reqs, err := gossh.NewClientConn(conn, addr, sshCfg)
-	if handshakeExpired() {
+	if reason := stop(); reason != nil {
 		if err == nil {
 			_ = sshConn.Close()
 		}
-		return nil, "", handshakeTimeoutError(addr)
+		return nil, "", handshakeError(addr, reason)
 	}
 	if err != nil {
 		_ = conn.Close()
@@ -286,22 +333,29 @@ func dial(cfg ConnConfig) (*gossh.Client, string, error) {
 
 // runOnClient runs cmd in a new exec session on client. If opening the
 // session and running the command take longer than timeout, the connection
-// is closed and ErrCommandTimeout is returned. On a non-zero exit status it
-// returns the output together with an error wrapping *ssh.ExitError.
-func runOnClient(client *gossh.Client, addr, cmd string, timeout time.Duration) (string, error) {
-	// Start the timer before opening the session: a device can also stall
+// is closed and ErrCommandTimeout is returned; if ctx is cancelled first, it
+// is closed and ctx's error is returned. On a non-zero exit status it
+// returns the output together with a *CommandError.
+func runOnClient(ctx context.Context, client *gossh.Client, addr, cmd string, timeout time.Duration) (string, error) {
+	// Start the limit before opening the session: a device can also stall
 	// on the session request.
-	expired := closeAfter(timeout, client)
-	defer expired()
-	timeoutErr := func() error {
-		return fmt.Errorf("run %q on %s: %w (%s); the device may not support SSH exec requests, or the command needs more time than the command timeout allows",
-			cmd, addr, ErrCommandTimeout, timeout)
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("run %q on %s: %w", cmd, addr, err)
+	}
+	stop := closeOnLimit(ctx, timeout, client)
+	defer func() { _ = stop() }() // releases the timer once the command is done
+	limitErr := func(reason error) error {
+		if errors.Is(reason, errLimitReached) {
+			return fmt.Errorf("run %q on %s: %w (%s); the device may not support SSH exec requests, or the command needs more time than the command timeout allows",
+				cmd, addr, ErrCommandTimeout, timeout)
+		}
+		return fmt.Errorf("run %q on %s: %w", cmd, addr, reason)
 	}
 
 	session, err := client.NewSession()
 	if err != nil {
-		if expired() {
-			return "", timeoutErr()
+		if reason := stop(); reason != nil {
+			return "", limitErr(reason)
 		}
 		return "", fmt.Errorf("new session: %w", err)
 	}
@@ -311,8 +365,8 @@ func runOnClient(client *gossh.Client, addr, cmd string, timeout time.Duration) 
 	session.Stderr = &stderr
 
 	out, err := session.Output(cmd)
-	if expired() {
-		return "", timeoutErr()
+	if reason := stop(); reason != nil {
+		return "", limitErr(reason)
 	}
 	if err != nil {
 		return string(out), &CommandError{Command: cmd, Err: err, Output: append(stderr.Bytes(), out...)}
@@ -352,26 +406,27 @@ func (e *CommandError) Unwrap() error { return e.Err }
 
 var signalNameRe = regexp.MustCompile(`^[A-Z0-9]{1,10}$`)
 
-// InspectHostKey fetches the host key presented by a remote SSH server without trusting it.
-func InspectHostKey(host string, port int) (HostKeyInfo, error) {
+// InspectHostKey fetches the host key presented by a remote SSH server without
+// trusting it. Cancelling ctx closes the connection and returns ctx's error.
+func InspectHostKey(ctx context.Context, host string, port int) (HostKeyInfo, error) {
 	// Ask for the key types already stored for this host, so the key shown
 	// is the one known_hosts would be checked against.
 	knownHosts, err := loadKnownHosts()
 	if err != nil {
 		return HostKeyInfo{}, err
 	}
-	return inspectHostKey(host, port, knownHosts)
+	return inspectHostKey(ctx, host, port, knownHosts)
 }
 
 // inspectHostKey fetches the host key presented by a remote SSH server,
 // asking first for the key types knownHosts stores for it (knownHosts may
 // be nil).
-func inspectHostKey(host string, port int, knownHosts gossh.HostKeyCallback) (HostKeyInfo, error) {
+func inspectHostKey(ctx context.Context, host string, port int, knownHosts gossh.HostKeyCallback) (HostKeyInfo, error) {
 	port = normalizedPort(port)
 	addr := joinHostPort(host, port)
 
 	dialer := &net.Dialer{Timeout: dialTimeout}
-	conn, err := dialer.DialContext(context.Background(), "tcp", addr)
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return HostKeyInfo{}, fmt.Errorf("dial %s: %w", addr, err)
 	}
@@ -388,10 +443,12 @@ func inspectHostKey(host string, port int, knownHosts gossh.HostKeyCallback) (Ho
 		HostKeyAlgorithms: preferredHostKeyAlgorithms(knownHosts, addr, conn.RemoteAddr()),
 	}
 
-	handshakeExpired := closeAfter(handshakeTimeout, conn)
+	stop := closeOnLimit(ctx, handshakeTimeout, conn)
 	_, _, _, err = gossh.NewClientConn(conn, addr, sshCfg)
-	if handshakeExpired() && captured == nil {
-		return HostKeyInfo{}, handshakeTimeoutError(addr)
+	// A key captured just as the limit passed is still good, but a cancelled
+	// request is reported as cancelled.
+	if reason := stop(); reason != nil && (captured == nil || !errors.Is(reason, errLimitReached)) {
+		return HostKeyInfo{}, handshakeError(addr, reason)
 	}
 	if captured == nil {
 		if err != nil {
@@ -415,8 +472,14 @@ func inspectHostKey(host string, port int, knownHosts gossh.HostKeyCallback) (Ho
 	}, nil
 }
 
-// TrustHostKey adds or replaces the SSH host key in the configured known_hosts file.
-func TrustHostKey(host string, port int, replace bool) (TrustHostKeyResult, error) {
+// testHookBeforeKnownHostsWrite, when set by a test, runs just before
+// TrustHostKey checks for cancellation and writes known_hosts.
+var testHookBeforeKnownHostsWrite func()
+
+// TrustHostKey adds or replaces the SSH host key in the configured
+// known_hosts file. Cancelling ctx before the key is fetched closes the
+// connection and returns ctx's error; nothing is written then.
+func TrustHostKey(ctx context.Context, host string, port int, replace bool) (TrustHostKeyResult, error) {
 	if currentOptions.InsecureSkipHostKeyCheck {
 		return TrustHostKeyResult{}, fmt.Errorf("cannot manage host keys while %s is enabled", EnvSkipHostKeyValidation)
 	}
@@ -431,7 +494,7 @@ func TrustHostKey(host string, port int, replace bool) (TrustHostKeyResult, erro
 		return TrustHostKeyResult{}, err
 	}
 
-	info, err := inspectHostKey(host, port, knownHosts)
+	info, err := inspectHostKey(ctx, host, port, knownHosts)
 	if err != nil {
 		return TrustHostKeyResult{}, err
 	}
@@ -452,6 +515,14 @@ func TrustHostKey(host string, port int, replace bool) (TrustHostKeyResult, erro
 		)
 	}
 
+	// The caller may have given up while the key was fetched and checked;
+	// then the trust store must not change.
+	if testHookBeforeKnownHostsWrite != nil {
+		testHookBeforeKnownHostsWrite()
+	}
+	if err := ctx.Err(); err != nil {
+		return TrustHostKeyResult{}, fmt.Errorf("trust host key for %s: %w", info.Address, err)
+	}
 	if err := upsertKnownHost(info, replace); err != nil {
 		return TrustHostKeyResult{}, err
 	}
@@ -473,6 +544,8 @@ func buildAuthMethods() ([]gossh.AuthMethod, func(), error) {
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
 		sock = filepath.Clean(sock)
 		if filepath.IsAbs(sock) {
+			// A local socket connects at once; the agent is cut off by the
+			// handshake limit instead (see dial).
 			conn, err := (&net.Dialer{}).DialContext(context.Background(), "unix", sock) //nolint:gosec // G704: SSH_AUTH_SOCK is set by the system SSH agent, path is validated to be absolute above
 			if err == nil {
 				closeAgent = func() { _ = conn.Close() }

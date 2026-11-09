@@ -267,12 +267,12 @@ func TestRunCommandUsesStoredHostKeyType(t *testing.T) {
 		t.Run(stored.Type(), func(t *testing.T) {
 			path := useKnownHosts(t, addr, stored)
 			cfg := ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}
-			out, err := RunCommand(cfg, "show version")
+			out, err := RunCommand(t.Context(), cfg, "show version")
 			if err != nil || out != "ok" {
 				t.Fatalf("RunCommand() = %q, %v; want ok", out, err)
 			}
 
-			info, err := InspectHostKey(addr.IP.String(), addr.Port)
+			info, err := InspectHostKey(t.Context(), addr.IP.String(), addr.Port)
 			if err != nil || info.KeyType != stored.Type() {
 				t.Fatalf("InspectHostKey() = %s, %v; want the stored %s key type", info.KeyType, err, stored.Type())
 			}
@@ -291,7 +291,7 @@ func TestRunCommandStillReportsMismatch(t *testing.T) {
 	addr := startHostKeyServer(t, newSigner(t, "ecdsa"), newSigner(t, "ed25519"))
 	useKnownHosts(t, addr, newSigner(t, "ed25519").PublicKey()) // a different ed25519 key
 
-	_, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
+	_, err := RunCommand(t.Context(), ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
 	var hkErr *HostKeyValidationError
 	if !errors.As(err, &hkErr) || len(hkErr.MatchingKnownHosts) == 0 || hkErr.PresentedKeyType != gossh.KeyAlgoED25519 {
 		t.Fatalf("RunCommand() error = %v, want a host key mismatch on the ed25519 key", err)
@@ -302,7 +302,7 @@ func TestRunCommandMismatchWhenStoredTypeIsGone(t *testing.T) {
 	addr := startHostKeyServer(t, newSigner(t, "ecdsa"))
 	useKnownHosts(t, addr, newSigner(t, "ed25519").PublicKey())
 
-	_, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
+	_, err := RunCommand(t.Context(), ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
 	var hkErr *HostKeyValidationError
 	if !errors.As(err, &hkErr) || hkErr.PresentedKeyType != gossh.KeyAlgoECDSA256 {
 		t.Fatalf("RunCommand() error = %v, want a host key mismatch, not a negotiation failure", err)
@@ -316,7 +316,7 @@ func TestRunCommandRefusesDSAHostKey(t *testing.T) {
 	addr := startHostKeyServer(t, dsaKey)
 	useKnownHosts(t, addr, dsaKey.PublicKey())
 
-	out, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
+	out, err := RunCommand(t.Context(), ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
 	if err == nil {
 		t.Fatalf("RunCommand() = %q, nil; want an error for a DSA-only server", out)
 	}
@@ -330,7 +330,7 @@ func TestRunCommandIgnoresStoredDSAKey(t *testing.T) {
 	addr := startHostKeyServer(t, dsaKey, newSigner(t, "ed25519"))
 	useKnownHosts(t, addr, dsaKey.PublicKey())
 
-	_, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
+	_, err := RunCommand(t.Context(), ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
 	var hkErr *HostKeyValidationError
 	if !errors.As(err, &hkErr) || hkErr.PresentedKeyType != gossh.KeyAlgoED25519 {
 		t.Fatalf("RunCommand() error = %v, want a host key mismatch on the ed25519 key", err)
@@ -348,24 +348,24 @@ func TestTrustHostKey(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	added, err := TrustHostKey(host, addr.Port, false)
+	added, err := TrustHostKey(t.Context(), host, addr.Port, false)
 	if err != nil || added.Action != "added" {
 		t.Fatalf("TrustHostKey() = %q, %v; want added", added.Action, err)
 	}
-	if again, err := TrustHostKey(host, addr.Port, false); err != nil || again.Action != "already_trusted" || again.FingerprintSHA256 != added.FingerprintSHA256 {
+	if again, err := TrustHostKey(t.Context(), host, addr.Port, false); err != nil || again.Action != "already_trusted" || again.FingerprintSHA256 != added.FingerprintSHA256 {
 		t.Fatalf("TrustHostKey() = %q %s, %v; want already_trusted %s", again.Action, again.FingerprintSHA256, err, added.FingerprintSHA256)
 	}
 
 	// Store a different key of each type the server holds, as if both had
 	// been regenerated on the device.
 	useKnownHosts(t, addr, newSigner(t, "ecdsa").PublicKey(), newSigner(t, "ed25519").PublicKey())
-	if _, err := TrustHostKey(host, addr.Port, false); err == nil {
+	if _, err := TrustHostKey(t.Context(), host, addr.Port, false); err == nil {
 		t.Fatal("TrustHostKey() error = nil, want a mismatch without replace_existing")
 	}
-	if replaced, err := TrustHostKey(host, addr.Port, true); err != nil || replaced.Action != "replaced" {
+	if replaced, err := TrustHostKey(t.Context(), host, addr.Port, true); err != nil || replaced.Action != "replaced" {
 		t.Fatalf("TrustHostKey(replace) = %q, %v; want replaced", replaced.Action, err)
 	}
-	if again, err := TrustHostKey(host, addr.Port, false); err != nil || again.Action != "already_trusted" {
+	if again, err := TrustHostKey(t.Context(), host, addr.Port, false); err != nil || again.Action != "already_trusted" {
 		t.Fatalf("TrustHostKey() after replace = %q, %v; want already_trusted", again.Action, err)
 	}
 }
@@ -379,10 +379,10 @@ func TestMalformedKnownHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := InspectHostKey(addr.IP.String(), addr.Port); err == nil {
+	if _, err := InspectHostKey(t.Context(), addr.IP.String(), addr.Port); err == nil {
 		t.Fatal("InspectHostKey() error = nil, want the malformed known_hosts reported")
 	}
-	if _, err := TrustHostKey(addr.IP.String(), addr.Port, false); err == nil {
+	if _, err := TrustHostKey(t.Context(), addr.IP.String(), addr.Port, false); err == nil {
 		t.Fatal("TrustHostKey() error = nil, want the malformed known_hosts reported")
 	}
 }
@@ -391,7 +391,7 @@ func TestTrustHostKeyRefusesDSAHostKey(t *testing.T) {
 	addr := startHostKeyServer(t, newSigner(t, "dsa"))
 	path := useKnownHosts(t, addr)
 
-	if _, err := TrustHostKey(addr.IP.String(), addr.Port, false); err == nil {
+	if _, err := TrustHostKey(t.Context(), addr.IP.String(), addr.Port, false); err == nil {
 		t.Fatal("TrustHostKey() error = nil, want an error for a DSA-only server")
 	}
 	if fi, err := os.Stat(path); err != nil || fi.Size() != 0 {
@@ -459,11 +459,11 @@ func TestHandshakeTimeout(t *testing.T) {
 
 	calls := map[string]func() error{
 		"RunCommand": func() error {
-			_, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
+			_, err := RunCommand(t.Context(), ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
 			return err
 		},
 		"InspectHostKey": func() error {
-			_, err := InspectHostKey(addr.IP.String(), addr.Port)
+			_, err := InspectHostKey(t.Context(), addr.IP.String(), addr.Port)
 			return err
 		},
 	}
@@ -489,7 +489,7 @@ func TestHandshakeTimeout(t *testing.T) {
 func TestRunCommandClosesAgentConnection(t *testing.T) {
 	addr := startHostKeyServer(t, newSigner(t, "ed25519"))
 	useKnownHosts(t, addr)
-	if _, err := TrustHostKey(addr.IP.String(), addr.Port, false); err != nil {
+	if _, err := TrustHostKey(t.Context(), addr.IP.String(), addr.Port, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -518,7 +518,7 @@ func TestRunCommandClosesAgentConnection(t *testing.T) {
 	}()
 	t.Setenv("SSH_AUTH_SOCK", sock)
 
-	if out, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version"); err != nil || out != "ok" {
+	if out, err := RunCommand(t.Context(), ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version"); err != nil || out != "ok" {
 		t.Fatalf("RunCommand() = %q, %v; want ok", out, err)
 	}
 	select {
@@ -571,7 +571,7 @@ func TestRunCommandTimesOutOpeningSession(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
+		_, err := RunCommand(t.Context(), ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
 		done <- err
 	}()
 	select {
@@ -623,11 +623,11 @@ func TestCommandErrorOmitsExitSignalText(t *testing.T) {
 				_ = ch.Close()
 			}, newSigner(t, "ed25519"))
 			useKnownHosts(t, addr)
-			if _, err := TrustHostKey(addr.IP.String(), addr.Port, false); err != nil {
+			if _, err := TrustHostKey(t.Context(), addr.IP.String(), addr.Port, false); err != nil {
 				t.Fatal(err)
 			}
 
-			_, err := RunCommand(ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
+			_, err := RunCommand(t.Context(), ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
 			if err == nil || strings.Contains(err.Error(), "hunter2") {
 				t.Fatalf("RunCommand() error = %q, want an error without the exit-signal reason", err)
 			}

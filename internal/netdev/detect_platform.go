@@ -33,7 +33,7 @@ func DetectPlatform(ctx context.Context, req *mcp.CallToolRequest, args DetectPl
 
 	slog.Info("detect_platform", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "refresh", args.Refresh) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
-	rt, err := resolveDeviceType(connConfig(args.Host, args.Port, args.Username), "", args.Refresh)
+	rt, err := resolveDeviceType(ctx, connConfig(args.Host, args.Port, args.Username), "", args.Refresh)
 	if err != nil {
 		return nil, nil, fmt.Errorf("detect_platform: %w", err)
 	}

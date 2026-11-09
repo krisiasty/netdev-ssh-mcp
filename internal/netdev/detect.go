@@ -1,6 +1,7 @@
 package netdev
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -256,7 +257,7 @@ func forgetType(key string) {
 // resolveDeviceType returns the device type for a tool call: the caller's
 // device_type if given, otherwise a cached detection, otherwise a fresh probe.
 // refresh skips the cache.
-func resolveDeviceType(cfg sshclient.ConnConfig, raw string, refresh bool) (resolvedType, error) {
+func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string, refresh bool) (resolvedType, error) {
 	dt, err := normalizeDeviceType(raw)
 	if err != nil {
 		return resolvedType{}, err
@@ -272,7 +273,7 @@ func resolveDeviceType(cfg sshclient.ConnConfig, raw string, refresh bool) (reso
 		}
 	}
 
-	res, err := runProbe(cfg, func(serverVersion string) (string, error) {
+	res, err := runProbe(ctx, cfg, func(serverVersion string) (string, error) {
 		return probeCommandFor(classifyIdent(serverVersion), serverVersion)
 	})
 	if err != nil {
@@ -339,6 +340,22 @@ func firstLines(s string, n int) string {
 	return s[:i]
 }
 
+// requestCancelled reports whether err comes from the MCP client cancelling
+// the request, or its deadline passing, rather than from the device.
+func requestCancelled(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// logFailure logs a failed tool call. A cancelled request is a normal client
+// action, not a device failure, so it is logged at Info rather than Error.
+func logFailure(tool string, err error, attrs ...any) {
+	if requestCancelled(err) {
+		slog.Info(tool+" cancelled by the client", attrs...)
+		return
+	}
+	slog.Error(tool+" failed", append(attrs, "err", err)...)
+}
+
 // detectedNotice tells the caller which device type a detected call used, so
 // it can pass it on later calls.
 func detectedNotice(r resolvedType) string {
@@ -387,6 +404,10 @@ func afterRun(cfg sshclient.ConnConfig, r resolvedType, output string, runErr er
 // runError wraps a failed command, adding the same notice afterRun would
 // have appended to a successful result.
 func runError(tool string, cfg sshclient.ConnConfig, r resolvedType, err error) error {
+	if requestCancelled(err) {
+		// The caller has gone; a detection notice or hint means nothing.
+		return fmt.Errorf("%s: %w", tool, err)
+	}
 	var extra []string
 	for _, c := range afterRun(cfg, r, "", err) {
 		if t, ok := c.(*mcp.TextContent); ok {

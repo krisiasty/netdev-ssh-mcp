@@ -54,7 +54,7 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 	}
 
 	cfg := connConfig(args.Host, args.Port, args.Username)
-	rt, err := resolveDeviceType(cfg, args.DeviceType, false)
+	rt, err := resolveDeviceType(ctx, cfg, args.DeviceType, false)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run_traceroute: %w", err)
 	}
@@ -69,12 +69,12 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 	cfg.CommandTimeout = longCommandTimeout
 	var out string
 	if rt.dt == deviceTypeFortiOS {
-		out, err = runCommands(cfg, commands)
+		out, err = runCommands(ctx, cfg, commands)
 	} else {
-		out, err = runCommand(cfg, commands[0])
+		out, err = runCommand(ctx, cfg, commands[0])
 	}
 	if err != nil {
-		slog.Error("run_traceroute failed", "host", args.Host, "destination", args.Destination, "err", err)
+		logFailure("run_traceroute", err, "host", args.Host, "destination", args.Destination)
 		return nil, nil, runError("run_traceroute", cfg, rt, err)
 	}
 

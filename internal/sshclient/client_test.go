@@ -58,7 +58,7 @@ func TestValidateKnownHostsPath(t *testing.T) {
 func TestRunCommandsRejectsEmptyInput(t *testing.T) {
 	t.Parallel()
 
-	_, err := RunCommands(ConnConfig{}, nil)
+	_, err := RunCommands(t.Context(), ConnConfig{}, nil)
 	if err == nil {
 		t.Fatal("RunCommands(nil) error = nil, want error")
 	}
