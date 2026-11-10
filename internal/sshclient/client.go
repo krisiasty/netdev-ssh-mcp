@@ -366,7 +366,12 @@ func runOnClient(ctx context.Context, client *gossh.Client, addr, cmd string, ti
 		return "", limitErr(reason)
 	}
 	if err != nil {
-		return string(out), &CommandError{Command: cmd, Err: err, Output: append(stderr.Bytes(), out...)}
+		status := -1
+		var exitErr *gossh.ExitError
+		if errors.As(err, &exitErr) {
+			status = exitErr.ExitStatus()
+		}
+		return string(out), &CommandError{Command: cmd, Err: err, ExitStatus: status, Output: append(stderr.Bytes(), out...)}
 	}
 	return string(out), nil
 }
@@ -380,8 +385,11 @@ type CommandError struct {
 	Command string
 	// Err is the underlying error, usually a *ssh.ExitError.
 	Err error
+	// ExitStatus is the exit status when Err is a *ssh.ExitError, otherwise -1.
+	ExitStatus int
 	// Output is what the device wrote to stderr followed by stdout. Treat it
-	// as untrusted and do not show it to callers.
+	// as untrusted and do not show it to callers, except for a cumulus4x
+	// ping or traceroute that exited with status 1, whose output is the result.
 	Output []byte
 }
 

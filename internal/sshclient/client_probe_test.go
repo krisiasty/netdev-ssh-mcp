@@ -228,3 +228,26 @@ func TestRunCommandErrorOmitsDeviceOutput(t *testing.T) {
 		t.Fatalf("RunCommand() error = %q, Output %q; want stdout in Output only", err, cmdErr.Output)
 	}
 }
+
+// TestCommandErrorExitStatus checks that CommandError reports the exit status
+// of a command that ran and -1 when the failure was not an exit status.
+func TestCommandErrorExitStatus(t *testing.T) {
+	s := startTestServer(t, "SSH-2.0-OpenSSH_9.9", map[string]testReply{
+		"ping -c 5 192.0.2.1 2>&1": {output: "100% packet loss\n", status: 3},
+	})
+	cfg := useTestServer(t, s, 5*time.Second)
+
+	_, err := RunCommand(t.Context(), cfg, "ping -c 5 192.0.2.1 2>&1")
+	var cmdErr *CommandError
+	if !errors.As(err, &cmdErr) || cmdErr.ExitStatus != 3 {
+		t.Fatalf("RunCommand() error = %v, want *CommandError with ExitStatus 3", err)
+	}
+
+	// A channel closed without an exit status is not an ExitError.
+	addr := startSSHServer(t, func(ch gossh.Channel) { _ = ch.Close() }, newSigner(t, "ed25519"))
+	cfg = useTestServer(t, &testServer{addr: addr}, 5*time.Second)
+	_, err = RunCommand(t.Context(), cfg, "anything")
+	if !errors.As(err, &cmdErr) || cmdErr.ExitStatus != -1 {
+		t.Fatalf("RunCommand() error = %v, want *CommandError with ExitStatus -1", err)
+	}
+}

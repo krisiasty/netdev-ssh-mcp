@@ -17,12 +17,12 @@ type RunPingInput struct {
 	Username    string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port        int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
 	Count       int    `json:"count,omitempty" jsonschema:"number of echo requests to send"`
-	Timeout     int    `json:"timeout,omitempty" jsonschema:"per-probe timeout in seconds; supported on FortiOS"`
-	Source      string `json:"source,omitempty" jsonschema:"source IP address or interface name"`
-	VRF         string `json:"vrf,omitempty" jsonschema:"VRF name"`
+	Timeout     int    `json:"timeout,omitempty" jsonschema:"per-probe timeout in seconds; supported on FortiOS and cumulus4x"`
+	Source      string `json:"source,omitempty" jsonschema:"source IP address or interface name; on cumulus4x an address or interface, not combinable with vrf"`
+	VRF         string `json:"vrf,omitempty" jsonschema:"VRF name; on cumulus4x the VRF device, not combinable with source"`
 	Size        int    `json:"size,omitempty" jsonschema:"packet size in bytes"`
 	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface for FortiOS ping"`
-	DeviceType  string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS); if omitted, the platform is auto-detected over SSH and reported in the result"`
+	DeviceType  string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), or cumulus4x (Cumulus Linux 4.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
 }
 
 // RunPing executes a ping command on a network device.
@@ -72,6 +72,13 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 		out, err = runCommands(ctx, cfg, commands)
 	} else {
 		out, err = runCommand(ctx, cfg, commands[0])
+	}
+	if err != nil {
+		// Linux ping and traceroute exit 1 when nothing answered; on Cumulus
+		// that output is the result.
+		if noReply, ok := cumulusNoReplyOutput(rt.dt, err); ok {
+			out, err = noReply, nil
+		}
 	}
 	if err != nil {
 		logFailure(ctx, "run_ping", err, "host", args.Host, "destination", args.Destination)

@@ -185,6 +185,9 @@ func buildPingCommands(destination string, dt deviceType, count, size, timeout i
 	if err := checkCommandArgs(destination, source, vrf, outgoingInterface); err != nil {
 		return nil, err
 	}
+	if dt == deviceTypeCumulus4x {
+		return buildCumulusPing(destination, count, size, timeout, source, vrf, outgoingInterface)
+	}
 	if dt == deviceTypeFortiOS {
 		if vrf != "" {
 			return nil, fmt.Errorf("FortiOS 7.4+ does not support vrf for run_ping")
@@ -214,7 +217,7 @@ func buildPingCommands(destination string, dt deviceType, count, size, timeout i
 	}
 
 	if timeout > 0 {
-		return nil, fmt.Errorf("timeout is only supported for device_type 'fortios'")
+		return nil, fmt.Errorf("timeout is only supported for device_type 'fortios' or 'cumulus4x'")
 	}
 	if outgoingInterface != "" {
 		return nil, fmt.Errorf("outgoing_interface is only supported for device_type 'fortios'")
@@ -258,6 +261,9 @@ func buildTracerouteCommands(destination string, dt deviceType, maxHops, timeout
 	}
 	if err := checkCommandArgs(destination, source, vrf, outgoingInterface); err != nil {
 		return nil, err
+	}
+	if dt == deviceTypeCumulus4x {
+		return buildCumulusTraceroute(destination, maxHops, timeout, probe, source, vrf, outgoingInterface)
 	}
 	if dt == deviceTypeFortiOS {
 		switch {

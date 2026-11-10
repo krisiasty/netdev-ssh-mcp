@@ -231,3 +231,82 @@ func TestBuildersRejectUnresolvedType(t *testing.T) {
 		t.Errorf("buildTracerouteCommands() error = %v", err)
 	}
 }
+
+func TestBuildCumulusPing(t *testing.T) {
+	tests := []struct {
+		name                        string
+		dest                        string
+		count, size, timeout        int
+		source, vrf, outgoing, want string
+		wantErr                     string
+	}{
+		{name: "default", dest: "192.0.2.1", want: "ping -c 5 192.0.2.1 2>&1"},
+		{name: "all", dest: "192.0.2.1", count: 3, size: 1400, timeout: 2, source: "10.0.0.1", want: "ping -c 3 -s 1400 -W 2 -I 10.0.0.1 192.0.2.1 2>&1"},
+		{name: "source interface", dest: "192.0.2.1", source: "swp1", want: "ping -c 5 -I swp1 192.0.2.1 2>&1"},
+		{name: "vrf", dest: "192.0.2.1", vrf: "mgmt", want: "ping -c 5 -I mgmt 192.0.2.1 2>&1"},
+		{name: "ipv6", dest: "2001:db8::1", want: "ping -c 5 2001:db8::1 2>&1"},
+		{name: "vrf and source", dest: "192.0.2.1", source: "10.0.0.1", vrf: "mgmt", wantErr: "vrf cannot be combined with source"},
+		{name: "outgoing interface", dest: "192.0.2.1", outgoing: "swp1", wantErr: "outgoing_interface is only supported"},
+		{name: "option destination", dest: "-f", wantErr: "destination must not start with '-'"},
+		{name: "option source", dest: "192.0.2.1", source: "-I", wantErr: "source must not start with '-'"},
+		{name: "option vrf", dest: "192.0.2.1", vrf: "-x", wantErr: "vrf must not start with '-'"},
+		{name: "metacharacter", dest: "a;b", wantErr: "destination may only contain"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildPingCommands(tt.dest, deviceTypeCumulus4x, tt.count, tt.size, tt.timeout, tt.source, tt.vrf, tt.outgoing)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want substring %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || len(got) != 1 || got[0] != tt.want {
+				t.Fatalf("got %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildCumulusTraceroute(t *testing.T) {
+	tests := []struct {
+		name                        string
+		dest                        string
+		maxHops, timeout, probe     int
+		source, vrf, outgoing, want string
+		wantErr                     string
+	}{
+		{name: "default", dest: "192.0.2.1", want: "traceroute 192.0.2.1 2>&1"},
+		{name: "all", dest: "192.0.2.1", maxHops: 10, timeout: 2, probe: 1, source: "10.0.0.1", want: "traceroute -m 10 -w 2 -q 1 -s 10.0.0.1 192.0.2.1 2>&1"},
+		{name: "source interface", dest: "192.0.2.1", source: "swp1", want: "traceroute -i swp1 192.0.2.1 2>&1"},
+		{name: "source link-local", dest: "192.0.2.1", source: "fe80::1%swp1", want: "traceroute -s fe80::1%swp1 192.0.2.1 2>&1"},
+		{name: "vrf", dest: "192.0.2.1", vrf: "mgmt", want: "traceroute -i mgmt 192.0.2.1 2>&1"},
+		{name: "vrf and source", dest: "192.0.2.1", source: "10.0.0.1", vrf: "mgmt", wantErr: "vrf cannot be combined with source"},
+		{name: "outgoing interface", dest: "192.0.2.1", outgoing: "swp1", wantErr: "outgoing_interface is only supported"},
+		{name: "option destination", dest: "-f", wantErr: "destination must not start with '-'"},
+		{name: "option source", dest: "192.0.2.1", source: "-I", wantErr: "source must not start with '-'"},
+		{name: "option vrf", dest: "192.0.2.1", vrf: "-x", wantErr: "vrf must not start with '-'"},
+		{name: "metacharacter", dest: "a;b", wantErr: "destination may only contain"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildTracerouteCommands(tt.dest, deviceTypeCumulus4x, tt.maxHops, tt.timeout, tt.probe, tt.source, tt.vrf, tt.outgoing)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want substring %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || len(got) != 1 || got[0] != tt.want {
+				t.Fatalf("got %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestPingTimeoutMessageNamesCumulus(t *testing.T) {
+	_, err := buildPingCommands("192.0.2.1", deviceTypeEOS, 0, 0, 2, "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "timeout is only supported for device_type 'fortios' or 'cumulus4x'") {
+		t.Fatalf("error = %v", err)
+	}
+}

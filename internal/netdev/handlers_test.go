@@ -658,3 +658,80 @@ func TestRunShowCommandCumulus(t *testing.T) {
 		t.Fatalf("ran %q, want nothing", *ran)
 	}
 }
+
+const cumulusLossOutput = "PING 192.0.2.1 (192.0.2.1) 56(84) bytes of data.\n--- 192.0.2.1 ping statistics ---\n5 packets transmitted, 0 received, 100% packet loss\n"
+
+func TestPingTracerouteCumulusExitStatus(t *testing.T) {
+	calls := map[string]func(dt string) (*mcp.CallToolResult, error){
+		"run_ping": func(dt string) (*mcp.CallToolResult, error) {
+			res, _, err := RunPing(context.Background(), nil, RunPingInput{Host: "sw1", Username: "u", Destination: "192.0.2.1", DeviceType: dt})
+			return res, err
+		},
+		"run_traceroute": func(dt string) (*mcp.CallToolResult, error) {
+			res, _, err := RunTraceroute(context.Background(), nil, RunTracerouteInput{Host: "sw1", Username: "u", Destination: "192.0.2.1", DeviceType: dt})
+			return res, err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			tests := []struct {
+				name    string
+				dt      string
+				status  int
+				wantErr bool
+			}{
+				{name: "cumulus exit 1 is a result", dt: "cumulus4x", status: 1},
+				{name: "cumulus exit 2 is an error", dt: "cumulus4x", status: 2, wantErr: true},
+				{name: "eos exit 1 is an error", dt: "eos", status: 1, wantErr: true},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					stubRunCommand(t, "", &sshclient.CommandError{Command: "c", ExitStatus: tt.status, Output: []byte(cumulusLossOutput)})
+					res, err := call(tt.dt)
+					if tt.wantErr {
+						if err == nil || strings.Contains(err.Error(), "packet loss") {
+							t.Fatalf("error = %v, want an error without the device output", err)
+						}
+						return
+					}
+					if err != nil {
+						t.Fatalf("error = %v", err)
+					}
+					if got := strings.Join(contentTexts(res.Content), "\n"); !strings.Contains(got, "100% packet loss") {
+						t.Fatalf("result = %q, want the device output", got)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestPingTracerouteCumulusExitOneDetected(t *testing.T) {
+	resetDetection(t)
+	runProbe = (&fakeProbe{ident: identCumulus, outputs: map[string]string{probeOSRelease: readFixture(t, "cumulus43_os_release.txt")}}).probe
+	stubRunCommand(t, "", &sshclient.CommandError{Command: "c", ExitStatus: 1, Output: []byte(cumulusLossOutput)})
+	logs := captureLogs(t)
+
+	for _, call := range []func() (*mcp.CallToolResult, error){
+		func() (*mcp.CallToolResult, error) {
+			res, _, err := RunPing(context.Background(), nil, RunPingInput{Host: "sw1", Username: "u", Destination: "192.0.2.1"})
+			return res, err
+		},
+		func() (*mcp.CallToolResult, error) {
+			res, _, err := RunTraceroute(context.Background(), nil, RunTracerouteInput{Host: "sw1", Username: "u", Destination: "192.0.2.1"})
+			return res, err
+		},
+	} {
+		res, err := call()
+		if err != nil {
+			t.Fatalf("error = %v", err)
+		}
+		texts := contentTexts(res.Content)
+		if len(texts) != 2 || texts[0] != cumulusLossOutput || !strings.Contains(texts[1], "device_type: cumulus4x (auto-detected") {
+			t.Fatalf("content = %q, want the output followed by the detection notice", texts)
+		}
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Fatalf("logs hold an error record: %s", logs)
+	}
+}
