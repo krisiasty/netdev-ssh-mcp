@@ -70,7 +70,7 @@ func closeOnLimit(ctx context.Context, d time.Duration, closeFn func()) (stop fu
 	return sync.OnceValue(func() error {
 		defer cancel()
 		if stopClose() {
-			return nil // stopped before limitCtx was done: c was not closed
+			return nil // stopped before limitCtx was done: closeFn did not run
 		}
 		if errors.Is(context.Cause(limitCtx), errLimitReached) {
 			return errLimitReached
@@ -278,10 +278,10 @@ func runSessionCommand(ctx context.Context, cfg ConnConfig, cmd string) (string,
 }
 
 func dial(ctx context.Context, cfg ConnConfig) (*gossh.Client, string, error) {
-	// A cancelled request must report the cancellation, not whatever step
-	// first trips over it (such as "no auth available").
 	port := normalizedPort(cfg.Port)
 	addr := joinHostPort(cfg.Host, port)
+	// A cancelled request must report the cancellation, not whatever step
+	// first trips over it (such as "no auth available").
 	if err := ctx.Err(); err != nil {
 		return nil, "", fmt.Errorf("dial %s: %w", addr, err)
 	}
@@ -406,6 +406,9 @@ var signalNameRe = regexp.MustCompile(`^[A-Z0-9]{1,10}$`)
 // InspectHostKey fetches the host key presented by a remote SSH server without
 // trusting it. Cancelling ctx closes the connection and returns ctx's error.
 func InspectHostKey(ctx context.Context, host string, port int) (HostKeyInfo, error) {
+	if err := hostKeyCancelled(ctx, host, port); err != nil {
+		return HostKeyInfo{}, err
+	}
 	// Ask for the key types already stored for this host, so the key shown
 	// is the one known_hosts would be checked against.
 	knownHosts, err := loadKnownHosts()
@@ -413,6 +416,16 @@ func InspectHostKey(ctx context.Context, host string, port int) (HostKeyInfo, er
 		return HostKeyInfo{}, err
 	}
 	return inspectHostKey(ctx, host, port, knownHosts)
+}
+
+// hostKeyCancelled reports an already-cancelled request before known_hosts is
+// read or the host name is resolved, so the caller sees the cancellation
+// rather than whatever step would first trip over it.
+func hostKeyCancelled(ctx context.Context, host string, port int) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("fetch host key from %s: %w", joinHostPort(host, normalizedPort(port)), err)
+	}
+	return nil
 }
 
 // inspectHostKey fetches the host key presented by a remote SSH server,
@@ -470,9 +483,12 @@ func inspectHostKey(ctx context.Context, host string, port int, knownHosts gossh
 }
 
 // TrustHostKey adds or replaces the SSH host key in the configured
-// known_hosts file. Cancelling ctx before the key is fetched closes the
-// connection and returns ctx's error; nothing is written then.
+// known_hosts file. Cancelling ctx cuts a fetch in progress short and returns
+// ctx's error; known_hosts is never written once ctx is done.
 func TrustHostKey(ctx context.Context, host string, port int, replace bool) (TrustHostKeyResult, error) {
+	if err := hostKeyCancelled(ctx, host, port); err != nil {
+		return TrustHostKeyResult{}, err
+	}
 	if currentOptions.InsecureSkipHostKeyCheck {
 		return TrustHostKeyResult{}, fmt.Errorf("cannot manage host keys while %s is enabled", EnvSkipHostKeyValidation)
 	}

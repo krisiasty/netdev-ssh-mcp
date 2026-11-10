@@ -84,7 +84,13 @@ func startStallingServer(t *testing.T, stage stallStage) *stallingServer {
 				defer func() { srv.closed <- struct{}{} }()
 				defer func() { _ = conn.Close() }()
 				if stage == stallHandshake {
-					srv.reached <- struct{}{}
+					// Signal once the client sends its version line. It does
+					// that from inside the handshake, after its time limit
+					// and cancellation watch are set, so a test that
+					// cancels now interrupts a handshake in progress.
+					if _, err := conn.Read(make([]byte, 1)); err == nil {
+						srv.reached <- struct{}{}
+					}
 					_, _ = io.Copy(io.Discard, conn) // returns when the client closes
 					return
 				}
@@ -251,15 +257,38 @@ func TestInspectHostKeyCancelled(t *testing.T) {
 	})
 }
 
-func TestTrustHostKeyCancelledWritesNothing(t *testing.T) {
+// TestTrustHostKeyCancelledDuringHandshake checks that cancelling while the
+// key is being fetched returns promptly. That nothing is written after a
+// cancellation is checked by TestTrustHostKeyCancelledAfterFetch: this server
+// never sends a key, so there would be nothing to write here anyway.
+func TestTrustHostKeyCancelledDuringHandshake(t *testing.T) {
 	srv := startStallingServer(t, stallHandshake)
-	path := useKnownHosts(t, srv.addr)
+	useKnownHosts(t, srv.addr)
 	checkCancelled(t, srv.reached, srv.closed, func(ctx context.Context) error {
 		_, err := TrustHostKey(ctx, srv.addr.IP.String(), srv.addr.Port, false)
 		return err
 	})
-	if fi, err := os.Stat(path); err != nil || fi.Size() != 0 {
-		t.Fatalf("known_hosts stat = %v, %v; want it left empty", fi, err)
+}
+
+// TestHostKeyAlreadyCancelled checks that an already-cancelled request
+// reports the cancellation before reading known_hosts, which here would fail.
+func TestHostKeyAlreadyCancelled(t *testing.T) {
+	addr := startHostKeyServer(t, newSigner(t, "ed25519"))
+	path := useKnownHosts(t, addr)
+	if err := os.WriteFile(path, []byte("@cert-authority\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InspectHostKey(t.Context(), addr.IP.String(), addr.Port); err == nil || errors.Is(err, context.Canceled) {
+		t.Fatalf("InspectHostKey() with a live context: error = %v, want the known_hosts error", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if _, err := InspectHostKey(ctx, addr.IP.String(), addr.Port); !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), addr.String()) {
+		t.Fatalf("InspectHostKey() error = %v, want context.Canceled naming %s", err, addr)
+	}
+	if _, err := TrustHostKey(ctx, addr.IP.String(), addr.Port, false); !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), addr.String()) {
+		t.Fatalf("TrustHostKey() error = %v, want context.Canceled naming %s", err, addr)
 	}
 }
 
@@ -317,6 +346,9 @@ func TestRunCommandAlreadyCancelled(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = sentinel.Close() }()
+	if _, err := sentinel.Write([]byte("SSH-2.0-sentinel\r\n")); err != nil {
+		t.Fatal(err)
+	}
 	waitFor(t, srv.reached, "the sentinel connection")
 	if n := srv.accepted.Load(); n != 1 {
 		t.Fatalf("server accepted %d connections, want only the sentinel", n)

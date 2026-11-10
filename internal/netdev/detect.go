@@ -276,6 +276,11 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 	res, err := runProbe(ctx, cfg, func(serverVersion string) (string, error) {
 		return probeCommandFor(classifyIdent(serverVersion), serverVersion)
 	})
+	if errors.Is(err, errUnsupportedPlatform) {
+		// Identified, and known not to be supported: an answer, not a failure.
+		slog.Info("platform detection: unsupported platform", "host", sanitizeLog(cfg.Host)) //nolint:gosec // G706: value is sanitized before logging
+		return resolvedType{}, fmt.Errorf("detect platform: %w", err)
+	}
 	if err != nil {
 		logFailure(ctx, "platform detection", err, "host", cfg.Host)
 		// Connection, authentication and host key errors would fail the

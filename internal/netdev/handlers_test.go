@@ -547,7 +547,8 @@ func TestDeviceTimeoutIsNotCancellation(t *testing.T) {
 }
 
 // TestProbeFailureLogged checks that a failed detection probe is logged like
-// a failed command: at Error, or at Info when the client cancelled.
+// a failed command: at Error, or at Info when the client cancelled. A device
+// identified as unsupported is an answer, logged at Info.
 func TestProbeFailureLogged(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -557,13 +558,17 @@ func TestProbeFailureLogged(t *testing.T) {
 	}{
 		{"failure", false, "platform detection failed", true},
 		{"cancelled", true, "platform detection cancelled by the client", false},
+		{"unsupported platform", false, "platform detection: unsupported platform", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resetDetection(t)
 			probeErr := errors.New("dial sw1:22: connection refused")
-			if tt.cancelled {
+			switch {
+			case tt.cancelled:
 				probeErr = fmt.Errorf("SSH handshake with sw1:22: %w", context.Canceled)
+			case tt.name == "unsupported platform":
+				probeErr = fmt.Errorf("%w: the SSH server is a Linux distribution", errUnsupportedPlatform)
 			}
 			runProbe = (&fakeProbe{err: probeErr}).probe
 			logs := captureLogs(t)
