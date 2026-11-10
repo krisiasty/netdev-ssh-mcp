@@ -116,7 +116,7 @@ func main() {
 			"Running-config and startup-config are not allowed here — use the get_config tool instead. " +
 			"On JunOS, 'show configuration' is also blocked and redirected to get_config. " +
 			"For FortiOS, 'show', 'config', 'execute', and 'diagnose' commands are blocked here. " +
-			"On Cumulus Linux 4.x, 'net show configuration', 'net show commit' and 'net show rollback' are blocked and redirected to get_config, " +
+			"On Cumulus Linux 4.x, 'net show configuration', 'net show commit' and 'net show rollback' (or any abbreviation of them) are blocked and redirected to get_config, " +
 			"the command may end with 'json' for structured output, takes no pipes or redirection, and its words may contain only " +
 			"letters, digits and . _ : / , @ % -. " +
 			"Append '| json' for structured output (Arista/Cisco), or '| no-more' to disable pagination. " +
@@ -135,7 +135,7 @@ func main() {
 			"to a BGP peer, next-hop, or management target. " +
 			deviceTypeGuidance +
 			"Optional parameters: count (number of probes), source (source IP or interface), " +
-			"vrf (VRF or routing-instance name on JunOS), size (packet size in bytes), timeout (FortiOS only), " +
+			"vrf (VRF or routing-instance name on JunOS), size (packet size in bytes), timeout (FortiOS and Cumulus Linux 4.x only), " +
 			"outgoing_interface (FortiOS only). FortiOS 7.4+ does not support vrf for ping via this tool. " +
 			"On Cumulus Linux 4.x the tool runs 'ping -c <count> [-s size] [-W timeout] [-I source|vrf] destination' with 5 probes unless count is set; " +
 			"vrf cannot be combined with source, outgoing_interface is not supported, and when nothing answers the output with its statistics " +
@@ -155,7 +155,7 @@ func main() {
 			"On FortiOS 7.4+, probe maps to execute traceroute-options queries, source maps to source, " +
 			"and outgoing_interface maps to device; max_hops, timeout, and vrf are not supported. " +
 			"On Cumulus Linux 4.x the tool runs 'traceroute [-m max_hops] [-w timeout] [-q probe] [-s source-ip | -i source-iface | -i vrf] destination'; " +
-			"vrf cannot be combined with source, outgoing_interface is not supported, and when nothing answers the output is returned instead of an error. " +
+			"vrf cannot be combined with source, outgoing_interface is not supported, and when traceroute exits with status 1 (nothing answered) its output is returned instead of an error. " +
 			"Optional parameters: max_hops, timeout (per-probe seconds), probe (probes per hop, not used on JunOS), " +
 			"source (source IP or interface), vrf (routing-instance on JunOS), outgoing_interface (FortiOS only).",
 	}, netdev.RunTraceroute)

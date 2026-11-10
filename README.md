@@ -61,9 +61,8 @@ not cached:
 
 Retrieves the running or startup configuration from an Arista, Cisco Nexus,
 Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x device.
-Sensitive values (passwords, secrets, SNMP community
-names, BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with keyed
-hash tokens:
+Sensitive values (passwords, secrets, SNMP community names, BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically
+replaced with keyed hash tokens:
 
 ```text
 enable secret 5 [h:3c91e0a47b2d]

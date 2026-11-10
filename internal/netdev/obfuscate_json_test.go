@@ -82,7 +82,7 @@ func TestObfuscateJSONLeavesNonSecretsAlone(t *testing.T) {
 		`description "not JSON": still not a key`,
 		// Already hashed by the line pass: never hashed twice.
 		`"password": "[h:0123456789ab]"`,
-		`{"communities": ["[h:0123456789ab]", "[h:ba9876543210]"]}`,
+		`{"communities": ["[h:0123456789ab]", "[h:987654321098]"]}`,
 		// A container walk stops at the first bare word that is not JSON, and
 		// digits inside a word are not numbers.
 		"description \"secret\": [\nvlan 10 name core 2\n]",
