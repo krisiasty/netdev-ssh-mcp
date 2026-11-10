@@ -21,7 +21,7 @@ type RunPingInput struct {
 	Source      string `json:"source,omitempty" jsonschema:"source IP address or interface name; on cumulus4x an address or interface, not combinable with vrf"`
 	VRF         string `json:"vrf,omitempty" jsonschema:"VRF name; on cumulus4x the VRF device, not combinable with source"`
 	Size        int    `json:"size,omitempty" jsonschema:"packet size in bytes"`
-	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface for FortiOS ping"`
+	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface; FortiOS only"`
 	DeviceType  string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), or cumulus4x (Cumulus Linux 4.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
 }
 
