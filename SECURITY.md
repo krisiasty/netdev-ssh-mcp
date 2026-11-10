@@ -74,13 +74,12 @@ So a report need not re-cover this ground:
 - `run_show_command` accepts a single command on a single line that starts with
   the verb in lower case — no control characters, no `;`, no `<`/`>`
   redirection, and none of the shell syntax `` ` ``, `$(`, `${` and `&` — and
-  pipes only into a per-platform allowlist of output filters, named in lower
-  case. Every word after a filter's name must match an allowlist of characters
-  (letters, digits and `. _ : / , @ % ^ * + ? = -`, with `$` only as the last
-  character) and must not start with `-`, `*` or `?`, so it cannot start a
-  command or expand to a leading `-`. A glob after the first character (`x*`,
-  `/etc/*`) can still expand to file names with the same prefix.
-  Ping and traceroute arguments are limited to letters, digits and
+  pipes only into a short per-platform list of filter forms, matched exactly
+  in lower case: each filter takes no argument, a fixed keyword
+  (`display json`, `head lines N`), a number of up to 6 digits, or one plain
+  word of letters, digits and `. _ : / , @ % + = -` that does not start with
+  `-`. A filter argument therefore holds no option, quote, glob, expansion or
+  second word. Ping and traceroute arguments are limited to letters, digits and
   `. _ : / @ % -`. Refused input never reaches the device.
 - On Cumulus Linux 4.x (`cumulus4x`) bash runs the command, so the checks are
   stricter: `run_show_command` accepts only `net show` commands whose words
@@ -89,7 +88,7 @@ So a report need not re-cover this ground:
   commands it builds is a trailing `2>&1`, which callers cannot supply.
 - Any `device_type` other than `cumulus4x` is refused, before a session is
   opened, when the SSH server identifies itself as a Linux system (Debian or
-  Ubuntu). This is the main defence on Linux SSH servers; the filter allowlist
+  Ubuntu). This is the main defence on Linux SSH servers; the filter list
   above limits what a switch that hides its banner can be made to do.
 - Secrets are replaced with HMAC-SHA256 tokens under an obfuscation key. The key
   is only read, never logged or written; without one, a random key held in
@@ -107,14 +106,16 @@ Known limits of the Cumulus Linux support:
   for every `device_type` other than `cumulus4x`. A switch whose banner hides
   "Debian" (for example with `DebianBanner no`) is not recognised as Linux. If a
   caller then passes a wrong explicit `device_type`, bash runs a command that
-  passed only that platform's checks. It cannot start another command or pass
-  an option, but several allowed filters are Linux programs (`grep`, `egrep`,
-  `head`, and `last`, listed to be safe although it reads only its default log
-  without `-f`). Files named as plain arguments, as in `| grep x /etc/foo` or a
-  glob such as `/etc/*`, can be read if the device account can read them; that
-  output is obfuscated like any other. `grep` and `head` can also be pointed at
-  large or endless input (`/dev/zero`, deep globs), which runs until the command
-  timeout.
+  passed only that platform's checks. It cannot start another command. The
+  words before the first `|` are not limited to plain words, but they only
+  reach a `show` or `get` program, which a Linux system does not normally
+  have. Of the filters, `grep W` and `egrep W` only filter their input with one
+  pattern, and `head` only prints its first lines. `head lines N` instead reads
+  the files named `lines` and `N` in the account's working directory, if they
+  exist, and `last` and `last N` print the login records the account can read
+  (`N` selects a user or terminal name); neither can be pointed at any other
+  file. Output is obfuscated like any other. The other filter names are not
+  standard Linux programs.
 - Nothing has been tested on a real Cumulus Linux 4.3 switch; the support is
   built from vendor documentation and sample output.
 

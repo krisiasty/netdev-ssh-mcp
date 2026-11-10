@@ -143,32 +143,39 @@ every word must contain only letters, digits and `. _ : / , @ %` and `-`, no wor
 separated by spaces. The server appends `2>&1` itself so that error messages are returned.
 
 On the other platforms, the command must be a single line holding a single command (no `;`), must start with the
-verb in lower case (`show`, or `get` on FortiOS), may not use `<` or `>` redirection or the shell syntax `` ` ``,
-`$(`, `${` and `&`, and may only pipe into output filters, named in lower case. Filters that write files, send
-messages or run other commands (such as `save`, `redirect`, `tee` and `append`) are refused.
+verb in lower case (`show`, or `get` on FortiOS), and may not use `<` or `>` redirection or the shell syntax `` ` ``,
+`$(`, `${` and `&`. Words are separated by spaces. The words before the first `|` are otherwise free, so
+`show ip bgp regexp ^65000_` works.
 
-Each word after a filter's name may contain only letters, digits and `. _ : / , @ % ^ * + ? = -`, may not start with
-`-`, `*` or `?`, and may use `$` only as its last character, so `| include up$` and `| include ^Gi.*up` work. Words
-are separated by spaces. Quotes, brackets, braces and backslashes are not accepted, so regular-expression `{m,n}`
-quantifiers and character classes cannot be used: match a space or any other character with `.` instead.
-The allowed filters are:
+After `|` (with or without spaces around it), only the filters below are accepted, written exactly as shown, in lower
+case. `W` is one plain word: letters, digits and `. _ : / , @ % + = -`, not starting with `-`. `N` is a number of up
+to 6 digits. Filters can be chained, as in `show interfaces status | include Ethernet | exclude down`. Filters that
+write files, send messages or run other commands (such as `save`, `redirect`, `tee`, `append` and JunOS `find`) are
+refused.
 
-| `device_type` | Allowed after `\|` |
-| --- | --- |
-| `eos` | `json`, `no-more`, `include`, `exclude`, `begin`, `section` |
-| `ios` | `include`, `exclude`, `begin`, `section`, `count` |
-| `nxos` | the `ios` filters, plus `json`, `json-pretty`, `xml`, `no-more`, `grep`, `egrep`, `last`, `head` |
-| `junos` | `display json`/`xml`/`set`, `no-more`, `match`, `except`, `count`, `last`, `trim` |
-| `fortios` | `grep` |
-| `cumulus4x` | none; end the command with `json` instead |
-| not set | the `eos` and `ios` filters combined |
+| Filter after `\|` | `eos` | `ios` | `nxos` | `junos` | `fortios` |
+| --- | --- | --- | --- | --- | --- |
+| `json` | yes | | yes | | |
+| `json-pretty`, `xml` | | | yes | | |
+| `no-more` | yes | | yes | yes | |
+| `include W`, `exclude W`, `begin W`, `section W` | yes | yes | yes | | |
+| `count W` | | yes | | | |
+| `count` | | | yes | yes | |
+| `grep W` | | | yes | | yes |
+| `egrep W`, `head`, `head lines N` | | | yes | | |
+| `last`, `last N` | | | yes | yes | |
+| `display json`, `display xml`, `display set` | | | | yes | |
+| `match W`, `except W`, `trim N` | | | | yes | |
 
-A `|` inside a filter's pattern is read as another pipe, so use separate
-filters rather than regular-expression alternation. A literal `;` cannot be
-sent either. The closest filter is the regular-expression wildcard `.`, which
-matches any single character: `| include foo.bar` matches `foo;bar`, but also
-`foo-bar` or `foo bar`, so it can return extra lines. Include more of the
-surrounding text in the pattern to narrow it.
+`cumulus4x` takes no filters; end the command with `json` instead. Without `device_type`, the detected platform's
+filters apply.
+
+Filter arguments cannot use regular expressions beyond `.`, because `^`, `$`, `*`, `?`, brackets, braces, quotes and
+backslashes are not plain-word characters; options (`-v`) and a second word are refused too. The device still reads
+`W` as a regular expression, so `.` matches any single character: `| include foo.bar` matches `foo;bar`, but also
+`foo-bar` or `foo bar`, so it can return extra lines. A `|` always starts a filter, even inside a regular expression
+given to the command itself. When no filter fits, run the command without one (output is obfuscated either way) and
+extract what you need from the full output.
 
 ### `run_ping`
 
