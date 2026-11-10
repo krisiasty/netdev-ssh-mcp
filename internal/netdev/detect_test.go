@@ -511,6 +511,7 @@ func TestMatchOSRelease(t *testing.T) {
 		{name: "empty", output: "", wantErr: "not Cumulus Linux 4.x"},
 		{name: "id without version", output: "ID=cumulus-linux\n", wantErr: "not Cumulus Linux 4.x"},
 		{name: "markers inside other lines", output: "NAME=\"ID=cumulus-linux\"\nPRETTY_NAME=VERSION_ID=4.3\n", wantErr: "not Cumulus Linux 4.x"},
+		{name: "version marker inside another line", output: "ID=cumulus-linux\nVERSION_ID=5.4.0\nHOME_URL_VERSION_ID=4.3\n", wantErr: "Cumulus Linux 5.4.0 is not supported"},
 		{name: "id prefix only", output: "ID=cumulus-linux-x\nVERSION_ID=4.3.0\n", wantErr: "not Cumulus Linux 4.x"},
 	}
 	for _, tt := range tests {
@@ -547,6 +548,7 @@ func TestLooksLikeSyntaxErrorCumulus(t *testing.T) {
 		{"bash: show: command not found", true},
 		{"bash: line 1: show: command not found", true},
 		{"-bash: show: command not found", true},
+		{"  ERROR: Command not found", true},
 		{"Description: ERROR: Command not found", false},
 	}
 	for _, tt := range tests {

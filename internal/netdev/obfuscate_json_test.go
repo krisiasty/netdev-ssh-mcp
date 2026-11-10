@@ -51,6 +51,12 @@ func TestObfuscateJSONHidesSecrets(t *testing.T) {
 		},
 		{"colon on next line", "\"password\"\n  : \"FAKEp\"", "\"password\"\n  : \"<<FAKEp>>\""},
 		{
+			// true, false and null are valid JSON values: the walk goes on past them.
+			"literals inside array",
+			`"communities": [true, false, null, "FAKEa"]`,
+			`"communities": [true, false, null, "<<FAKEa>>"]`,
+		},
+		{
 			"nested containers",
 			`{"communities": [{"name": "FAKEa", "ports": [161, 1161]}, "FAKEb"], "keepalive": 60}`,
 			`{"communities": [{"<<name>>": "<<FAKEa>>", "<<ports>>": ["<<161>>", "<<1161>>"]}, "<<FAKEb>>"], "keepalive": 60}`,
