@@ -44,7 +44,7 @@ func pattern(expr string, skip ...string) sensitivePattern {
 }
 
 // sensitivePatterns covers Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper
-// JunOS and FortiOS syntax. Every pattern is applied to every line, so their
+// JunOS, FortiOS and Cumulus Linux 4.x syntax. Every pattern is applied to every line, so their
 // order does not matter and a line can hold several secrets.
 var sensitivePatterns = []sensitivePattern{
 	// enable secret|password [level N] [type] <value>  (Arista, Cisco)
@@ -125,6 +125,37 @@ var sensitivePatterns = []sensitivePattern{
 	// FortiOS: set key "<value>" / set password "<value>"  (clear-text key-like values)
 	pattern(`^\s*set\s+(?:passwd|password|passphrase|auth-passwd|group-password|psksecret(?:-remote|-local)?|ppk-secret|secret|private-key|local-key|peer-key|server-key|client-key|key)\s+` + quoted),
 
+	// Cumulus Linux 4.x: NCLU commands and block form
+	// [net add ...] neighbor IP|IFACE|GROUP password [type] <value>  (BGP)
+	pattern(boundary + `neighbor\s+\S+\s+password` + typeTokens + `\s+` + value),
+	// [net add ...] ospf message-digest-key ID ALGO <value>  (OSPF)
+	pattern(boundary + `ospf\s+message-digest-key\s+\d+\s+\S+` + typeTokens + `\s+` + value),
+	// [net add ...] ospf authentication-key <value>  (OSPF)
+	pattern(boundary + `ospf\s+authentication-key` + typeTokens + `\s+` + value),
+	// [net add snmp-server] readonly-community[-v6] <value> access ...  (SNMP)
+	pattern(boundary + `(?:readonly|readwrite)-community(?:-v6)?\s+` + value),
+	// [net add snmp-server trap-destination IP [vrf V]] community-password <value>  (SNMP)
+	pattern(boundary + `community-password\s+` + value),
+	// [net add snmp-server] username NAME auth-md5|auth-sha <value> [encrypt-des|encrypt-aes <value>]
+	// (SNMPv3, also on trap-destination ... username ... lines)
+	pattern(boundary + `auth-(?:md5|sha)\s+` + value),
+	pattern(boundary + `encrypt-(?:des|aes)\s+` + value),
+	// [net add dot1x radius] shared-secret <value>  (802.1X RADIUS)
+	pattern(boundary + `shared-secret\s+` + value),
+	// [net add dot1x radius das-client-ip IP [vrf V]] das-client-secret <value>  (802.1X RADIUS)
+	pattern(boundary + `das-client-secret\s+` + value),
+
+	// Cumulus Linux 4.x: snmpd.conf and /etc/tacplus_servers
+	// rocommunity|rwcommunity[6] <value> [source] [-V view]  (snmpd.conf)
+	pattern(`^\s*r[ow]community6?\s+` + value),
+	// createUser [-e ENGINEID] NAME [AUTHALGO] <authpass> [PRIVALGO [<privpass>]]  (snmpd.conf, SNMPv3)
+	pattern(`^\s*createuser\s+(?:-e\s+\S+\s+)?\S+\s+(?:(?:md5|sha\S*)\s+)?` + value + `(?:\s+(?:des|aes\S*)\s+` + value + `)?`),
+	// trapsink|trap2sink|informsink HOST <value> [port]  (snmpd.conf). The
+	// community is required, so "trapsink HOST" is left alone.
+	pattern(`^\s*(?:trap|trap2|inform)sink\s+\S+\s+` + value),
+	// secret=<value>  (/etc/tacplus_servers)
+	pattern(boundary + `secret=` + value),
+
 	// Catch-all: any quoted value on a line JunOS marks as secret. Covers
 	// secret-bearing statements that have no specific pattern above.
 	pattern(quoted + `\s*;?\s*##\s*SECRET-DATA`),
@@ -161,7 +192,7 @@ func SetObfuscationKey(raw []byte, source string) {
 // always produces the same token, so outputs remain comparable without
 // revealing the secret, and tokens cannot be checked against guesses without
 // the key.
-// Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, and FortiOS syntax.
+// Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, FortiOS and Cumulus Linux 4.x syntax.
 func obfuscate(config string) (out string, hashed bool, err error) {
 	if !Obfuscate {
 		return config, false, nil

@@ -629,7 +629,6 @@ func TestGetConfigCumulusUsesNetShowConfigurationCommands(t *testing.T) {
 	if len(res.Content) == 0 {
 		t.Fatal("GetConfig() returned no content")
 	}
-	t.Skip("Task 5: obfuscation pattern for NCLU secrets not added yet")
 	if text := res.Content[0].(*mcp.TextContent).Text; strings.Contains(text, "FAKEbgp") {
 		t.Fatalf("result leaks secret: %q", text)
 	}
