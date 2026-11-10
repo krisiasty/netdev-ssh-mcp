@@ -23,23 +23,29 @@ func isSecretJSONKey(key string) bool {
 	return slices.ContainsFunc(secretJSONKeyWords, func(w string) bool { return strings.Contains(k, w) })
 }
 
-// obfuscateJSON hashes the values of secret keys in JSON text, such as
-// "net show ... json" or "| json" output, and reports whether it hashed any.
-// The line patterns cannot see these: a JSON value sits on its own line,
-// after a quoted key, or spans several lines inside an array or object.
-// It runs after the line pass, so it leaves alone any string that is already
-// exactly a hash token.
+// obfuscateJSON hashes the values of secret keys in JSON text and reports
+// whether it hashed any. obfuscate does not call it: it merges jsonSpans with
+// the line pass's spans instead.
+func obfuscateJSON(text string) (string, bool) {
+	return hashSpans(text, jsonSpans(text))
+}
+
+// jsonSpans returns a span for every value of a secret key in JSON text, such
+// as "net show ... json" or "| json" output. The line patterns cannot see
+// these: a JSON value sits on its own line, after a quoted key, or spans
+// several lines inside an array or object. A string that is already exactly
+// a hash token is skipped, so obfuscated output is never hashed twice.
 //
 // A secret string value is hashed on its raw contents, quotes kept; a secret
 // number becomes a quoted token, so the output stays valid JSON. Inside a
 // secret array or object, every string, keys included (some platforms key
-// communities by name), and every number is hashed. true, false, null and all
-// other text are unchanged. Text that is not JSON passes through unless it
+// communities by name), and every number, NaN and Infinity included, is
+// hashed. true, false, null and all other text are unchanged. Text that is not JSON passes through unless it
 // contains the "key": value shape. No string spans lines, and a container
 // walk stops at the first thing that is not JSON, so a stray quote or bracket
 // in plain text reaches no further than its own line or the next word.
-func obfuscateJSON(text string) (string, bool) {
-	r := &jsonRewriter{text: text}
+func jsonSpans(text string) []span {
+	r := &jsonScanner{text: text}
 	for i := 0; i < len(text); {
 		if text[i] != '"' {
 			i++
@@ -53,32 +59,22 @@ func obfuscateJSON(text string) (string, bool) {
 		}
 		i = end
 	}
-	if !r.hashed {
-		return text, false
-	}
-	r.b.WriteString(text[r.prev:])
-	return r.b.String(), true
+	return r.spans
 }
 
-// jsonRewriter builds the output of obfuscateJSON: text with replacements
-// applied in increasing order of position.
-type jsonRewriter struct {
-	text   string
-	b      strings.Builder
-	prev   int // end of the last replacement; text before it is written
-	hashed bool
+// jsonScanner collects the secret spans jsonSpans finds in text.
+type jsonScanner struct {
+	text  string
+	spans []span
 }
 
-func (r *jsonRewriter) replace(start, end int, repl string) {
-	r.b.WriteString(r.text[r.prev:start])
-	r.b.WriteString(repl)
-	r.prev = end
-	r.hashed = true
+func (r *jsonScanner) add(start, end int, number bool) {
+	r.spans = append(r.spans, span{start: start, end: end, number: number})
 }
 
 // isKey reports whether the string that ends just before end is an object
 // key: followed by optional whitespace, including newlines, and a colon.
-func (r *jsonRewriter) isKey(end int) bool {
+func (r *jsonScanner) isKey(end int) bool {
 	colon := skipJSONSpace(r.text, end)
 	return colon < len(r.text) && r.text[colon] == ':'
 }
@@ -86,7 +82,7 @@ func (r *jsonRewriter) isKey(end int) bool {
 // value hashes the secret value that starts at i and returns the index just
 // past it. Anything other than a string, number, array or object is left
 // alone.
-func (r *jsonRewriter) value(i int) int {
+func (r *jsonScanner) value(i int) int {
 	if i >= len(r.text) {
 		return i
 	}
@@ -107,14 +103,14 @@ func (r *jsonRewriter) value(i int) int {
 // the index just past it and whether it was terminated. An unterminated
 // string is hashed to the end of its line. Empty strings and strings that are
 // already exactly a hash token are left alone.
-func (r *jsonRewriter) hashString(i int) (int, bool) {
+func (r *jsonScanner) hashString(i int) (int, bool) {
 	end, closed := scanJSONString(r.text, i)
 	contents := end
 	if closed {
 		contents = end - 1
 	}
 	if s := r.text[i+1 : contents]; s != "" && !isHashToken(s) {
-		r.replace(i+1, contents, hashSecret(s))
+		r.add(i+1, contents, false)
 	}
 	return end, closed
 }
@@ -122,9 +118,10 @@ func (r *jsonRewriter) hashString(i int) (int, bool) {
 // hashBareToken handles the unquoted token text[i:end]. It reports false when
 // the token is not a JSON value in a JSON position: not true, false, null or
 // a number, or not preceded by "[", ",", ":" or whitespace and followed by
-// whitespace, ",", "]", "}" or the end of the text. A number is replaced with
-// a quoted token.
-func (r *jsonRewriter) hashBareToken(i, end int) bool {
+// whitespace, ",", "]", "}" or the end of the text. A number is marked for a
+// quoted token. NaN, Infinity and -Infinity count as numbers: Python, and so
+// NCLU, prints them bare.
+func (r *jsonScanner) hashBareToken(i, end int) bool {
 	if end == i || (i > 0 && strings.IndexByte("[,: \t\r\n", r.text[i-1]) < 0) ||
 		(end < len(r.text) && strings.IndexByte(",]} \t\r\n", r.text[end]) < 0) {
 		return false
@@ -132,8 +129,8 @@ func (r *jsonRewriter) hashBareToken(i, end int) bool {
 	switch tok := r.text[i:end]; {
 	case tok == "true" || tok == "false" || tok == "null":
 		return true
-	case isJSONNumber(tok):
-		r.replace(i, end, `"`+hashSecret(tok)+`"`)
+	case isJSONNumber(tok) || tok == "NaN" || tok == "Infinity" || tok == "-Infinity":
+		r.add(i, end, true)
 		return true
 	default:
 		return false
@@ -145,7 +142,7 @@ func (r *jsonRewriter) hashBareToken(i, end int) bool {
 // of the text, an unterminated string, or a bare token that is not a JSON
 // value, since what follows is not JSON. It returns the index where it
 // stopped, just past the close bracket on success.
-func (r *jsonRewriter) hashContainer(i int) int {
+func (r *jsonScanner) hashContainer(i int) int {
 	depth := 0
 	for i < len(r.text) {
 		switch c := r.text[i]; c {

@@ -157,8 +157,8 @@ func TestObfuscateRunsJSONAndLinePasses(t *testing.T) {
 		// The JUNOS `secret "..."` and tacplus `secret=` line patterns must not
 		// hash the JSON pass's token a second time.
 		{"json secret key", `"secret": "<<FAKEs>>"`},
-		// The line pass runs first; the JSON pass must still find values that
-		// only it can see, and must not rehash the line pass's tokens.
+		// Both passes read the original text; a secret both find is hashed
+		// once, and values only the JSON pass can see are still found.
 		{
 			"pretty json array",
 			"{\n  \"communities\": [\n    \"<<FAKEone>>\",\n    \"<<FAKEtwo>>\"\n  ],\n  \"keepalive\": 60\n}",
@@ -208,5 +208,85 @@ func TestObfuscateCraftedJSONShapeDoesNotHideLineSecrets(t *testing.T) {
 				t.Errorf("obfuscateConfig(%q)\n got: %s\nwant %s hashed once as %s", input, got, l.secret, hashSecret(l.secret))
 			}
 		}
+	}
+}
+
+// A line pattern that matches inside an ordinary JSON string must not hide a
+// JSON secret that follows it: both passes read the original text.
+func TestObfuscateLineTriggerInsideJSONString(t *testing.T) {
+	triggers := []string{"shared-secret", "auth-md5", "key-string", "encrypted-password", "secret="}
+	keys := []string{"password", "snmpCommunity", "communities"}
+	for _, trigger := range triggers {
+		for _, key := range keys {
+			input := `{"description": "x ` + trigger + ` y", "` + key + `": "FAKEp1"}`
+			got, err := obfuscateConfig(input)
+			if err != nil {
+				t.Fatalf("obfuscateConfig() error = %v", err)
+			}
+			if strings.Contains(got, "FAKE") {
+				t.Errorf("obfuscateConfig(%q) = %q, leaks FAKE", input, got)
+			}
+		}
+	}
+}
+
+func TestObfuscateJSONEdgeCasesThroughObfuscate(t *testing.T) {
+	inputs := []string{
+		// Pretty secret array whose elements trip line patterns.
+		"{\n  \"communities\": [\n    \"x secret=y\",\n    \"lab shared-secret q\",\n    \"FAKEthree\"\n  ]\n}",
+		// EOS "show snmp community | json" shape with a line trigger in a field.
+		"{\n  \"communities\": {\n    \"FAKEpub1\": {\n      \"view\": \"v auth-sha w\",\n      \"access\": \"ro\"\n    },\n" +
+			"    \"FAKEpub2\": {\n      \"access\": \"rw\"\n    }\n  }\n}",
+		// Python and NCLU print NaN and Infinity as bare tokens.
+		`{"communities": [NaN, "FAKEnan"]}`,
+		`{"communities": {"a": Infinity, "FAKEinf": 1}}`,
+		`{"communities": [-Infinity, "FAKEneginf"]}`,
+	}
+	for _, input := range inputs {
+		got, hashed, err := obfuscate(input)
+		if err != nil {
+			t.Fatalf("obfuscate() error = %v", err)
+		}
+		if strings.Contains(got, "FAKE") || !hashed {
+			t.Errorf("obfuscate(%q) = %q, %v; leaks FAKE or not hashed", input, got, hashed)
+		}
+	}
+}
+
+// Line and JSON spans are merged, so a secret both passes find, in part or in
+// full, is hashed once as their union.
+func TestObfuscateOverlappingLineAndJSONSpans(t *testing.T) {
+	tests := []struct {
+		name, input, want string
+	}{
+		{
+			"separate lines",
+			"{\"secret\": \"FAKEs\", \"x\": \"y\"}\n        secret \"FAKEq\"; ## SECRET-DATA",
+			"{\"secret\": \"<<FAKEs>>\", \"x\": \"y\"}\n        secret \"<<FAKEq>>\"; ## SECRET-DATA",
+		},
+		{
+			// shared-secret captures `FAKEs"}`; the JSON value is `a shared-secret FAKEs`.
+			"same line overlap",
+			`{"password": "a shared-secret FAKEs"}`,
+			`{"password": "<<a shared-secret FAKEs"}>>`,
+		},
+		{
+			// Both passes find the same crypt value; one token.
+			"identical spans",
+			`{"password": "$6$FAKEsalt$FAKEhash"}`,
+			`{"password": "<<$6$FAKEsalt$FAKEhash>>"}`,
+		},
+		{"json number", `{"community": 12345}`, `{"community": "<<12345>>"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, hashed, err := obfuscate(tt.input)
+			if err != nil {
+				t.Fatalf("obfuscate() error = %v", err)
+			}
+			if want := expand(tt.want); got != want || !hashed {
+				t.Errorf("obfuscate(%q) = %q, %v\nwant: %q, true", tt.input, got, hashed, want)
+			}
+		})
 	}
 }

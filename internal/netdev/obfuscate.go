@@ -212,16 +212,16 @@ func obfuscate(config string) (out string, hashed bool, err error) {
 	if obfuscationKey == nil {
 		return "", false, errObfuscationKeyNotSet
 	}
-	// The line pass runs first, on the device's own lines, so nothing the JSON
-	// pass rewrites can move a secret away from the keyword a pattern needs.
-	lines := strings.Split(config, "\n")
-	for i, line := range lines {
-		var h bool
-		lines[i], h = obfuscateLine(line)
-		hashed = hashed || h
+	// Both passes read the original text and only report spans, so neither can
+	// hide a secret from the other by rewriting what it sees.
+	spans := jsonSpans(config)
+	offset := 0
+	for line := range strings.SplitSeq(config, "\n") {
+		spans = append(spans, lineSpans(line, offset)...)
+		offset += len(line) + 1
 	}
-	out, h := obfuscateJSON(strings.Join(lines, "\n"))
-	return out, hashed || h, nil
+	out, hashed = hashSpans(config, spans)
+	return out, hashed, nil
 }
 
 // obfuscatedResult obfuscates device output and wraps it in a tool result.
@@ -240,47 +240,75 @@ func obfuscatedResult(output string) (*mcp.CallToolResult, error) {
 	return &mcp.CallToolResult{Content: content}, nil
 }
 
-type span struct{ start, end int }
+// span marks text[start:end] as a secret. A JSON number span is replaced with
+// a quoted token, so JSON output stays valid.
+type span struct {
+	start, end int
+	number     bool
+}
 
-// obfuscateLine hashes every secret any pattern finds in line and reports
-// whether it found any. Overlapping matches are merged so no part of a secret
-// survives.
-func obfuscateLine(line string) (string, bool) {
+// lineSpans returns a span for every secret any pattern finds in line, offset
+// by the line's position in the whole text.
+func lineSpans(line string, offset int) []span {
 	var spans []span
 	for _, p := range sensitivePatterns {
 		for _, m := range p.re.FindAllStringSubmatchIndex(line, -1) {
 			for g := 2; g+1 < len(m); g += 2 {
-				s := span{m[g], m[g+1]}
-				if s.start < 0 || s.start == s.end || p.skips(line[s.start:s.end]) {
+				start, end := m[g], m[g+1]
+				if start < 0 || start == end || p.skips(line[start:end]) {
 					continue
 				}
-				spans = append(spans, s)
+				spans = append(spans, span{start: offset + start, end: offset + end})
 			}
 		}
 	}
-	if len(spans) == 0 {
-		return line, false
-	}
+	return spans
+}
 
-	slices.SortFunc(spans, func(a, b span) int { return a.start - b.start })
+// hashSpans replaces every secret span in text with its token and reports
+// whether there were any. Overlapping and touching spans are merged first and
+// hashed as one, so no part of a secret survives. A merged span keeps the
+// quoting of a JSON number only when it is exactly that number.
+func hashSpans(text string, spans []span) (string, bool) {
+	if len(spans) == 0 {
+		return text, false
+	}
+	slices.SortFunc(spans, func(a, b span) int {
+		if a.start != b.start {
+			return a.start - b.start
+		}
+		return a.end - b.end
+	})
 	merged := spans[:1]
 	for _, s := range spans[1:] {
 		last := &merged[len(merged)-1]
-		if s.start < last.end {
-			last.end = max(last.end, s.end)
+		if s.start > last.end {
+			merged = append(merged, s)
 			continue
 		}
-		merged = append(merged, s)
+		switch {
+		case s.end > last.end:
+			// Sorted by start, so s covers the merged span only when it
+			// starts where the merged span starts.
+			last.number = s.number && s.start == last.start
+			last.end = s.end
+		case s.start == last.start && s.end == last.end:
+			last.number = last.number || s.number
+		}
 	}
 
 	var b strings.Builder
 	prev := 0
 	for _, s := range merged {
-		b.WriteString(line[prev:s.start])
-		b.WriteString(hashSecret(line[s.start:s.end]))
+		b.WriteString(text[prev:s.start])
+		token := hashSecret(text[s.start:s.end])
+		if s.number {
+			token = `"` + token + `"`
+		}
+		b.WriteString(token)
 		prev = s.end
 	}
-	b.WriteString(line[prev:])
+	b.WriteString(text[prev:])
 	return b.String(), true
 }
 
