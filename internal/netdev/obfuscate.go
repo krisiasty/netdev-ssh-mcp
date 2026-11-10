@@ -203,7 +203,8 @@ func SetObfuscationKey(raw []byte, source string) {
 // always produces the same token, so outputs remain comparable without
 // revealing the secret, and tokens cannot be checked against guesses without
 // the key.
-// Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, FortiOS and Cumulus Linux 4.x syntax.
+// Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, FortiOS and Cumulus Linux 4.x syntax,
+// and JSON output on every platform.
 func obfuscate(config string) (out string, hashed bool, err error) {
 	if !Obfuscate {
 		return config, false, nil
@@ -211,6 +212,7 @@ func obfuscate(config string) (out string, hashed bool, err error) {
 	if obfuscationKey == nil {
 		return "", false, errObfuscationKeyNotSet
 	}
+	config, hashed = obfuscateJSON(config)
 	lines := strings.Split(config, "\n")
 	for i, line := range lines {
 		var h bool
