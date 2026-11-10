@@ -619,3 +619,27 @@ func TestGetConfigCumulusUsesNetShowConfigurationCommands(t *testing.T) {
 		t.Fatalf("result leaks secret: %q", text)
 	}
 }
+
+func TestRunShowCommandCumulus(t *testing.T) {
+	ran := stubRunCommand(t, "ok", nil)
+	_, _, err := RunShowCommand(context.Background(), nil, RunShowCommandInput{
+		Host: "sw1", Username: "cumulus", DeviceType: "cumulus4x", Command: "net show interface json",
+	})
+	if err != nil {
+		t.Fatalf("RunShowCommand() error = %v", err)
+	}
+	if len(*ran) != 1 || (*ran)[0] != "net show interface json 2>&1" {
+		t.Fatalf("ran %q, want exactly net show interface json 2>&1", *ran)
+	}
+
+	*ran = nil
+	_, _, err = RunShowCommand(context.Background(), nil, RunShowCommandInput{
+		Host: "sw1", Username: "cumulus", DeviceType: "cumulus4x", Command: "net show configuration",
+	})
+	if err == nil || !strings.Contains(err.Error(), "use the get_config tool") {
+		t.Fatalf("error = %v, want get_config error", err)
+	}
+	if len(*ran) != 0 {
+		t.Fatalf("ran %q, want nothing", *ran)
+	}
+}

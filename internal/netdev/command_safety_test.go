@@ -188,3 +188,61 @@ func TestRunPingInjectionNeverReachesSSH(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeCumulusCommand(t *testing.T) {
+	accepted := []struct{ command, want string }{
+		{"net show interface", "net show interface 2>&1"},
+		{"  net show bgp vrf RED summary json  ", "net show bgp vrf RED summary json 2>&1"},
+		{"net show interface swp1-4,swp6", "net show interface swp1-4,swp6 2>&1"},
+		{"net show route 2001:db8::/32", "net show route 2001:db8::/32 2>&1"},
+		{"net show lldp swp1 json", "net show lldp swp1 json 2>&1"},
+		{"net show", "net show 2>&1"},
+		{"net  show   interface", "net  show   interface 2>&1"},
+		{"net show counters", "net show counters 2>&1"},
+		{"net show clag", "net show clag 2>&1"},
+		{"net show route", "net show route 2>&1"},
+	}
+	for _, tt := range accepted {
+		t.Run("accept "+tt.command, func(t *testing.T) {
+			got, err := normalizeOperationalCommand(tt.command, deviceTypeCumulus4x)
+			if err != nil || got != tt.want {
+				t.Fatalf("normalizeOperationalCommand(%q) = %q, %v; want %q", tt.command, got, err, tt.want)
+			}
+		})
+	}
+
+	var refused []struct{ command, want string }
+	add := func(want string, commands ...string) {
+		for _, c := range commands {
+			refused = append(refused, struct{ command, want string }{c, want})
+		}
+	}
+	add("use the get_config tool", "net show configuration", "net show configuration commands", "net show configuration files",
+		"net show conf", "net show co", "net show c", "net show commit history", "net show commit last", "net show rollback 3",
+		"net show ro", "net show r", "net show Configuration")
+	add("must start with 'net show'", "show version", "net add bgp neighbor swp1 password x", "net del all", "net commit",
+		"NET show interface", "net SHOW interface", "sudo net show interface", "net")
+	for _, ch := range []string{"'", `"`, `\`, "$", "`", ";", "&", "|", "<", ">", "(", ")", "{", "}", "[", "]", "*", "?", "~", "!", "#", "="} {
+		add("may only contain", "net show inter"+ch+"face")
+	}
+	add("may only contain", "net show interface\tswp1", "net show interface\nswp1", "net show é", "net show interface 2>&1")
+	add("must not start with '-'", "net show interface -h", "net show --help")
+	for _, tt := range refused {
+		t.Run("refuse "+tt.command, func(t *testing.T) {
+			got, err := normalizeOperationalCommand(tt.command, deviceTypeCumulus4x)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("normalizeOperationalCommand(%q) = %q, %v; want error containing %q", tt.command, got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckCommandOnAnyPlatformCumulus(t *testing.T) {
+	if err := checkCommandOnAnyPlatform("net show interface"); err != nil {
+		t.Fatalf("net show interface: %v", err)
+	}
+	err := checkCommandOnAnyPlatform("net show interface; reboot")
+	if err == nil || !strings.Contains(err.Error(), "may only contain") {
+		t.Fatalf("got %v, want Cumulus allowlist error", err)
+	}
+}
