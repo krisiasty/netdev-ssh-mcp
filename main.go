@@ -120,10 +120,13 @@ func main() {
 			"the command may end with 'json' for structured output, takes no pipes or redirection, and its words may contain only " +
 			"letters, digits and . _ : / , @ % -. " +
 			"Append '| json' for structured output (Arista/Cisco), or '| no-more' to disable pagination. " +
-			"The command must be a single line holding one command, without ';', '<'/'>' redirection, or the shell syntax '`', '$(', '${' and '&', " +
+			"The command must be a single line holding one command, start with the verb in lower case ('show', or 'get' on FortiOS), " +
+			"have no ';', '<'/'>' redirection, or the shell syntax '`', '$(', '${' and '&', " +
 			"and may only pipe into output filters such as include, exclude, begin, section, count, grep, match or display json; " +
-			"filter arguments must not start with '-', filters must not use '{', \"$'\" or '$\"' (so regex {m,n} quantifiers are not accepted), " +
-			"and pipes that write files or run other commands are refused. " +
+			"pipes that write files or run other commands are refused. " +
+			"Each word after a filter's name may contain only letters, digits and . _ : / , @ % ^ * + ? = -, must not start with '-', '*' or '?', " +
+			"and may use '$' only as its last character (for example '| include up$'); quotes, brackets, braces and backslashes are not accepted, " +
+			"so use '.' to match a space or any other character. " +
 			"Examples: 'show bgp summary | json', 'show interfaces status | json', " +
 			"'show lldp neighbors detail | json', 'show inventory | json', 'show version | json', " +
 			"'get system status', 'get router info routing-table all', 'net show interface json'.",

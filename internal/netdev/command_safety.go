@@ -70,17 +70,21 @@ var shellSyntax = []string{"`", "$(", "${", "&"}
 
 const shellSyntaxList = "'`', '$(', '${' or '&'"
 
-// filterExpansion lists what bash expands into a leading "-" past the
-// filter-argument check: brace expansion ("{-f,}") and ANSI-C or locale
-// quoting ("$'\x2df'", '$"-f"'). It is refused in pipe filters, which also
-// rules out regex "{m,n}" quantifiers there.
-var filterExpansion = []string{"{", "$'", `$"`}
+// filterArgPattern is what a word after a pipe filter's name may be. On a
+// Linux system such as Cumulus Linux bash runs the command, and several
+// filters (grep, egrep, head, last) are also Linux programs, so a word must
+// stay a literal argument after bash expands it: no quotes, backslashes,
+// brackets, braces, "~" or parameters. "$" is allowed only as the last
+// character, where bash leaves it alone, for regex anchors such as "up$".
+var filterArgPattern = regexp.MustCompile(`^[A-Za-z0-9._:/,@%^*+?=-]+\$?$`)
+
+const filterArgChars = "letters, digits and . _ : / , @ % ^ * + ? = -"
 
 // checkOperationalCommand verifies that command is a single line holding a
-// single command (no ";"), starts with verb as a whole word, uses no
-// redirection or shell syntax, and pipes only into filters allowed for the
-// platform, with no filter argument starting with "-" and no expansion
-// that could create one.
+// single command (no ";"), starts with verb exactly (lower case) as a whole
+// word, uses no redirection or shell syntax, and pipes only into filters
+// allowed for the platform, each argument of which matches filterArgPattern
+// and does not start with "-", "*" or "?".
 func checkOperationalCommand(command, verb string, dt deviceType) error {
 	for _, r := range command {
 		if unicode.IsControl(r) || r == ' ' || r == ' ' {
@@ -104,34 +108,40 @@ func checkOperationalCommand(command, verb string, dt deviceType) error {
 	}
 
 	segments := strings.Split(command, "|")
-	if fields := strings.Fields(segments[0]); len(fields) == 0 || !strings.EqualFold(fields[0], verb) {
+	fields := strings.Fields(segments[0])
+	if len(fields) == 0 || !strings.EqualFold(fields[0], verb) {
 		return fmt.Errorf("command must start with '%s'", verb)
+	}
+	// On a Linux system the verb is a program name, and those are case
+	// sensitive: GET is lwp-request, which fetches URLs.
+	if fields[0] != verb {
+		return fmt.Errorf("command must start with '%s' in lower case", verb)
 	}
 
 	allowed := allowedPipes[dt]
 	for _, seg := range segments[1:] {
-		fields := strings.Fields(strings.ToLower(seg))
-		if len(fields) == 0 {
+		// Words are split on spaces only; any other whitespace fails the
+		// argument pattern below.
+		words := slices.DeleteFunc(strings.Split(seg, " "), func(w string) bool { return w == "" })
+		if len(words) == 0 {
 			return fmt.Errorf("empty pipe in command")
 		}
-		for _, s := range filterExpansion {
-			if strings.Contains(seg, s) {
-				return fmt.Errorf("pipe filters must not use '{', \"$'\" or '$\"'")
+		filter := strings.ToLower(words[0])
+		if !slices.Contains(allowed, filter) {
+			return fmt.Errorf("pipe '| %s' is not allowed; allowed filters: %s", filter, strings.Join(allowed, ", "))
+		}
+		for _, arg := range words[1:] {
+			if !filterArgPattern.MatchString(arg) {
+				return fmt.Errorf("pipe filter arguments may contain only %s, with '$' only as the last character of a word; quotes, brackets and backslashes are not accepted (use '.' to match a space or any character)", filterArgChars)
+			}
+			// A leading "-" is an option; a leading "*" or "?" is a glob
+			// that can expand to a file name starting with "-".
+			if strings.ContainsAny(arg[:1], "-*?") {
+				return fmt.Errorf("pipe filter arguments must not start with '-', '*' or '?'")
 			}
 		}
-		if !slices.Contains(allowed, fields[0]) {
-			return fmt.Errorf("pipe '| %s' is not allowed; allowed filters: %s", fields[0], strings.Join(allowed, ", "))
-		}
-		// Several filters (grep, egrep, head, last) are also Linux
-		// programs, where an option can read files or change behaviour.
-		// A shell drops quotes and backslashes, so look past them.
-		for _, arg := range fields[1:] {
-			if strings.HasPrefix(strings.TrimLeft(arg, `"'\`), "-") {
-				return fmt.Errorf("pipe filter arguments must not start with '-'")
-			}
-		}
-		if dt == deviceTypeJunos && fields[0] == "display" &&
-			(len(fields) != 2 || !slices.Contains(junosDisplayFormats, fields[1])) {
+		if dt == deviceTypeJunos && filter == "display" &&
+			(len(words) != 2 || !slices.Contains(junosDisplayFormats, strings.ToLower(words[1]))) {
 			return fmt.Errorf("'| display' must be followed by one of: %s", strings.Join(junosDisplayFormats, ", "))
 		}
 	}

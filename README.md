@@ -142,11 +142,15 @@ On Cumulus Linux 4.x, the command may end with `json` for structured output. It 
 every word must contain only letters, digits and `. _ : / , @ %` and `-`, no word may start with `-`, and words are
 separated by spaces. The server appends `2>&1` itself so that error messages are returned.
 
-On the other platforms, the command must be a single line holding a single command (no `;`), may not
-use `<` or `>` redirection or the shell syntax `` ` ``, `$(`, `${` and `&`, and may only pipe into output filters.
-Filter arguments may not start with `-`, and filters may not use `{`, `$'` or `$"`, so regular-expression `{m,n}`
-quantifiers are not accepted in filters. Filters that write files, send messages or run other commands (such as
-`save`, `redirect`, `tee` and `append`) are refused. A bare `$` is allowed, so `| include up$` works.
+On the other platforms, the command must be a single line holding a single command (no `;`), must start with the
+verb in lower case (`show`, or `get` on FortiOS), may not use `<` or `>` redirection or the shell syntax `` ` ``,
+`$(`, `${` and `&`, and may only pipe into output filters. Filters that write files, send messages or run other
+commands (such as `save`, `redirect`, `tee` and `append`) are refused.
+
+Each word after a filter's name may contain only letters, digits and `. _ : / , @ % ^ * + ? = -`, may not start with
+`-`, `*` or `?`, and may use `$` only as its last character, so `| include up$` and `| include ^Gi.*up` work. Words
+are separated by spaces. Quotes, brackets, braces and backslashes are not accepted, so regular-expression `{m,n}`
+quantifiers and character classes cannot be used: match a space or any other character with `.` instead.
 The allowed filters are:
 
 | `device_type` | Allowed after `\|` |

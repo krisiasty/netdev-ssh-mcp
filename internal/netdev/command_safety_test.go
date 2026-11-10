@@ -82,7 +82,6 @@ func TestNormalizeOperationalCommandAllowsReads(t *testing.T) {
 		{"junos match no-more", deviceTypeJunos, "show route | match 10.0.0 | no-more"},
 		{"fortios get", deviceTypeFortiOS, "get system status"},
 		{"fortios grep", deviceTypeFortiOS, "get router info routing-table all | grep 10.0.0"},
-		{"uppercase verb", deviceTypeEOS, "SHOW version"},
 	}
 
 	for _, tt := range tests {
@@ -137,65 +136,70 @@ func TestNormalizeOperationalCommandRefusesShellSyntax(t *testing.T) {
 }
 
 // Several allowed filters are also Linux programs (grep, egrep, head, last),
-// where an option can read files or change behaviour. No filter argument may
-// start with "-", even quoted, since a shell drops the quotes.
-func TestNormalizeOperationalCommandRefusesFilterOptions(t *testing.T) {
-	tests := []struct {
-		dt      deviceType
-		command string
+// where an option can read files or change behaviour, and bash expands many
+// constructs into a leading "-". Filter arguments are therefore allowlisted
+// on every platform; each bypass found in review is pinned here against each
+// platform's filters.
+func TestNormalizeOperationalCommandRefusesFilterArguments(t *testing.T) {
+	filters := []struct {
+		dt     deviceType
+		prefix string
 	}{
-		{deviceTypeJunos, "show version | match -e x"},
-		{deviceTypeJunos, "show version | last -n 5"},
-		{deviceTypeNXOS, "show version | grep -f /etc/shadow"},
-		{deviceTypeNXOS, "show version | grep -r FAKE /"},
-		{deviceTypeNXOS, "show version | grep FAKE -r /"},
-		{deviceTypeNXOS, "show version | egrep -f /etc/tacplus_servers"},
-		{deviceTypeNXOS, "show version | head -c 10"},
-		{deviceTypeNXOS, "show version | last -n 5"},
-		{deviceTypeNXOS, `show version | grep "-f" /etc/shadow`},
-		{deviceTypeNXOS, `show version | grep '-f' /etc/shadow`},
-		{deviceTypeNXOS, `show version | grep \-f /etc/shadow`},
-		{deviceTypeFortiOS, "get system status | grep -f /etc/shadow"},
-		{deviceTypeFortiOS, "get system status | grep -r FAKE /"},
-		{deviceTypeEOS, "show version | include -x"},
-		{deviceTypeIOS, "show version | count -x"},
+		{deviceTypeEOS, "show version | include"},
+		{deviceTypeIOS, "show version | include"},
+		{deviceTypeNXOS, "show version | grep"},
+		{deviceTypeNXOS, "show version | egrep"},
+		{deviceTypeNXOS, "show version | head"},
+		{deviceTypeNXOS, "show version | last"},
+		{deviceTypeJunos, "show version | match"},
+		{deviceTypeJunos, "show version | last"},
+		{deviceTypeFortiOS, "get system status | grep"},
 	}
-	for _, tt := range tests {
-		got, err := normalizeOperationalCommand(tt.command, tt.dt)
-		if err == nil || !strings.Contains(err.Error(), "must not start with '-'") {
-			t.Errorf("normalizeOperationalCommand(%q, %q) = %q, %v; want filter option refused", tt.command, tt.dt, got, err)
+	words := []string{
+		// Options, plain or spelled through quotes and escapes.
+		"-f", "-r FAKE /", "FAKE -r /", `"-f"`, `'-f'`, `\-f`, `a\-f`,
+		// Unset or empty parameters before a "-".
+		"$x-r", "$1-f", `"$1"-f`, "$@-f", "$!-f", "$NOPE--file=/etc/shadow",
+		// Arithmetic, globbing, brace expansion, ANSI-C and locale quoting, tilde.
+		"$[-1]f", "$[-1]0", "[-]*", "?r", "*", "{-f,}", "x{1,3}", `$'\x2df'`, `$"-r"`, "~", "~-",
+		// Quotes are refused even around harmless text.
+		"'up$'", `"a b"`,
+	}
+	for _, f := range filters {
+		for _, w := range words {
+			command := f.prefix + " " + w + " x"
+			got, err := normalizeOperationalCommand(command, f.dt)
+			if err == nil || !strings.Contains(err.Error(), "pipe filter arguments") {
+				t.Errorf("normalizeOperationalCommand(%q, %q) = %q, %v; want the filter argument refused", command, f.dt, got, err)
+			}
 		}
 	}
 }
 
-// Bash creates a leading "-" at expansion time from brace expansion and from
-// ANSI-C or locale quoting, past the leading-dash check. Pipe filters refuse
-// "{", "$'" and '$"' on every platform.
-func TestNormalizeOperationalCommandRefusesFilterExpansion(t *testing.T) {
+// The verb must be exactly "show", or "get" on FortiOS: on a Linux system
+// GET is lwp-request, which fetches URLs.
+func TestNormalizeOperationalCommandRequiresLowerCaseVerb(t *testing.T) {
 	tests := []struct {
 		dt      deviceType
 		command string
+		wantErr string
 	}{
-		{deviceTypeJunos, "show version | match {-e,} x"},
-		{deviceTypeJunos, "show version | last {-n,} 5"},
-		{deviceTypeJunos, `show version | match $'\x2de' x`},
-		{deviceTypeNXOS, "show version | grep {-f,} /etc/x"},
-		{deviceTypeNXOS, `show version | grep $'\x2df' x`},
-		{deviceTypeNXOS, `show version | grep $"-r" x`},
-		{deviceTypeNXOS, "show version | egrep {-f,} /etc/x"},
-		{deviceTypeNXOS, "show version | head {-c,} 10"},
-		{deviceTypeNXOS, "show version | last {-n,} 5"},
-		{deviceTypeFortiOS, "get system status | grep {-f,} /etc/x"},
-		{deviceTypeFortiOS, `get system status | grep $'\x2df' x`},
-		{deviceTypeFortiOS, `get system status | grep $"-r" x`},
-		{deviceTypeEOS, "show version | include {-x,}"},
-		{deviceTypeIOS, "show version | include x{1,3}"},
-		{deviceTypeIOS, `show version | include $'x'`},
+		{deviceTypeEOS, "SHOW version", "lower case"},
+		{deviceTypeIOS, "Show version", "lower case"},
+		{deviceTypeNXOS, "SHOW version", "lower case"},
+		{deviceTypeJunos, "Show version", "lower case"},
+		{deviceTypeFortiOS, "GET http://192.0.2.1/ | grep x", "lower case"},
+		{deviceTypeFortiOS, "Get system status", "lower case"},
+		// FortiOS still routes the other lower-case verbs to their tools.
+		{deviceTypeFortiOS, "show full-configuration", "get_config"},
+		{deviceTypeFortiOS, "config system admin", "configuration mode"},
+		{deviceTypeFortiOS, "execute ping 192.0.2.1", "run_ping"},
+		{deviceTypeFortiOS, "diagnose sys top", "diagnose"},
 	}
 	for _, tt := range tests {
 		got, err := normalizeOperationalCommand(tt.command, tt.dt)
-		if err == nil || !strings.Contains(err.Error(), "pipe filters must not use") {
-			t.Errorf("normalizeOperationalCommand(%q, %q) = %q, %v; want filter expansion refused", tt.command, tt.dt, got, err)
+		if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+			t.Errorf("normalizeOperationalCommand(%q, %q) = %q, %v; want error containing %q", tt.command, tt.dt, got, err, tt.wantErr)
 		}
 	}
 }
@@ -216,17 +220,29 @@ func TestNormalizeOperationalCommandAllowsFilters(t *testing.T) {
 		dt      deviceType
 		command string
 	}{
+		{deviceTypeEOS, "show interfaces | include up$"},
 		{deviceTypeEOS, "show interfaces status | include Ethernet1/1"},
-		{deviceTypeIOS, "show interfaces | include Ethernet1/1"},
+		{deviceTypeIOS, "show ip route | include 10.0.0.1"},
+		{deviceTypeIOS, "show ip interface brief | include ^Gi.*up"},
+		{deviceTypeIOS, "show interfaces | exclude down"},
+		{deviceTypeIOS, "show interfaces | begin interface"},
+		{deviceTypeIOS, "show version | count"},
+		{deviceTypeEOS, "show ip bgp | section bgp"},
+		{deviceTypeEOS, "show version | include a+b"},
+		{deviceTypeEOS, "show version | include x?y"},
+		{deviceTypeEOS, "show version | include key=val"},
+		{deviceTypeEOS, "show version | json"},
+		{deviceTypeEOS, "show version | no-more"},
 		{deviceTypeNXOS, "show interface brief | include Ethernet1/1"},
-		{deviceTypeJunos, "show interfaces terse | match up"},
+		{deviceTypeNXOS, "show interface brief | grep port1"},
+		{deviceTypeNXOS, "show logging | last 20"},
+		{deviceTypeNXOS, "show logging | head 5"},
+		{deviceTypeNXOS, "show version | json"},
+		{deviceTypeJunos, "show interfaces terse | match bgp"},
+		{deviceTypeJunos, "show interfaces terse | except down"},
 		{deviceTypeJunos, "show interfaces terse | display json"},
 		{deviceTypeJunos, "show log messages | match bgp | last 20"},
-		{deviceTypeNXOS, "show interface brief | grep port1"},
 		{deviceTypeFortiOS, "get system interface | grep port1"},
-		{deviceTypeEOS, "show version | json"},
-		{deviceTypeNXOS, "show version | json"},
-		{deviceTypeNXOS, "show logging | last 10"},
 		{deviceTypeIOS, "show interfaces | include up-down"},
 	}
 	for _, tt := range tests {

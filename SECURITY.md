@@ -71,13 +71,15 @@ issue, not as an advisory:
 
 So a report need not re-cover this ground:
 
-- `run_show_command` accepts a single command on a single line — no control
-  characters, no `;`, no `<`/`>` redirection, and on every platform none of the
-  shell syntax `` ` ``, `$(`, `${` and `&` — and pipes only into a per-platform
-  allowlist of output filters whose arguments may not start with `-` and may not
-  use `{`, `$'` or `$"`, which bash could expand into a leading `-`. Ping and
-  traceroute arguments are limited to letters, digits and `. _ : / @ % -`.
-  Refused input never reaches the device.
+- `run_show_command` accepts a single command on a single line that starts with
+  the verb in lower case — no control characters, no `;`, no `<`/`>`
+  redirection, and none of the shell syntax `` ` ``, `$(`, `${` and `&` — and
+  pipes only into a per-platform allowlist of output filters. Every word after a
+  filter's name must match an allowlist of characters (letters, digits and
+  `. _ : / , @ % ^ * + ? = -`, with `$` only as the last character) and must not
+  start with `-`, `*` or `?`, so bash cannot expand it into anything but itself.
+  Ping and traceroute arguments are limited to letters, digits and
+  `. _ : / @ % -`. Refused input never reaches the device.
 - On Cumulus Linux 4.x (`cumulus4x`) bash runs the command, so the checks are
   stricter: `run_show_command` accepts only `net show` commands whose words
   match a character allowlist and do not start with `-`; ping and traceroute
@@ -85,9 +87,8 @@ So a report need not re-cover this ground:
   commands it builds is a trailing `2>&1`, which callers cannot supply.
 - Any `device_type` other than `cumulus4x` is refused, before a session is
   opened, when the SSH server identifies itself as a Linux system (Debian or
-  Ubuntu). This is the main defence on Linux SSH servers: a list of refused
-  characters cannot be complete for bash while still allowing regular
-  expressions in output filters.
+  Ubuntu). This is the main defence on Linux SSH servers; the filter allowlist
+  above limits what a switch that hides its banner can be made to do.
 - Secrets are replaced with HMAC-SHA256 tokens under an obfuscation key. The key
   is only read, never logged or written; without one, a random key held in
   memory is used for each run. Obfuscation fails closed if no key is set.
@@ -104,10 +105,11 @@ Known limits of the Cumulus Linux support:
   for every `device_type` other than `cumulus4x`. A switch whose banner hides
   "Debian" (for example with `DebianBanner no`) is not recognised as Linux. If a
   caller then passes a wrong explicit `device_type`, bash runs a command that
-  passed only that platform's checks. Several allowed filters are Linux programs
-  (`grep`, `egrep`, `head` and `last`), so a filter such as
-  `| grep PATTERN FILE` can read files the device account can read. That output
-  is obfuscated like any other.
+  passed only that platform's checks. It cannot start another command or pass
+  an option, but several allowed filters are Linux programs (`grep`, `egrep`,
+  `head` and `last`), so files named as plain arguments, as in
+  `| grep x /etc/foo` or a glob such as `/etc/*`, can be read if the device
+  account can read them. That output is obfuscated like any other.
 - Nothing has been tested on a real Cumulus Linux 4.3 switch; the support is
   built from vendor documentation and sample output.
 
