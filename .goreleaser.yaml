@@ -70,14 +70,9 @@ checksum:
   name_template: "checksums.txt"
 
 changelog:
-  sort: asc
-  abbrev: 8
-  format: "- [{{ .SHA }}](https://github.com/krisiasty/netdev-ssh-mcp/commit/{{ .SHA }}) {{ .Message }}"
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
+  # GitHub's generated release notes: one line per merged pull request,
+  # rather than every commit including the merge commits.
+  use: github-native
 
 release:
   prerelease: "{{ .IsV0 }}"
