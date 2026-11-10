@@ -112,9 +112,15 @@ var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, 
 // supported platform would accept, so it fails before detection logs in to
 // the device. The platform's own check still runs once the type is known.
 func checkCommandOnAnyPlatform(command string) error {
-	// Only Cumulus commands start with "net"; its error is the useful one.
-	if first, _, _ := strings.Cut(strings.TrimSpace(command), " "); first == "net" {
+	// Only Cumulus commands start with "net", and only FortiOS commands with
+	// "get"; that platform's error is the useful one.
+	first, _, _ := strings.Cut(strings.TrimSpace(command), " ")
+	switch {
+	case first == "net":
 		_, err := normalizeCumulusCommand(strings.TrimSpace(command))
+		return err
+	case strings.EqualFold(first, "get"):
+		_, err := normalizeOperationalCommand(command, deviceTypeFortiOS)
 		return err
 	}
 	var firstErr error
@@ -147,10 +153,13 @@ func normalizeOperationalCommand(command string, dt deviceType) (string, error) 
 	if err := checkOperationalCommand(trimmed, "show", dt); err != nil {
 		return "", err
 	}
-	if strings.HasPrefix(lower, "show ru") || strings.HasPrefix(lower, "show sta") {
+	// Runs of spaces are collapsed so that "show  running-config" is
+	// redirected too; the command itself is sent as written.
+	collapsed := strings.Join(spaceSeparated(lower), " ")
+	if strings.HasPrefix(collapsed, "show ru") || strings.HasPrefix(collapsed, "show sta") {
 		return "", fmt.Errorf("use the get_config tool for running-config and startup-config")
 	}
-	if dt == deviceTypeJunos && strings.HasPrefix(lower, "show configuration") {
+	if dt == deviceTypeJunos && strings.HasPrefix(collapsed, "show configuration") {
 		return "", fmt.Errorf("use the get_config tool to retrieve device configuration")
 	}
 

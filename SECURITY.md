@@ -73,7 +73,7 @@ So a report need not re-cover this ground:
 
 - `run_show_command` accepts a single command on a single line that starts with
   the verb in lower case — no control characters, no `;`, no `<`/`>`
-  redirection, and none of the shell syntax `` ` ``, `$(`, `${` and `&` — and
+  redirection, no braces, and none of the shell syntax `` ` ``, `$(` and `&` — and
   pipes only into a short per-platform list of filter forms, matched exactly
   in lower case: each filter takes no argument, a fixed keyword
   (`display json`, `head lines N`), a number of up to 6 digits, or one plain
@@ -107,15 +107,19 @@ Known limits of the Cumulus Linux support:
   "Debian" (for example with `DebianBanner no`) is not recognised as Linux. If a
   caller then passes a wrong explicit `device_type`, bash runs a command that
   passed only that platform's checks. It cannot start another command. The
-  words before the first `|` are not limited to plain words, but they only
-  reach a `show` or `get` program, which a Linux system does not normally
-  have. Of the filters, `grep W` and `egrep W` only filter their input with one
-  pattern, and `head` only prints its first lines. `head lines N` instead reads
+  words before the first `|` are not limited to plain words: bash expands
+  globs in them and passes the result to a `show` or `get` program that a
+  Linux system does not normally have, so a deep glob (`/*/*/*/*`) can cost
+  CPU, and memory for the paths it matches, until the command timeout. Braces
+  are refused, so brace expansion cannot exhaust memory. Of the filters,
+  `grep W` and `egrep W` only filter their input with one pattern, and `head`
+  only prints its first lines. `head lines N` instead reads
   the files named `lines` and `N` in the account's working directory, if they
   exist, and `last` and `last N` print the login records the account can read
   (`N` selects a user or terminal name); neither can be pointed at any other
   file. Output is obfuscated like any other. The other filter names are not
-  standard Linux programs.
+  part of a base Debian install; `display` (ImageMagick), if present, would
+  only try to open an image file named `json`, `xml` or `set`.
 - Nothing has been tested on a real Cumulus Linux 4.3 switch; the support is
   built from vendor documentation and sample output.
 

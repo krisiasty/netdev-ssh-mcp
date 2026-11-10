@@ -292,7 +292,8 @@ func TestNormalizeOperationalCommandRefusesFilters(t *testing.T) {
 
 	for _, tt := range tests {
 		got, err := normalizeOperationalCommand(tt.command, tt.dt)
-		if err == nil || !strings.Contains(err.Error(), "not allowed") && !strings.Contains(err.Error(), "empty pipe") {
+		if err == nil || !strings.Contains(err.Error(), "not allowed") && !strings.Contains(err.Error(), "empty pipe") &&
+			!strings.Contains(err.Error(), "shell syntax") {
 			t.Errorf("normalizeOperationalCommand(%q, %q) = %q, %v; want the filter refused", tt.command, tt.dt, got, err)
 		}
 	}
@@ -343,6 +344,15 @@ func TestNormalizeOperationalCommandVerbArguments(t *testing.T) {
 		{"a\u00a0b", "spaces"},
 		{"a\u3000b", "spaces"},
 		{"a\u2003b", "spaces"},
+		// Bash brace expansion can exhaust memory on a Linux host.
+		{"{1..9}", "shell syntax"},
+		{"{1..99999999}", "shell syntax"},
+		{"a{b,c}", "shell syntax"},
+		{"a}", "shell syntax"},
+		{"x | include {a,b}", "shell syntax"},
+		{"x | include a}", "shell syntax"},
+		// A "|" always starts a filter, even inside the verb's own regex.
+		{"ip bgp regexp a|b", "not allowed"},
 	}
 	for dt, verb := range verbs {
 		for _, tt := range refused {
@@ -386,13 +396,31 @@ func TestNormalizeOperationalCommandFilterErrorListsFilters(t *testing.T) {
 // Without device_type a command is checked against every platform before
 // detection: one that some platform accepts passes, one that none accepts
 // fails.
+// A command starting with "get" can only be FortiOS, so its error is the
+// FortiOS one rather than EOS's "must start with 'show'".
+func TestCheckCommandOnAnyPlatformGetUsesFortiOSError(t *testing.T) {
+	for _, tt := range []struct{ command, want string }{
+		{"get system status | grep -v x", "grep W"},
+		{"get system status | grep -v x", "plain word"},
+		{"get system status | include x", "filters allowed on fortios"},
+		{"get system {a,b}", "shell syntax"},
+		{"GET http://192.0.2.1/", "'get' in lower case"},
+	} {
+		err := checkCommandOnAnyPlatform(tt.command)
+		if err == nil || !strings.Contains(err.Error(), tt.want) || strings.Contains(err.Error(), "must start with 'show'") {
+			t.Errorf("checkCommandOnAnyPlatform(%q) error = %v, want error containing %q and not the eos one", tt.command, err, tt.want)
+		}
+	}
+}
+
 func TestCheckCommandOnAnyPlatformFilters(t *testing.T) {
 	for _, command := range []string{"show logging | last 50", "show version | display json", "get system interface | grep port1", "show ip route | count via"} {
 		if err := checkCommandOnAnyPlatform(command); err != nil {
 			t.Errorf("checkCommandOnAnyPlatform(%q) error = %v", command, err)
 		}
 	}
-	for _, command := range []string{"show version | find x", "show version | include ^Gi", "show version | head /etc/shadow", "show $(id)", "show a&b", "show a;b", "get system status | grep -v x"} {
+	for _, command := range []string{"show version | find x", "show version | include ^Gi", "show version | head /etc/shadow", "show $(id)", "show a&b", "show a;b", "get system status | grep -v x",
+		"show {1..9}", "show a{b,c}", "show x | include {a,b}", "show ip bgp regexp a|b"} {
 		if err := checkCommandOnAnyPlatform(command); err == nil {
 			t.Errorf("checkCommandOnAnyPlatform(%q) error = nil, want refused", command)
 		}

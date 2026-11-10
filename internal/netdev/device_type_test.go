@@ -99,6 +99,12 @@ func TestNormalizeOperationalCommand(t *testing.T) {
 		{name: "fortios show blocked", command: "show system interface", deviceType: deviceTypeFortiOS, wantErr: "use the get_config tool"},
 		{name: "fortios execute blocked", command: "execute ping 1.1.1.1", deviceType: deviceTypeFortiOS, wantErr: "use run_ping or run_traceroute"},
 		{name: "fortios diagnose blocked", command: "diagnose debug enable", deviceType: deviceTypeFortiOS, wantErr: "diagnose commands are not supported"},
+		// Runs of spaces must not skip the get_config redirects.
+		{name: "running-config with two spaces", command: "show  running-config", deviceType: deviceTypeEOS, wantErr: "use the get_config tool"},
+		{name: "startup-config with three spaces", command: "show   startup-config", deviceType: deviceTypeIOS, wantErr: "use the get_config tool"},
+		{name: "running-config spaces nxos", command: "show  run | include hostname", deviceType: deviceTypeNXOS, wantErr: "use the get_config tool"},
+		{name: "junos configuration with two spaces", command: "show  configuration", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
+		{name: "junos configuration with spaces and filter", command: "show   configuration | display set", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
 	}
 
 	for _, tt := range tests {

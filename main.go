@@ -120,7 +120,7 @@ func main() {
 			"the command may end with 'json' for structured output, takes no pipes or redirection, and its words may contain only " +
 			"letters, digits and . _ : / , @ % -. " +
 			"On the other platforms the command must be a single line holding one command, start with the verb in lower case ('show', or 'get' on FortiOS), " +
-			"and have no ';', '<'/'>' redirection, or the shell syntax '`', '$(', '${' and '&'. " +
+			"and have no ';', '<'/'>' redirection, braces, or the shell syntax '`', '$(' and '&'. " +
 			"It may pipe only into these filters, written exactly in lower case, where N is a number of up to 6 digits and W is one plain word: " +
 			"letters, digits and . _ : / , @ % + = -, not starting with '-'. Filters per device_type: " +
 			"eos: json, no-more, include W, exclude W, begin W, section W; " +

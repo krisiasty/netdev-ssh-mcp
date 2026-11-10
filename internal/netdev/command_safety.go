@@ -74,13 +74,15 @@ var filterForms = map[deviceType][]string{
 }
 
 // shellSyntax lists the shell constructs refused in run_show_command on every
-// platform: command substitution, parameter expansion and "&" (background
-// job, "&&"). The verb's arguments are not limited to plain words, so this
-// is what keeps them from starting another command; in filter arguments
-// plainWordPattern excludes them as well.
-var shellSyntax = []string{"`", "$(", "${", "&"}
+// platform: command substitution, braces (parameter and brace expansion;
+// "show {1..99999999}" makes bash build the whole list in memory) and "&"
+// (background job, "&&"). The verb's arguments are not limited to plain
+// words, so this is what keeps them from starting another command or
+// exhausting memory; in filter arguments plainWordPattern excludes them as
+// well.
+var shellSyntax = []string{"`", "$(", "{", "}", "&"}
 
-const shellSyntaxList = "'`', '$(', '${' or '&'"
+const shellSyntaxList = "'`', '$(', '{', '}' or '&'"
 
 func isPlainWord(w string) bool {
 	return plainWordPattern.MatchString(w) && !strings.HasPrefix(w, "-")
