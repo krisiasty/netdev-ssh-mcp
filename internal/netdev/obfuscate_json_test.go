@@ -86,9 +86,6 @@ func TestObfuscateJSONLeavesNonSecretsAlone(t *testing.T) {
 		`{"password": ""}`,
 		`snmp-server community public ro`,
 		`description "not JSON": still not a key`,
-		// Already hashed by the line pass: never hashed twice.
-		`"password": "[h:0123456789ab]"`,
-		`{"communities": ["[h:0123456789ab]", "[h:987654321098]"]}`,
 		// A container walk stops at the first bare word that is not JSON, and
 		// digits inside a word are not numbers.
 		"description \"secret\": [\nvlan 10 name core 2\n]",
@@ -100,6 +97,20 @@ func TestObfuscateJSONLeavesNonSecretsAlone(t *testing.T) {
 		got, hashed := obfuscateJSON(input)
 		if got != input || hashed {
 			t.Errorf("obfuscateJSON(%q) = %q, %v; want input unchanged, false", input, got, hashed)
+		}
+	}
+}
+
+// A secret that happens to look like a hash token is still a secret: both
+// passes read the original text, so nothing is ever hashed twice.
+func TestObfuscateJSONHashesTokenShapedSecrets(t *testing.T) {
+	for _, input := range []string{
+		`"password": "[h:0123456789ab]"`,
+		`{"communities": ["[h:0123456789ab]", "[h:987654321098]"]}`,
+	} {
+		got, hashed := obfuscateJSON(input)
+		if !hashed || strings.Contains(got, "0123456789ab") || strings.Contains(got, "987654321098") {
+			t.Errorf("obfuscateJSON(%q) = %q, %v; want every token-shaped value hashed", input, got, hashed)
 		}
 	}
 }

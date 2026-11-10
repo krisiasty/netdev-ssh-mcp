@@ -33,8 +33,7 @@ func obfuscateJSON(text string) (string, bool) {
 // jsonSpans returns a span for every value of a secret key in JSON text, such
 // as "net show ... json" or "| json" output. The line patterns cannot see
 // these: a JSON value sits on its own line, after a quoted key, or spans
-// several lines inside an array or object. A string that is already exactly
-// a hash token is skipped, so obfuscated output is never hashed twice.
+// several lines inside an array or object.
 //
 // A secret string value is hashed on its raw contents, quotes kept; a secret
 // number becomes a quoted token, so the output stays valid JSON. Inside a
@@ -101,15 +100,14 @@ func (r *jsonScanner) value(i int) int {
 
 // hashString hashes the contents of the string that starts at i and returns
 // the index just past it and whether it was terminated. An unterminated
-// string is hashed to the end of its line. Empty strings and strings that are
-// already exactly a hash token are left alone.
+// string is hashed to the end of its line. Empty strings are left alone.
 func (r *jsonScanner) hashString(i int) (int, bool) {
 	end, closed := scanJSONString(r.text, i)
 	contents := end
 	if closed {
 		contents = end - 1
 	}
-	if s := r.text[i+1 : contents]; s != "" && !isHashToken(s) {
+	if contents > i+1 {
 		r.add(i+1, contents, false)
 	}
 	return end, closed
@@ -220,13 +218,4 @@ func isJSONNumber(tok string) bool {
 		return false
 	}
 	return strings.Trim(tok, "0123456789.eE+-") == ""
-}
-
-// isHashToken reports whether s is exactly a token made by hashSecret:
-// "[h:" followed by 12 lower-case hex digits and "]".
-func isHashToken(s string) bool {
-	if len(s) != 16 || !strings.HasPrefix(s, "[h:") || s[15] != ']' {
-		return false
-	}
-	return strings.Trim(s[3:15], "0123456789abcdef") == ""
 }
