@@ -27,14 +27,17 @@ func isSecretJSONKey(key string) bool {
 // "net show ... json" or "| json" output, and reports whether it hashed any.
 // The line patterns cannot see these: a JSON value sits on its own line,
 // after a quoted key, or spans several lines inside an array or object.
+// It runs after the line pass, so it leaves alone any string that is already
+// exactly a hash token.
 //
 // A secret string value is hashed on its raw contents, quotes kept; a secret
 // number becomes a quoted token, so the output stays valid JSON. Inside a
-// secret array or object, every string that is not itself a key and every
-// number is hashed. true, false, null and all other text are unchanged.
-// Text that is not JSON passes through unless it contains the
-// "key": value shape. Malformed input is hashed as far as it goes: an
-// unterminated secret value is hashed to the end of the text.
+// secret array or object, every string, keys included (some platforms key
+// communities by name), and every number is hashed. true, false, null and all
+// other text are unchanged. Text that is not JSON passes through unless it
+// contains the "key": value shape. No string spans lines, and a container
+// walk stops at the first thing that is not JSON, so a stray quote or bracket
+// in plain text reaches no further than its own line or the next word.
 func obfuscateJSON(text string) (string, bool) {
 	r := &jsonRewriter{text: text}
 	for i := 0; i < len(text); {
@@ -42,8 +45,7 @@ func obfuscateJSON(text string) (string, bool) {
 			i++
 			continue
 		}
-		// A key never spans lines, so a stray quote costs at most one line.
-		end, closed := scanJSONString(text, i, true)
+		end, closed := scanJSONString(text, i)
 		if closed && r.isKey(end) && isSecretJSONKey(text[i+1:end-1]) {
 			colon := skipJSONSpace(text, end)
 			i = r.value(skipJSONSpace(text, colon+1))
@@ -90,43 +92,59 @@ func (r *jsonRewriter) value(i int) int {
 	}
 	switch r.text[i] {
 	case '"':
-		return r.hashString(i)
+		end, _ := r.hashString(i)
+		return end
 	case '[', '{':
 		return r.hashContainer(i)
 	default:
-		return r.hashNumber(i)
+		end := bareTokenEnd(r.text, i)
+		r.hashBareToken(i, end)
+		return end
 	}
 }
 
-// hashString hashes the contents of the string that starts at i, or of
-// everything after its opening quote when it is unterminated, and returns the
-// index just past it. Empty strings are left alone.
-func (r *jsonRewriter) hashString(i int) int {
-	end, closed := scanJSONString(r.text, i, false)
+// hashString hashes the contents of the string that starts at i and returns
+// the index just past it and whether it was terminated. An unterminated
+// string is hashed to the end of its line. Empty strings and strings that are
+// already exactly a hash token are left alone.
+func (r *jsonRewriter) hashString(i int) (int, bool) {
+	end, closed := scanJSONString(r.text, i)
 	contents := end
 	if closed {
 		contents = end - 1
 	}
-	if contents > i+1 {
-		r.replace(i+1, contents, hashSecret(r.text[i+1:contents]))
+	if s := r.text[i+1 : contents]; s != "" && !isHashToken(s) {
+		r.replace(i+1, contents, hashSecret(s))
 	}
-	return end
+	return end, closed
 }
 
-// hashNumber replaces the number that starts at i with a quoted token and
-// returns the index just past it, or returns i unchanged when no number
-// starts there.
-func (r *jsonRewriter) hashNumber(i int) int {
-	end := jsonNumberEnd(r.text, i)
-	if end > i {
-		r.replace(i, end, `"`+hashSecret(r.text[i:end])+`"`)
+// hashBareToken handles the unquoted token text[i:end]. It reports false when
+// the token is not a JSON value in a JSON position: not true, false, null or
+// a number, or not preceded by "[", ",", ":" or whitespace and followed by
+// whitespace, ",", "]", "}" or the end of the text. A number is replaced with
+// a quoted token.
+func (r *jsonRewriter) hashBareToken(i, end int) bool {
+	if end == i || (i > 0 && strings.IndexByte("[,: \t\r\n", r.text[i-1]) < 0) ||
+		(end < len(r.text) && strings.IndexByte(",]} \t\r\n", r.text[end]) < 0) {
+		return false
 	}
-	return end
+	switch tok := r.text[i:end]; {
+	case tok == "true" || tok == "false" || tok == "null":
+		return true
+	case isJSONNumber(tok):
+		r.replace(i, end, `"`+hashSecret(tok)+`"`)
+		return true
+	default:
+		return false
+	}
 }
 
 // hashContainer walks the array or object that starts at i to its matching
-// close bracket, or to the end of the text, hashing every string that is not
-// a key and every number. It returns the index just past the close bracket.
+// close bracket, hashing every string and number. It stops early, at the end
+// of the text, an unterminated string, or a bare token that is not a JSON
+// value, since what follows is not JSON. It returns the index where it
+// stopped, just past the close bracket on success.
 func (r *jsonRewriter) hashContainer(i int) int {
 	depth := 0
 	for i < len(r.text) {
@@ -140,19 +158,20 @@ func (r *jsonRewriter) hashContainer(i int) int {
 			if depth == 0 {
 				return i
 			}
-		case '"':
-			end, closed := scanJSONString(r.text, i, false)
-			if closed && r.isKey(end) {
-				i = end
-				continue
-			}
-			i = r.hashString(i)
-		default:
-			if end := r.hashNumber(i); end > i {
-				i = end
-				continue
-			}
+		case ',', ':', ' ', '\t', '\r', '\n':
 			i++
+		case '"':
+			end, closed := r.hashString(i)
+			if !closed {
+				return end
+			}
+			i = end
+		default:
+			end := bareTokenEnd(r.text, i)
+			if !r.hashBareToken(i, end) {
+				return i
+			}
+			i = end
 		}
 	}
 	return i
@@ -160,19 +179,18 @@ func (r *jsonRewriter) hashContainer(i int) int {
 
 // scanJSONString scans the double-quoted string that starts at i, honouring
 // backslash escapes. It returns the index just past the closing quote and
-// true, or, for an unterminated string, the end of the text (or, when
-// stopAtNewline is set, the index of the first unescaped newline) and false.
-func scanJSONString(text string, i int, stopAtNewline bool) (int, bool) {
+// true, or, for an unterminated string, the index of the first unescaped
+// newline or the end of the text and false. JSON strings never hold a raw
+// newline, so a string never runs past its line.
+func scanJSONString(text string, i int) (int, bool) {
 	for j := i + 1; j < len(text); j++ {
 		switch text[j] {
 		case '"':
 			return j + 1, true
 		case '\n':
-			if stopAtNewline {
-				return j, false
-			}
+			return j, false
 		case '\\':
-			if j+1 < len(text) && (!stopAtNewline || text[j+1] != '\n') {
+			if j+1 < len(text) && text[j+1] != '\n' {
 				j++
 			}
 		}
@@ -189,18 +207,29 @@ func skipJSONSpace(text string, i int) int {
 	return i
 }
 
-// jsonNumberEnd returns the end of the number matching -?[0-9][0-9.eE+-]*
-// that starts at i, or i when none starts there.
-func jsonNumberEnd(text string, i int) int {
-	j := i
-	if j < len(text) && text[j] == '-' {
-		j++
+// bareTokenEnd returns the end of the unquoted token that starts at i: the
+// first whitespace, JSON punctuation or quote, or len(text).
+func bareTokenEnd(text string, i int) int {
+	for i < len(text) && strings.IndexByte(" \t\r\n,:[]{}\"", text[i]) < 0 {
+		i++
 	}
-	if j >= len(text) || text[j] < '0' || text[j] > '9' {
-		return i
+	return i
+}
+
+// isJSONNumber reports whether tok matches -?[0-9][0-9.eE+-]*.
+func isJSONNumber(tok string) bool {
+	tok = strings.TrimPrefix(tok, "-")
+	if tok == "" || tok[0] < '0' || tok[0] > '9' {
+		return false
 	}
-	for j < len(text) && strings.IndexByte("0123456789.eE+-", text[j]) >= 0 {
-		j++
+	return strings.Trim(tok, "0123456789.eE+-") == ""
+}
+
+// isHashToken reports whether s is exactly a token made by hashSecret:
+// "[h:" followed by 12 lower-case hex digits and "]".
+func isHashToken(s string) bool {
+	if len(s) != 16 || !strings.HasPrefix(s, "[h:") || s[15] != ']' {
+		return false
 	}
-	return j
+	return strings.Trim(s[3:15], "0123456789abcdef") == ""
 }

@@ -212,14 +212,16 @@ func obfuscate(config string) (out string, hashed bool, err error) {
 	if obfuscationKey == nil {
 		return "", false, errObfuscationKeyNotSet
 	}
-	config, hashed = obfuscateJSON(config)
+	// The line pass runs first, on the device's own lines, so nothing the JSON
+	// pass rewrites can move a secret away from the keyword a pattern needs.
 	lines := strings.Split(config, "\n")
 	for i, line := range lines {
 		var h bool
 		lines[i], h = obfuscateLine(line)
 		hashed = hashed || h
 	}
-	return strings.Join(lines, "\n"), hashed, nil
+	out, h := obfuscateJSON(strings.Join(lines, "\n"))
+	return out, hashed || h, nil
 }
 
 // obfuscatedResult obfuscates device output and wraps it in a tool result.

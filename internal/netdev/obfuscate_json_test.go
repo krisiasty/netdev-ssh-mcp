@@ -31,7 +31,13 @@ func TestObfuscateJSONHidesSecrets(t *testing.T) {
 		{
 			"object",
 			`"community": {"name": "FAKEc", "access": "any"}`,
-			`"community": {"name": "<<FAKEc>>", "access": "<<any>>"}`,
+			`"community": {"<<name>>": "<<FAKEc>>", "<<access>>": "<<any>>"}`,
+		},
+		{
+			// EOS "show snmp community | json" keys communities by name.
+			"secret as key",
+			`{"communities": {"FAKEpublic": {"access": "ro"}}}`,
+			`{"communities": {"<<FAKEpublic>>": {"<<access>>": "<<ro>>"}}}`,
 		},
 		{
 			"pretty array",
@@ -41,13 +47,13 @@ func TestObfuscateJSONHidesSecrets(t *testing.T) {
 		{
 			"pretty object",
 			"\"snmp-community\": {\n  \"name\": \"FAKEc\"\n}",
-			"\"snmp-community\": {\n  \"name\": \"<<FAKEc>>\"\n}",
+			"\"snmp-community\": {\n  \"<<name>>\": \"<<FAKEc>>\"\n}",
 		},
 		{"colon on next line", "\"password\"\n  : \"FAKEp\"", "\"password\"\n  : \"<<FAKEp>>\""},
 		{
 			"nested containers",
 			`{"communities": [{"name": "FAKEa", "ports": [161, 1161]}, "FAKEb"], "keepalive": 60}`,
-			`{"communities": [{"name": "<<FAKEa>>", "ports": ["<<161>>", "<<1161>>"]}, "<<FAKEb>>"], "keepalive": 60}`,
+			`{"communities": [{"<<name>>": "<<FAKEa>>", "<<ports>>": ["<<161>>", "<<1161>>"]}, "<<FAKEb>>"], "keepalive": 60}`,
 		},
 	}
 	for _, tt := range tests {
@@ -74,6 +80,15 @@ func TestObfuscateJSONLeavesNonSecretsAlone(t *testing.T) {
 		`{"password": ""}`,
 		`snmp-server community public ro`,
 		`description "not JSON": still not a key`,
+		// Already hashed by the line pass: never hashed twice.
+		`"password": "[h:0123456789ab]"`,
+		`{"communities": ["[h:0123456789ab]", "[h:ba9876543210]"]}`,
+		// A container walk stops at the first bare word that is not JSON, and
+		// digits inside a word are not numbers.
+		"description \"secret\": [\nvlan 10 name core 2\n]",
+		`description "psk": {abc1, 2}`,
+		`"secret": [1a, 2]`,
+		`"secret": 7abc`,
 	}
 	for _, input := range inputs {
 		got, hashed := obfuscateJSON(input)
@@ -100,7 +115,9 @@ func TestObfuscateJSONMalformedInput(t *testing.T) {
 		`]}]}`,
 		`"password": ]`,
 		`"password": -`,
-		`"password": [-, "FAKEa"]`,
+		// A string ends at the end of its line.
+		"\"password\": \"FAKEa\nnext line\"",
+		"\"password\": [\"FAKEa\nnext line\"]",
 	}
 	for _, input := range inputs {
 		got, _ := obfuscateJSON(input)
@@ -140,6 +157,13 @@ func TestObfuscateRunsJSONAndLinePasses(t *testing.T) {
 		// The JUNOS `secret "..."` and tacplus `secret=` line patterns must not
 		// hash the JSON pass's token a second time.
 		{"json secret key", `"secret": "<<FAKEs>>"`},
+		// The line pass runs first; the JSON pass must still find values that
+		// only it can see, and must not rehash the line pass's tokens.
+		{
+			"pretty json array",
+			"{\n  \"communities\": [\n    \"<<FAKEone>>\",\n    \"<<FAKEtwo>>\"\n  ],\n  \"keepalive\": 60\n}",
+		},
+		{"crypt value in json", `"password": "<<$6$FAKEsalt$FAKEhash>>"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -154,5 +178,35 @@ func TestObfuscateRunsJSONAndLinePasses(t *testing.T) {
 				t.Error("obfuscate() hashed = false, want true")
 			}
 		})
+	}
+}
+
+// Plain text that happens to contain a "secret": [ or "secret": "x shape must
+// not stop the line pass from hashing secrets on the lines that follow.
+func TestObfuscateCraftedJSONShapeDoesNotHideLineSecrets(t *testing.T) {
+	openers := []string{
+		`description "secret": [`,
+		`description "secret": {`,
+		`description "psk": [`,
+		`set comments "secret": "x`,
+	}
+	lines := []struct{ line, secret string }{
+		{`username admin password 0 FAKEplain role network-admin`, "FAKEplain"},
+		{`neighbor 10.0.0.1 password 7 FAKEbgp`, "FAKEbgp"},
+		{`tacacs-server host 10.1.1.1 key 7 FAKEtac`, "FAKEtac"},
+		{` key 7 FAKEkey`, "FAKEkey"},
+		{`set password "FAKEforti"`, "FAKEforti"},
+	}
+	for _, opener := range openers {
+		for _, l := range lines {
+			input := opener + "\nset other\n" + l.line
+			got, err := obfuscateConfig(input)
+			if err != nil {
+				t.Fatalf("obfuscateConfig() error = %v", err)
+			}
+			if strings.Contains(got, "FAKE") || !strings.Contains(got, hashSecret(l.secret)) {
+				t.Errorf("obfuscateConfig(%q)\n got: %s\nwant %s hashed once as %s", input, got, l.secret, hashSecret(l.secret))
+			}
+		}
 	}
 }
