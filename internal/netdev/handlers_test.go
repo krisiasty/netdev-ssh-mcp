@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -596,4 +597,25 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Cleanup(func() { slog.SetDefault(orig) })
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	return &logs
+}
+
+func TestGetConfigCumulusUsesNetShowConfigurationCommands(t *testing.T) {
+	ran := stubRunCommand(t, "net add bgp neighbor swp51 password FAKEbgp\n", nil)
+	res, _, err := GetConfig(context.Background(), nil, GetConfigInput{Host: "leaf1", Username: "u", DeviceType: "cumulus4x"})
+	if err != nil {
+		t.Fatalf("GetConfig() error = %v", err)
+	}
+	if want := []string{"net show configuration commands 2>&1"}; !slices.Equal(*ran, want) {
+		t.Fatalf("GetConfig() ran %q, want %q", *ran, want)
+	}
+	if supportedDeviceTypes != "eos, ios, nxos, junos, fortios or cumulus4x" {
+		t.Fatalf("supportedDeviceTypes = %q", supportedDeviceTypes)
+	}
+	if len(res.Content) == 0 {
+		t.Fatal("GetConfig() returned no content")
+	}
+	t.Skip("Task 5: obfuscation pattern for NCLU secrets not added yet")
+	if text := res.Content[0].(*mcp.TextContent).Text; strings.Contains(text, "FAKEbgp") {
+		t.Fatalf("result leaks secret: %q", text)
+	}
 }

@@ -305,7 +305,7 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 	return r, nil
 }
 
-const supportedDeviceTypes = "eos, ios, nxos, junos or fortios"
+const supportedDeviceTypes = "eos, ios, nxos, junos, fortios or cumulus4x"
 
 // syntaxErrorRe matches the messages platforms print for a command they do
 // not understand, which is what running another platform's syntax produces.

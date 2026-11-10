@@ -17,6 +17,8 @@ const (
 	deviceTypeNXOS    deviceType = "nxos"
 	deviceTypeJunos   deviceType = "junos"
 	deviceTypeFortiOS deviceType = "fortios"
+
+	deviceTypeCumulus4x deviceType = "cumulus4x"
 )
 
 var (
@@ -59,8 +61,10 @@ func normalizeDeviceType(raw string) (deviceType, error) {
 		return deviceTypeJunos, nil
 	case "fortigate", string(deviceTypeFortiOS):
 		return deviceTypeFortiOS, nil
+	case string(deviceTypeCumulus4x):
+		return deviceTypeCumulus4x, nil
 	default:
-		return "", fmt.Errorf("device_type must be 'eos', 'ios', 'nxos', 'junos', or 'fortios', got %q", raw)
+		return "", fmt.Errorf("device_type must be 'eos', 'ios', 'nxos', 'junos', 'fortios', or 'cumulus4x', got %q", raw)
 	}
 }
 
@@ -87,6 +91,11 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 			return "", fmt.Errorf("FortiOS does not have a startup-config; use config_type 'running' or omit it")
 		}
 		return "show full-configuration", nil
+	case deviceTypeCumulus4x:
+		if configType == "startup" {
+			return "", fmt.Errorf("config_type startup: Cumulus Linux does not have a separate startup-config; use config_type 'running' or omit it")
+		}
+		return "net show configuration commands" + cumulusMergeStderr, nil
 	case deviceTypeIOS:
 		return fmt.Sprintf("show %s-config", configType), nil
 	case deviceTypeEOS, deviceTypeNXOS:
@@ -97,7 +106,7 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 }
 
 // allDeviceTypes lists every supported platform.
-var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos, deviceTypeFortiOS}
+var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos, deviceTypeFortiOS, deviceTypeCumulus4x}
 
 // checkCommandOnAnyPlatform rejects a run_show_command command that no
 // supported platform would accept, so it fails before detection logs in to

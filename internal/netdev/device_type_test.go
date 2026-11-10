@@ -17,6 +17,9 @@ func TestNormalizeDeviceType(t *testing.T) {
 		{name: "fortios", input: "fortios", want: deviceTypeFortiOS},
 		{name: "fortigate alias", input: "fortigate", want: deviceTypeFortiOS},
 		{name: "junos", input: "junos", want: deviceTypeJunos},
+		{name: "cumulus4x", input: "cumulus4x", want: deviceTypeCumulus4x},
+		{name: "cumulus4x mixed case", input: " CUMULUS4X ", want: deviceTypeCumulus4x},
+		{name: "cumulus without version", input: "cumulus", wantErr: "'cumulus4x'"},
 		{name: "invalid", input: "asa", wantErr: "device_type must be"},
 	}
 
@@ -56,6 +59,8 @@ func TestBuildConfigCommand(t *testing.T) {
 		{name: "eos running", configType: "running", deviceType: deviceTypeEOS, want: "show running-config | no-more"},
 		{name: "junos running", configType: "running", deviceType: deviceTypeJunos, want: "show configuration | no-more"},
 		{name: "fortios running", configType: "running", deviceType: deviceTypeFortiOS, want: "show full-configuration"},
+		{name: "cumulus4x running", configType: "running", deviceType: deviceTypeCumulus4x, want: "net show configuration commands 2>&1"},
+		{name: "cumulus4x startup rejected", configType: "startup", deviceType: deviceTypeCumulus4x, wantErr: "Cumulus Linux does not have a separate startup-config"},
 		{name: "junos startup rejected", configType: "startup", deviceType: deviceTypeJunos, wantErr: "JunOS does not have a startup-config"},
 		{name: "fortios startup rejected", configType: "startup", deviceType: deviceTypeFortiOS, wantErr: "FortiOS does not have a startup-config"},
 	}
