@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -19,7 +20,7 @@ func TestGetConfigFortiOSUsesShowFullConfiguration(t *testing.T) {
 	defer func() { runCommand = original }()
 
 	var gotCmd string
-	runCommand = func(cfg sshclient.ConnConfig, cmd string) (string, error) {
+	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
 		gotCmd = cmd
 		return "ok", nil
 	}
@@ -56,7 +57,7 @@ func TestGetConfigIOSOmitsNoMore(t *testing.T) {
 			defer func() { runCommand = original }()
 
 			var gotCmd string
-			runCommand = func(cfg sshclient.ConnConfig, cmd string) (string, error) {
+			runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
 				gotCmd = cmd
 				return "ok", nil
 			}
@@ -94,7 +95,7 @@ func TestRunShowCommandFortiOSAllowsGet(t *testing.T) {
 	defer func() { runCommand = original }()
 
 	var gotCmd string
-	runCommand = func(cfg sshclient.ConnConfig, cmd string) (string, error) {
+	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
 		gotCmd = cmd
 		return "Version: FortiGate", nil
 	}
@@ -131,11 +132,11 @@ func stubRunCommand(t *testing.T, out string, err error) *[]string {
 	origOne, origMany := runCommand, runCommands
 	t.Cleanup(func() { runCommand, runCommands = origOne, origMany })
 	var ran []string
-	runCommand = func(cfg sshclient.ConnConfig, cmd string) (string, error) {
+	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
 		ran = append(ran, cmd)
 		return out, err
 	}
-	runCommands = func(cfg sshclient.ConnConfig, cmds []string) (string, error) {
+	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
 		ran = append(ran, strings.Join(cmds, "\n"))
 		return out, err
 	}
@@ -362,11 +363,11 @@ func TestCommandTimeoutPerTool(t *testing.T) {
 	t.Cleanup(func() { runCommand, runCommands = originalOne, originalMany })
 
 	var got time.Duration
-	runCommand = func(cfg sshclient.ConnConfig, cmd string) (string, error) {
+	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
 		got = cfg.CommandTimeout
 		return "ok", nil
 	}
-	runCommands = func(cfg sshclient.ConnConfig, cmds []string) (string, error) {
+	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
 		got = cfg.CommandTimeout
 		return "ok", nil
 	}
@@ -412,4 +413,187 @@ func TestCommandTimeoutPerTool(t *testing.T) {
 			}
 		})
 	}
+}
+
+type ctxKey struct{}
+
+// TestHandlersPassRequestContext checks that each handler passes its request
+// context to detection and to the SSH command, so cancelling the request
+// reaches the device connection.
+func TestHandlersPassRequestContext(t *testing.T) {
+	resetDetection(t)
+	ctx := context.WithValue(t.Context(), ctxKey{}, "request")
+	var missing []string
+	check := func(name string, got context.Context) {
+		if got.Value(ctxKey{}) != "request" {
+			missing = append(missing, name)
+		}
+	}
+	f := &fakeProbe{ident: identEOS, outputs: map[string]string{probeShowVersion: readFixture(t, "eos_show_version.txt")}}
+	runProbe = func(pctx context.Context, cfg sshclient.ConnConfig, choose func(string) (string, error)) (sshclient.ProbeResult, error) {
+		check("probe", pctx)
+		return f.probe(pctx, cfg, choose)
+	}
+	origOne, origMany, origInspect, origTrust := runCommand, runCommands, inspectHostKey, trustHostKey
+	t.Cleanup(func() {
+		runCommand, runCommands, inspectHostKey, trustHostKey = origOne, origMany, origInspect, origTrust
+	})
+	inspectHostKey = func(cctx context.Context, host string, port int) (sshclient.HostKeyInfo, error) {
+		check("inspectHostKey", cctx)
+		return sshclient.HostKeyInfo{}, nil
+	}
+	trustHostKey = func(cctx context.Context, host string, port int, replace bool) (sshclient.TrustHostKeyResult, error) {
+		check("trustHostKey", cctx)
+		return sshclient.TrustHostKeyResult{}, nil
+	}
+	runCommand = func(cctx context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
+		check("runCommand "+cmd, cctx)
+		return "ok", nil
+	}
+	runCommands = func(cctx context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
+		check("runCommands", cctx)
+		return "ok", nil
+	}
+
+	calls := map[string]func() error{
+		"run_show_command": func() error {
+			_, _, err := RunShowCommand(ctx, nil, RunShowCommandInput{Host: "sw1", Username: "u", Command: "show version"})
+			return err
+		},
+		"get_config": func() error {
+			_, _, err := GetConfig(ctx, nil, GetConfigInput{Host: "sw2", Username: "u"})
+			return err
+		},
+		"run_ping": func() error {
+			_, _, err := RunPing(ctx, nil, RunPingInput{Host: "sw3", Username: "u", Destination: "192.0.2.1"})
+			return err
+		},
+		"run_ping fortios": func() error {
+			_, _, err := RunPing(ctx, nil, RunPingInput{Host: "fw1", Username: "u", DeviceType: "fortios", Destination: "192.0.2.1", Count: 3})
+			return err
+		},
+		"run_traceroute": func() error {
+			_, _, err := RunTraceroute(ctx, nil, RunTracerouteInput{Host: "sw4", Username: "u", Destination: "192.0.2.1"})
+			return err
+		},
+		"detect_platform": func() error {
+			_, _, err := DetectPlatform(ctx, nil, DetectPlatformInput{Host: "sw5", Username: "u"})
+			return err
+		},
+		"trust_host_key inspect": func() error {
+			_, _, err := TrustHostKey(ctx, nil, TrustHostKeyInput{Host: "sw6"})
+			return err
+		},
+		"trust_host_key confirm": func() error {
+			_, _, err := TrustHostKey(ctx, nil, TrustHostKeyInput{Host: "sw6", Confirm: true})
+			return err
+		},
+	}
+	for name, call := range calls {
+		if err := call(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	if f.calls == 0 {
+		t.Fatal("no detection ran, so the probe context was not checked")
+	}
+	if len(missing) > 0 {
+		t.Fatalf("request context not passed to: %q", missing)
+	}
+}
+
+// TestCancelledRequestLogsAtInfo checks that a request the client cancelled
+// is logged at Info, not as a device failure at Error, and that its error
+// carries no detection notice.
+func TestCancelledRequestLogsAtInfo(t *testing.T) {
+	resetDetection(t)
+	runProbe = (&fakeProbe{ident: identEOS, outputs: map[string]string{probeShowVersion: readFixture(t, "eos_show_version.txt")}}).probe
+	stubRunCommand(t, "", fmt.Errorf("run \"show version\" on sw1:22: %w", context.Canceled))
+	logs := captureLogs(t)
+	// The fakes ignore ctx, so the call reaches the command and fails there
+	// as it would had the client cancelled during the command.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, _, err := RunShowCommand(ctx, nil, RunShowCommandInput{Host: "sw1", Username: "u", Command: "show version"})
+	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "device_type") {
+		t.Fatalf("RunShowCommand() error = %v, want the cancellation without a detection notice", err)
+	}
+	if strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "run_show_command cancelled by the client") {
+		t.Fatalf("logs = %q, want the cancellation at INFO and no ERROR", logs.String())
+	}
+}
+
+// TestDeviceTimeoutIsNotCancellation checks that a timeout towards the device
+// is reported as a device failure while the client is still waiting. A TCP
+// connect or DNS timeout matches context.DeadlineExceeded under errors.Is,
+// just as the client's own deadline would.
+func TestDeviceTimeoutIsNotCancellation(t *testing.T) {
+	resetDetection(t)
+	runProbe = (&fakeProbe{ident: identEOS, outputs: map[string]string{probeShowVersion: readFixture(t, "eos_show_version.txt")}}).probe
+	if _, err := resolveDeviceType(t.Context(), connConfig("sw1", 0, "u"), "", false); err != nil {
+		t.Fatal(err)
+	}
+	stubRunCommand(t, "", fmt.Errorf("dial sw1:22: dial tcp 192.0.2.1:22: %w", context.DeadlineExceeded))
+	logs := captureLogs(t)
+
+	_, _, err := RunShowCommand(t.Context(), nil, RunShowCommandInput{Host: "sw1", Username: "u", Command: "show version"})
+	if err == nil || !strings.Contains(err.Error(), "auto-detected earlier and cached") {
+		t.Fatalf("RunShowCommand() error = %v, want the cached detection notice", err)
+	}
+	if !strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "run_show_command failed") {
+		t.Fatalf("logs = %q, want the failure at ERROR", logs.String())
+	}
+}
+
+// TestProbeFailureLogged checks that a failed detection probe is logged like
+// a failed command: at Error, or at Info when the client cancelled. A device
+// identified as unsupported is an answer, logged at Info.
+func TestProbeFailureLogged(t *testing.T) {
+	tests := []struct {
+		name      string
+		cancelled bool
+		want      string
+		wantError bool
+	}{
+		{"failure", false, "platform detection failed", true},
+		{"cancelled", true, "platform detection cancelled by the client", false},
+		{"unsupported platform", false, "platform detection: unsupported platform", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetDetection(t)
+			probeErr := errors.New("dial sw1:22: connection refused")
+			switch {
+			case tt.cancelled:
+				probeErr = fmt.Errorf("SSH handshake with sw1:22: %w", context.Canceled)
+			case tt.name == "unsupported platform":
+				probeErr = fmt.Errorf("%w: the SSH server is a Linux distribution", errUnsupportedPlatform)
+			}
+			runProbe = (&fakeProbe{err: probeErr}).probe
+			logs := captureLogs(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.cancelled {
+				cancel()
+			}
+
+			if _, _, err := DetectPlatform(ctx, nil, DetectPlatformInput{Host: "sw1", Username: "u"}); !errors.Is(err, probeErr) {
+				t.Fatalf("DetectPlatform() error = %v, want the probe error", err)
+			}
+			if !strings.Contains(logs.String(), tt.want) || strings.Contains(logs.String(), "level=ERROR") != tt.wantError {
+				t.Fatalf("logs = %q, want %q (at ERROR: %v)", logs.String(), tt.want, tt.wantError)
+			}
+		})
+	}
+}
+
+// captureLogs sends the default logger to a buffer for the rest of the test.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var logs bytes.Buffer
+	orig := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	return &logs
 }

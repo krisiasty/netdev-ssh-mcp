@@ -41,7 +41,7 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 	}
 
 	cfg := connConfig(args.Host, args.Port, args.Username)
-	rt, err := resolveDeviceType(cfg, args.DeviceType, false)
+	rt, err := resolveDeviceType(ctx, cfg, args.DeviceType, false)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run_show_command: %w", err)
 	}
@@ -55,10 +55,10 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 
 	slog.Info("run_show_command", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "command", sanitizeLog(command)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
-	out, err := runCommand(cfg, command)
+	out, err := runCommand(ctx, cfg, command)
 	if err != nil {
-		slog.Error("run_show_command failed", "host", args.Host, "command", command, "err", err)
-		return nil, nil, runError("run_show_command", cfg, rt, err)
+		logFailure(ctx, "run_show_command", err, "host", args.Host, "command", command)
+		return nil, nil, runError(ctx, "run_show_command", cfg, rt, err)
 	}
 
 	res, err := obfuscatedResult(out)

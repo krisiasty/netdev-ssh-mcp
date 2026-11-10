@@ -336,6 +336,9 @@ them too.
 
 The SSH handshake, including authentication, has its own 15-second limit.
 
+If the MCP client cancels a tool call, for example because it gave up waiting, the server closes the device
+connection straight away, at whatever stage it has reached, instead of running on until one of these limits.
+
 ## Installation
 
 ### macOS (Homebrew)

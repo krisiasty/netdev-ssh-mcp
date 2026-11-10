@@ -1,6 +1,7 @@
 package netdev
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -62,7 +63,7 @@ type fakeProbe struct {
 	ran     []string
 }
 
-func (f *fakeProbe) probe(cfg sshclient.ConnConfig, choose func(string) (string, error)) (sshclient.ProbeResult, error) {
+func (f *fakeProbe) probe(_ context.Context, cfg sshclient.ConnConfig, choose func(string) (string, error)) (sshclient.ProbeResult, error) {
 	f.calls++
 	res := sshclient.ProbeResult{ServerVersion: f.ident}
 	if f.err != nil {
@@ -211,7 +212,7 @@ func TestResolveDeviceType(t *testing.T) {
 		resetDetection(t)
 		f := &fakeProbe{ident: identEOS, outputs: eos}
 		runProbe = f.probe
-		r, err := resolveDeviceType(cfg, "junos", false)
+		r, err := resolveDeviceType(t.Context(), cfg, "junos", false)
 		if err != nil || r.dt != deviceTypeJunos || r.source != sourceExplicit || f.calls != 0 {
 			t.Fatalf("resolveDeviceType() = %+v, %v, probes=%d; want explicit junos without probing", r, err, f.calls)
 		}
@@ -219,7 +220,7 @@ func TestResolveDeviceType(t *testing.T) {
 
 	t.Run("invalid explicit", func(t *testing.T) {
 		resetDetection(t)
-		if _, err := resolveDeviceType(cfg, "asa", false); err == nil || !strings.Contains(err.Error(), "device_type must be") {
+		if _, err := resolveDeviceType(t.Context(), cfg, "asa", false); err == nil || !strings.Contains(err.Error(), "device_type must be") {
 			t.Fatalf("resolveDeviceType() error = %v, want device_type validation error", err)
 		}
 	})
@@ -229,7 +230,7 @@ func TestResolveDeviceType(t *testing.T) {
 		f := &fakeProbe{ident: identEOS, outputs: eos}
 		runProbe = f.probe
 
-		r, err := resolveDeviceType(cfg, "", false)
+		r, err := resolveDeviceType(t.Context(), cfg, "", false)
 		if err != nil || r.dt != deviceTypeEOS || r.source != sourceProbe {
 			t.Fatalf("first resolveDeviceType() = %+v, %v; want probed eos", r, err)
 		}
@@ -238,7 +239,7 @@ func TestResolveDeviceType(t *testing.T) {
 		}
 
 		// Same host in a different case and with an explicit default port.
-		r, err = resolveDeviceType(sshclient.ConnConfig{Host: "sw1", Port: 22, Username: "u"}, "", false)
+		r, err = resolveDeviceType(t.Context(), sshclient.ConnConfig{Host: "sw1", Port: 22, Username: "u"}, "", false)
 		if err != nil || r.dt != deviceTypeEOS || r.source != sourceCache {
 			t.Fatalf("second resolveDeviceType() = %+v, %v; want cached eos", r, err)
 		}
@@ -246,7 +247,7 @@ func TestResolveDeviceType(t *testing.T) {
 			t.Fatalf("probes = %d, want 1", f.calls)
 		}
 
-		if r, err = resolveDeviceType(cfg, "", true); err != nil || r.source != sourceProbe || f.calls != 2 {
+		if r, err = resolveDeviceType(t.Context(), cfg, "", true); err != nil || r.source != sourceProbe || f.calls != 2 {
 			t.Fatalf("refresh resolveDeviceType() = %+v, %v, probes=%d; want a new probe", r, err, f.calls)
 		}
 	})
@@ -257,11 +258,11 @@ func TestResolveDeviceType(t *testing.T) {
 		runProbe = f.probe
 		start := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 		now = func() time.Time { return start }
-		if _, err := resolveDeviceType(cfg, "", false); err != nil {
+		if _, err := resolveDeviceType(t.Context(), cfg, "", false); err != nil {
 			t.Fatal(err)
 		}
 		now = func() time.Time { return start.Add(detectCacheTTL + time.Second) }
-		if r, err := resolveDeviceType(cfg, "", false); err != nil || r.source != sourceProbe || f.calls != 2 {
+		if r, err := resolveDeviceType(t.Context(), cfg, "", false); err != nil || r.source != sourceProbe || f.calls != 2 {
 			t.Fatalf("resolveDeviceType() after TTL = %+v, %v, probes=%d; want a new probe", r, err, f.calls)
 		}
 	})
@@ -272,7 +273,7 @@ func TestResolveDeviceType(t *testing.T) {
 			probeSystemStatus: readFixture(t, "fortios_get_system_status.txt"),
 		}}
 		runProbe = f.probe
-		r, err := resolveDeviceType(cfg, "", false)
+		r, err := resolveDeviceType(t.Context(), cfg, "", false)
 		if err != nil || r.dt != deviceTypeFortiOS {
 			t.Fatalf("resolveDeviceType() = %+v, %v; want fortios", r, err)
 		}
@@ -286,7 +287,7 @@ func TestResolveDeviceType(t *testing.T) {
 			resetDetection(t)
 			f := &fakeProbe{ident: ident}
 			runProbe = f.probe
-			_, err := resolveDeviceType(cfg, "", false)
+			_, err := resolveDeviceType(t.Context(), cfg, "", false)
 			if !errors.Is(err, errUnsupportedPlatform) {
 				t.Fatalf("resolveDeviceType() error = %v, want errUnsupportedPlatform", err)
 			}
@@ -306,7 +307,7 @@ func TestResolveDeviceType(t *testing.T) {
 		}}
 		runProbe = f.probe
 		for range 2 {
-			if _, err := resolveDeviceType(cfg, "", false); err == nil || !strings.Contains(err.Error(), "pass device_type") {
+			if _, err := resolveDeviceType(t.Context(), cfg, "", false); err == nil || !strings.Contains(err.Error(), "pass device_type") {
 				t.Fatalf("resolveDeviceType() error = %v, want detection failure suggesting device_type", err)
 			}
 		}
@@ -318,7 +319,7 @@ func TestResolveDeviceType(t *testing.T) {
 	t.Run("connection error", func(t *testing.T) {
 		resetDetection(t)
 		runProbe = (&fakeProbe{err: errors.New("dial sw1:22: connection refused")}).probe
-		_, err := resolveDeviceType(cfg, "", false)
+		_, err := resolveDeviceType(t.Context(), cfg, "", false)
 		if err == nil || !strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "device_type") {
 			t.Fatalf("resolveDeviceType() error = %v, want the connection error without a device_type suggestion", err)
 		}
@@ -415,7 +416,7 @@ func TestRunErrorAddsHint(t *testing.T) {
 		Err:     errors.New("process exited with status 1"),
 		Output:  []byte("% Invalid input detected at '^' marker.\nenable secret 5 $1$abcd$efgh\n"),
 	}
-	err := runError("get_config", cfg, resolvedType{dt: deviceTypeIOS, source: sourceExplicit}, rejected)
+	err := runError(t.Context(), "get_config", cfg, resolvedType{dt: deviceTypeIOS, source: sourceExplicit}, rejected)
 	if !strings.Contains(err.Error(), "get_config: ") || !strings.Contains(err.Error(), "omit device_type") {
 		t.Fatalf("runError() = %v, want the tool prefix and the hint", err)
 	}
@@ -428,7 +429,7 @@ func TestRunErrorAddsHint(t *testing.T) {
 		errors.New("dial sw1:22: connection refused"),
 		errors.New("% Invalid input detected at '^' marker."),
 	} {
-		if err := runError("get_config", cfg, resolvedType{dt: deviceTypeIOS, source: sourceExplicit}, plain); !errors.Is(err, plain) || strings.Contains(err.Error(), "omit device_type") {
+		if err := runError(t.Context(), "get_config", cfg, resolvedType{dt: deviceTypeIOS, source: sourceExplicit}, plain); !errors.Is(err, plain) || strings.Contains(err.Error(), "omit device_type") {
 			t.Fatalf("runError(%v) = %v, want the wrapped error without a hint", plain, err)
 		}
 	}

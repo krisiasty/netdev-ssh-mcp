@@ -148,7 +148,7 @@ func TestCheckCommandArgAllowsRealValues(t *testing.T) {
 func TestRunShowCommandInjectionNeverReachesSSH(t *testing.T) {
 	original := runCommand
 	defer func() { runCommand = original }()
-	runCommand = func(cfg sshclient.ConnConfig, cmd string) (string, error) {
+	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
 		t.Fatalf("runCommand called with %q", cmd)
 		return "", nil
 	}
@@ -167,11 +167,11 @@ func TestRunShowCommandInjectionNeverReachesSSH(t *testing.T) {
 func TestRunPingInjectionNeverReachesSSH(t *testing.T) {
 	originalOne, originalMany := runCommand, runCommands
 	defer func() { runCommand, runCommands = originalOne, originalMany }()
-	runCommand = func(cfg sshclient.ConnConfig, cmd string) (string, error) {
+	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
 		t.Fatalf("runCommand called with %q", cmd)
 		return "", nil
 	}
-	runCommands = func(cfg sshclient.ConnConfig, cmds []string) (string, error) {
+	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
 		t.Fatalf("runCommands called with %q", cmds)
 		return "", nil
 	}

@@ -1,6 +1,7 @@
 package netdev
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -256,7 +257,7 @@ func forgetType(key string) {
 // resolveDeviceType returns the device type for a tool call: the caller's
 // device_type if given, otherwise a cached detection, otherwise a fresh probe.
 // refresh skips the cache.
-func resolveDeviceType(cfg sshclient.ConnConfig, raw string, refresh bool) (resolvedType, error) {
+func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string, refresh bool) (resolvedType, error) {
 	dt, err := normalizeDeviceType(raw)
 	if err != nil {
 		return resolvedType{}, err
@@ -272,10 +273,16 @@ func resolveDeviceType(cfg sshclient.ConnConfig, raw string, refresh bool) (reso
 		}
 	}
 
-	res, err := runProbe(cfg, func(serverVersion string) (string, error) {
+	res, err := runProbe(ctx, cfg, func(serverVersion string) (string, error) {
 		return probeCommandFor(classifyIdent(serverVersion), serverVersion)
 	})
+	if errors.Is(err, errUnsupportedPlatform) {
+		// Identified, and known not to be supported: an answer, not a failure.
+		slog.Info("platform detection: unsupported platform", "host", sanitizeLog(cfg.Host)) //nolint:gosec // G706: value is sanitized before logging
+		return resolvedType{}, fmt.Errorf("detect platform: %w", err)
+	}
 	if err != nil {
+		logFailure(ctx, "platform detection", err, "host", cfg.Host)
 		// Connection, authentication and host key errors would fail the
 		// command as well, so suggesting device_type would not help.
 		return resolvedType{}, fmt.Errorf("detect platform: %w", err)
@@ -339,6 +346,24 @@ func firstLines(s string, n int) string {
 	return s[:i]
 }
 
+// requestCancelled reports whether the MCP client cancelled the request ctx
+// belongs to. It looks at ctx rather than at the error: a TCP connect or DNS
+// timeout towards the device also matches context.DeadlineExceeded, and must
+// still be reported as a device failure.
+func requestCancelled(ctx context.Context) bool {
+	return ctx.Err() != nil
+}
+
+// logFailure logs a failed tool call. A cancelled request is a normal client
+// action, not a device failure, so it is logged at Info rather than Error.
+func logFailure(ctx context.Context, tool string, err error, attrs ...any) {
+	if requestCancelled(ctx) {
+		slog.Info(tool+" cancelled by the client", attrs...)
+		return
+	}
+	slog.Error(tool+" failed", append(attrs, "err", err)...)
+}
+
 // detectedNotice tells the caller which device type a detected call used, so
 // it can pass it on later calls.
 func detectedNotice(r resolvedType) string {
@@ -386,7 +411,11 @@ func afterRun(cfg sshclient.ConnConfig, r resolvedType, output string, runErr er
 
 // runError wraps a failed command, adding the same notice afterRun would
 // have appended to a successful result.
-func runError(tool string, cfg sshclient.ConnConfig, r resolvedType, err error) error {
+func runError(ctx context.Context, tool string, cfg sshclient.ConnConfig, r resolvedType, err error) error {
+	if requestCancelled(ctx) {
+		// The caller has gone; a detection notice or hint means nothing.
+		return fmt.Errorf("%s: %w", tool, err)
+	}
 	var extra []string
 	for _, c := range afterRun(cfg, r, "", err) {
 		if t, ok := c.(*mcp.TextContent); ok {
