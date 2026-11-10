@@ -53,8 +53,7 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 		return nil, nil, err
 	}
 
-	cfg := connConfig(args.Host, args.Port, args.Username)
-	rt, err := resolveDeviceType(ctx, cfg, args.DeviceType, false)
+	cfg, rt, err := resolveTarget(ctx, args.Host, args.Port, args.Username, args.DeviceType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run_traceroute: %w", err)
 	}

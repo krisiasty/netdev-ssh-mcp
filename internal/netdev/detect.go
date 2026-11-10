@@ -340,6 +340,34 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 	return r, nil
 }
 
+// resolveTarget returns the connection config and device type for a tool
+// that runs a device command. Every such tool gets its config here, so none
+// can skip the Linux check: unless the type is cumulus4x, the config refuses
+// a Linux SSH server before a session is opened. On a Linux system bash runs
+// the command, and only the cumulus4x checks are written for that; an
+// explicit device_type is never checked against the device otherwise.
+func resolveTarget(ctx context.Context, host string, port int, username, rawType string) (sshclient.ConnConfig, resolvedType, error) {
+	cfg := connConfig(host, port, username)
+	rt, err := resolveDeviceType(ctx, cfg, rawType, false)
+	if err != nil {
+		return cfg, rt, err
+	}
+	if rt.dt != deviceTypeCumulus4x {
+		cfg.CheckServerVersion = refuseLinuxServer
+	}
+	return cfg, rt, nil
+}
+
+// refuseLinuxServer is the CheckServerVersion for every device type other
+// than cumulus4x.
+func refuseLinuxServer(serverVersion string) error {
+	if classifyIdent(serverVersion) == identLinux {
+		return fmt.Errorf("%w: the SSH server %q is a Linux system; only device_type cumulus4x is supported on Linux",
+			errUnsupportedPlatform, displayValue(serverVersion))
+	}
+	return nil
+}
+
 const supportedDeviceTypes = "eos, ios, nxos, junos, fortios or cumulus4x"
 
 // syntaxErrorRe matches the messages platforms print for a command they do
@@ -390,10 +418,17 @@ func requestCancelled(ctx context.Context) bool {
 }
 
 // logFailure logs a failed tool call. A cancelled request is a normal client
-// action, not a device failure, so it is logged at Info rather than Error.
+// action, and an unsupported platform is an answer, not a device failure, so
+// both are logged at Info rather than Error.
 func logFailure(ctx context.Context, tool string, err error, attrs ...any) {
 	if requestCancelled(ctx) {
 		slog.Info(tool+" cancelled by the client", attrs...)
+		return
+	}
+	if errors.Is(err, errUnsupportedPlatform) {
+		// The device was identified as one the device type does not
+		// support (refuseLinuxServer): an answer, not a failure.
+		slog.Info(tool+": unsupported platform", attrs...)
 		return
 	}
 	slog.Error(tool+" failed", append(attrs, "err", err)...)

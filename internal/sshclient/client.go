@@ -105,6 +105,12 @@ type ConnConfig struct {
 	// used instead of it for commands run with this config. Commands known
 	// to take longer, such as ping and traceroute, set it.
 	CommandTimeout time.Duration
+	// CheckServerVersion, when set, is called by RunCommand and RunCommands
+	// with the server's identification string (such as "SSH-2.0-OpenSSH_9.9")
+	// once the connection is up and before a session is opened. If it returns
+	// an error, the connection is closed and nothing runs. The string is
+	// chosen by the device and is untrusted. Probe does not call it.
+	CheckServerVersion func(serverVersion string) error
 }
 
 // Options controls SSH host key handling and command timeouts.
@@ -269,6 +275,12 @@ func runSessionCommand(ctx context.Context, cfg ConnConfig, cmd string) (string,
 		return "", err
 	}
 	defer func() { _ = client.Close() }()
+
+	if cfg.CheckServerVersion != nil {
+		if err := cfg.CheckServerVersion(string(client.ServerVersion())); err != nil {
+			return "", fmt.Errorf("SSH server %s: %w", addr, err)
+		}
+	}
 
 	out, err := runOnClient(ctx, client, addr, cmd, commandTimeoutFor(cfg))
 	if err != nil {

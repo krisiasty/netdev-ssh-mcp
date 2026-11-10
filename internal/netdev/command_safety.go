@@ -61,9 +61,17 @@ var allowedPipes = map[deviceType][]string{
 // junosDisplayFormats are the arguments allowed after JunOS "| display".
 var junosDisplayFormats = []string{"json", "xml", "set"}
 
+// shellSyntax lists the shell constructs refused in run_show_command on every
+// platform: command substitution, parameter expansion and "&" (background
+// job, "&&").
+var shellSyntax = []string{"`", "$(", "${", "&"}
+
+const shellSyntaxList = "'`', '$(', '${' or '&'"
+
 // checkOperationalCommand verifies that command is a single line holding a
 // single command (no ";"), starts with verb as a whole word, uses no
-// redirection, and pipes only into filters allowed for the platform.
+// redirection or shell syntax, and pipes only into filters allowed for the
+// platform, with no filter argument starting with "-".
 func checkOperationalCommand(command, verb string, dt deviceType) error {
 	for _, r := range command {
 		if unicode.IsControl(r) || r == ' ' || r == ' ' {
@@ -76,6 +84,14 @@ func checkOperationalCommand(command, verb string, dt deviceType) error {
 	}
 	if strings.ContainsAny(command, "<>") {
 		return fmt.Errorf("command must not use redirection ('<' or '>')")
+	}
+	// On a Linux system such as Cumulus Linux a shell runs the command, so a
+	// wrong device_type must not let shell substitution or "&" through. A
+	// bare "$" stays allowed for regex anchors such as "| include up$".
+	for _, s := range shellSyntax {
+		if strings.Contains(command, s) {
+			return fmt.Errorf("command must not use shell syntax (%s)", shellSyntaxList)
+		}
 	}
 
 	segments := strings.Split(command, "|")
@@ -91,6 +107,14 @@ func checkOperationalCommand(command, verb string, dt deviceType) error {
 		}
 		if !slices.Contains(allowed, fields[0]) {
 			return fmt.Errorf("pipe '| %s' is not allowed; allowed filters: %s", fields[0], strings.Join(allowed, ", "))
+		}
+		// Several filters (find, grep, egrep, head, last) are also Linux
+		// programs, where an option can run a command, delete or read
+		// files. A shell drops quotes and backslashes, so look past them.
+		for _, arg := range fields[1:] {
+			if strings.HasPrefix(strings.TrimLeft(arg, `"'\`), "-") {
+				return fmt.Errorf("pipe filter arguments must not start with '-'")
+			}
 		}
 		if dt == deviceTypeJunos && fields[0] == "display" &&
 			(len(fields) != 2 || !slices.Contains(junosDisplayFormats, fields[1])) {

@@ -35,8 +35,7 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 	if err != nil {
 		return nil, nil, err
 	}
-	cfg := connConfig(args.Host, args.Port, args.Username)
-	rt, err := resolveDeviceType(ctx, cfg, args.DeviceType, false)
+	cfg, rt, err := resolveTarget(ctx, args.Host, args.Port, args.Username, args.DeviceType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get_config: %w", err)
 	}

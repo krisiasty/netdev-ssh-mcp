@@ -94,6 +94,121 @@ func TestNormalizeOperationalCommandAllowsReads(t *testing.T) {
 	}
 }
 
+// On a Linux system, such as Cumulus Linux, a shell runs the exec request.
+// Shell syntax must be refused on every platform, so a wrong device_type
+// cannot turn a show command into a shell command. This table pins the
+// whole set, including constructs refused by the older checks.
+func TestNormalizeOperationalCommandRefusesShellSyntax(t *testing.T) {
+	commands := map[deviceType]string{
+		deviceTypeEOS:     "show version",
+		deviceTypeIOS:     "show version",
+		deviceTypeNXOS:    "show version",
+		deviceTypeJunos:   "show version",
+		deviceTypeFortiOS: "get system status",
+	}
+	tests := []struct {
+		suffix  string
+		wantErr string
+	}{
+		{" & net del all & net commit", "shell syntax"},
+		{" && net del all", "shell syntax"},
+		{" |& net del all", "shell syntax"},
+		{" `id`", "shell syntax"},
+		{" $(net del all)", "shell syntax"},
+		{" $((1))", "shell syntax"},
+		{" ${HOME}", "shell syntax"},
+		{" x&y", "shell syntax"},
+		{" <(id)", "redirection"},
+		{" >(id)", "redirection"},
+		{" << EOF", "redirection"},
+		{" ; id", "';'"},
+		{"\nid", "single line"},
+		{" || id", "empty pipe"},
+	}
+	for dt, base := range commands {
+		for _, tt := range tests {
+			command := base + tt.suffix
+			got, err := normalizeOperationalCommand(command, dt)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("normalizeOperationalCommand(%q, %q) = %q, %v; want error containing %q", command, dt, got, err, tt.wantErr)
+			}
+		}
+	}
+}
+
+// Several allowed filters are also Linux programs (find, grep, egrep, head,
+// last), where an option can run commands, delete or read files. No filter
+// argument may start with "-", even quoted, since a shell drops the quotes.
+func TestNormalizeOperationalCommandRefusesFilterOptions(t *testing.T) {
+	tests := []struct {
+		dt      deviceType
+		command string
+	}{
+		{deviceTypeJunos, "show version | find / -exec id +"},
+		{deviceTypeJunos, "show version | find / -delete"},
+		{deviceTypeJunos, "show version | match -e x"},
+		{deviceTypeNXOS, "show version | grep -f /etc/shadow"},
+		{deviceTypeNXOS, "show version | grep -r FAKE /"},
+		{deviceTypeNXOS, "show version | grep FAKE -r /"},
+		{deviceTypeNXOS, "show version | egrep -f /etc/tacplus_servers"},
+		{deviceTypeNXOS, "show version | head -c 10"},
+		{deviceTypeNXOS, "show version | last -n 5"},
+		{deviceTypeNXOS, `show version | grep "-f" /etc/shadow`},
+		{deviceTypeNXOS, `show version | grep '-f' /etc/shadow`},
+		{deviceTypeNXOS, `show version | grep \-f /etc/shadow`},
+		{deviceTypeFortiOS, "get system status | grep -f /etc/shadow"},
+		{deviceTypeFortiOS, "get system status | grep -r FAKE /"},
+		{deviceTypeEOS, "show version | include -x"},
+		{deviceTypeIOS, "show version | count -x"},
+	}
+	for _, tt := range tests {
+		got, err := normalizeOperationalCommand(tt.command, tt.dt)
+		if err == nil || !strings.Contains(err.Error(), "must not start with '-'") {
+			t.Errorf("normalizeOperationalCommand(%q, %q) = %q, %v; want filter option refused", tt.command, tt.dt, got, err)
+		}
+	}
+}
+
+func TestNormalizeOperationalCommandAllowsFilters(t *testing.T) {
+	tests := []struct {
+		dt      deviceType
+		command string
+	}{
+		{deviceTypeEOS, "show interfaces status | include Ethernet1/1"},
+		{deviceTypeIOS, "show interfaces | include Ethernet1/1"},
+		{deviceTypeNXOS, "show interface brief | include Ethernet1/1"},
+		{deviceTypeJunos, "show interfaces terse | match up"},
+		{deviceTypeJunos, "show log messages | find bgp"},
+		{deviceTypeJunos, "show interfaces terse | display json"},
+		{deviceTypeNXOS, "show interface brief | grep port1"},
+		{deviceTypeFortiOS, "get system interface | grep port1"},
+		{deviceTypeEOS, "show version | json"},
+		{deviceTypeNXOS, "show version | json"},
+		{deviceTypeNXOS, "show logging | last 10"},
+		{deviceTypeIOS, "show interfaces | include up-down"},
+	}
+	for _, tt := range tests {
+		if _, err := normalizeOperationalCommand(tt.command, tt.dt); err != nil {
+			t.Errorf("normalizeOperationalCommand(%q, %q) error = %v", tt.command, tt.dt, err)
+		}
+	}
+}
+
+func TestNormalizeOperationalCommandAllowsRegexAnchor(t *testing.T) {
+	commands := map[deviceType]string{
+		deviceTypeEOS:     "show interfaces | include up$",
+		deviceTypeIOS:     "show interfaces | include up$",
+		deviceTypeNXOS:    "show interfaces | include up$",
+		deviceTypeJunos:   "show interfaces | match up$",
+		deviceTypeFortiOS: "get system interface | grep up$",
+	}
+	for dt, command := range commands {
+		if _, err := normalizeOperationalCommand(command, dt); err != nil {
+			t.Errorf("normalizeOperationalCommand(%q, %q) error = %v", command, dt, err)
+		}
+	}
+}
+
 func TestBuildCommandsRejectUnsafeArgs(t *testing.T) {
 	bad := []string{
 		"192.0.2.1\nconfigure terminal",
@@ -161,6 +276,28 @@ func TestRunShowCommandInjectionNeverReachesSSH(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("RunShowCommand() error = nil, want injection rejected")
+	}
+}
+
+func TestRunShowCommandShellSyntaxNeverReachesSSH(t *testing.T) {
+	ran := stubRunCommand(t, "", nil)
+	resetDetection(t)
+	runProbe = func(context.Context, sshclient.ConnConfig, func(string) (string, error)) (sshclient.ProbeResult, error) {
+		t.Fatal("detection ran, want the command refused first")
+		return sshclient.ProbeResult{}, nil
+	}
+	for _, command := range []string{"show x & net del all", "show `id`", "show $(net del all)"} {
+		for _, dt := range []string{"eos", "ios", "nxos", "junos", ""} {
+			_, _, err := RunShowCommand(context.Background(), nil, RunShowCommandInput{
+				Host: "192.0.2.10", Username: "admin", Command: command, DeviceType: dt,
+			})
+			if err == nil || !strings.Contains(err.Error(), "shell syntax") {
+				t.Errorf("RunShowCommand(%q, device_type %q) error = %v, want shell syntax refused", command, dt, err)
+			}
+		}
+	}
+	if len(*ran) != 0 {
+		t.Fatalf("ran %q, want nothing", *ran)
 	}
 }
 

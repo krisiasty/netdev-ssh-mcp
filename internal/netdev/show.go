@@ -40,8 +40,7 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 		}
 	}
 
-	cfg := connConfig(args.Host, args.Port, args.Username)
-	rt, err := resolveDeviceType(ctx, cfg, args.DeviceType, false)
+	cfg, rt, err := resolveTarget(ctx, args.Host, args.Port, args.Username, args.DeviceType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run_show_command: %w", err)
 	}
