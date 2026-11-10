@@ -136,17 +136,16 @@ func TestNormalizeOperationalCommandRefusesShellSyntax(t *testing.T) {
 	}
 }
 
-// Several allowed filters are also Linux programs (find, grep, egrep, head,
-// last), where an option can run commands, delete or read files. No filter
-// argument may start with "-", even quoted, since a shell drops the quotes.
+// Several allowed filters are also Linux programs (grep, egrep, head, last),
+// where an option can read files or change behaviour. No filter argument may
+// start with "-", even quoted, since a shell drops the quotes.
 func TestNormalizeOperationalCommandRefusesFilterOptions(t *testing.T) {
 	tests := []struct {
 		dt      deviceType
 		command string
 	}{
-		{deviceTypeJunos, "show version | find / -exec id +"},
-		{deviceTypeJunos, "show version | find / -delete"},
 		{deviceTypeJunos, "show version | match -e x"},
+		{deviceTypeJunos, "show version | last -n 5"},
 		{deviceTypeNXOS, "show version | grep -f /etc/shadow"},
 		{deviceTypeNXOS, "show version | grep -r FAKE /"},
 		{deviceTypeNXOS, "show version | grep FAKE -r /"},
@@ -169,6 +168,49 @@ func TestNormalizeOperationalCommandRefusesFilterOptions(t *testing.T) {
 	}
 }
 
+// Bash creates a leading "-" at expansion time from brace expansion and from
+// ANSI-C or locale quoting, past the leading-dash check. Pipe filters refuse
+// "{", "$'" and '$"' on every platform.
+func TestNormalizeOperationalCommandRefusesFilterExpansion(t *testing.T) {
+	tests := []struct {
+		dt      deviceType
+		command string
+	}{
+		{deviceTypeJunos, "show version | match {-e,} x"},
+		{deviceTypeJunos, "show version | last {-n,} 5"},
+		{deviceTypeJunos, `show version | match $'\x2de' x`},
+		{deviceTypeNXOS, "show version | grep {-f,} /etc/x"},
+		{deviceTypeNXOS, `show version | grep $'\x2df' x`},
+		{deviceTypeNXOS, `show version | grep $"-r" x`},
+		{deviceTypeNXOS, "show version | egrep {-f,} /etc/x"},
+		{deviceTypeNXOS, "show version | head {-c,} 10"},
+		{deviceTypeNXOS, "show version | last {-n,} 5"},
+		{deviceTypeFortiOS, "get system status | grep {-f,} /etc/x"},
+		{deviceTypeFortiOS, `get system status | grep $'\x2df' x`},
+		{deviceTypeFortiOS, `get system status | grep $"-r" x`},
+		{deviceTypeEOS, "show version | include {-x,}"},
+		{deviceTypeIOS, "show version | include x{1,3}"},
+		{deviceTypeIOS, `show version | include $'x'`},
+	}
+	for _, tt := range tests {
+		got, err := normalizeOperationalCommand(tt.command, tt.dt)
+		if err == nil || !strings.Contains(err.Error(), "pipe filters must not use") {
+			t.Errorf("normalizeOperationalCommand(%q, %q) = %q, %v; want filter expansion refused", tt.command, tt.dt, got, err)
+		}
+	}
+}
+
+// JunOS "| find" is not allowed: on a Linux system it is find(1), which can
+// run programs and delete files.
+func TestNormalizeOperationalCommandRefusesJunosFind(t *testing.T) {
+	for _, command := range []string{"show log messages | find bgp", "show version | find / -exec id +", "show version | find / -delete"} {
+		got, err := normalizeOperationalCommand(command, deviceTypeJunos)
+		if err == nil || !strings.Contains(err.Error(), "pipe '| find' is not allowed") {
+			t.Errorf("normalizeOperationalCommand(%q, junos) = %q, %v; want '| find' refused", command, got, err)
+		}
+	}
+}
+
 func TestNormalizeOperationalCommandAllowsFilters(t *testing.T) {
 	tests := []struct {
 		dt      deviceType
@@ -178,8 +220,8 @@ func TestNormalizeOperationalCommandAllowsFilters(t *testing.T) {
 		{deviceTypeIOS, "show interfaces | include Ethernet1/1"},
 		{deviceTypeNXOS, "show interface brief | include Ethernet1/1"},
 		{deviceTypeJunos, "show interfaces terse | match up"},
-		{deviceTypeJunos, "show log messages | find bgp"},
 		{deviceTypeJunos, "show interfaces terse | display json"},
+		{deviceTypeJunos, "show log messages | match bgp | last 20"},
 		{deviceTypeNXOS, "show interface brief | grep port1"},
 		{deviceTypeFortiOS, "get system interface | grep port1"},
 		{deviceTypeEOS, "show version | json"},

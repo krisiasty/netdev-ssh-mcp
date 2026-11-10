@@ -49,12 +49,14 @@ func checkCommandArgs(destination, source, vrf, outgoingInterface string) error 
 
 // allowedPipes lists the output filters permitted after "|" in
 // run_show_command, per platform. Filters that write files, send messages or
-// run other commands (save, redirect, tee, append, request, ...) are absent.
+// run other commands (save, redirect, tee, append, request, ...) are absent,
+// and so is JunOS find: on a Linux system it is find(1), which can run
+// programs and delete files.
 var allowedPipes = map[deviceType][]string{
 	deviceTypeEOS:     {"json", "no-more", "include", "exclude", "begin", "section"},
 	deviceTypeIOS:     {"include", "exclude", "begin", "section", "count"},
 	deviceTypeNXOS:    {"json", "json-pretty", "xml", "no-more", "include", "exclude", "begin", "section", "count", "grep", "egrep", "last", "head"},
-	deviceTypeJunos:   {"display", "no-more", "match", "except", "count", "last", "find", "trim"},
+	deviceTypeJunos:   {"display", "no-more", "match", "except", "count", "last", "trim"},
 	deviceTypeFortiOS: {"grep"},
 }
 
@@ -68,10 +70,17 @@ var shellSyntax = []string{"`", "$(", "${", "&"}
 
 const shellSyntaxList = "'`', '$(', '${' or '&'"
 
+// filterExpansion lists what bash expands into a leading "-" past the
+// filter-argument check: brace expansion ("{-f,}") and ANSI-C or locale
+// quoting ("$'\x2df'", '$"-f"'). It is refused in pipe filters, which also
+// rules out regex "{m,n}" quantifiers there.
+var filterExpansion = []string{"{", "$'", `$"`}
+
 // checkOperationalCommand verifies that command is a single line holding a
 // single command (no ";"), starts with verb as a whole word, uses no
 // redirection or shell syntax, and pipes only into filters allowed for the
-// platform, with no filter argument starting with "-".
+// platform, with no filter argument starting with "-" and no expansion
+// that could create one.
 func checkOperationalCommand(command, verb string, dt deviceType) error {
 	for _, r := range command {
 		if unicode.IsControl(r) || r == ' ' || r == ' ' {
@@ -105,12 +114,17 @@ func checkOperationalCommand(command, verb string, dt deviceType) error {
 		if len(fields) == 0 {
 			return fmt.Errorf("empty pipe in command")
 		}
+		for _, s := range filterExpansion {
+			if strings.Contains(seg, s) {
+				return fmt.Errorf("pipe filters must not use '{', \"$'\" or '$\"'")
+			}
+		}
 		if !slices.Contains(allowed, fields[0]) {
 			return fmt.Errorf("pipe '| %s' is not allowed; allowed filters: %s", fields[0], strings.Join(allowed, ", "))
 		}
-		// Several filters (find, grep, egrep, head, last) are also Linux
-		// programs, where an option can run a command, delete or read
-		// files. A shell drops quotes and backslashes, so look past them.
+		// Several filters (grep, egrep, head, last) are also Linux
+		// programs, where an option can read files or change behaviour.
+		// A shell drops quotes and backslashes, so look past them.
 		for _, arg := range fields[1:] {
 			if strings.HasPrefix(strings.TrimLeft(arg, `"'\`), "-") {
 				return fmt.Errorf("pipe filter arguments must not start with '-'")

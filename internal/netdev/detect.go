@@ -362,7 +362,7 @@ func resolveTarget(ctx context.Context, host string, port int, username, rawType
 // than cumulus4x.
 func refuseLinuxServer(serverVersion string) error {
 	if classifyIdent(serverVersion) == identLinux {
-		return fmt.Errorf("%w: the SSH server %q is a Linux system; only device_type cumulus4x is supported on Linux",
+		return fmt.Errorf("%w: it identifies as %q, a Linux system; only device_type cumulus4x is supported on Linux",
 			errUnsupportedPlatform, displayValue(serverVersion))
 	}
 	return nil

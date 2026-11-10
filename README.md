@@ -144,7 +144,8 @@ separated by spaces. The server appends `2>&1` itself so that error messages are
 
 On the other platforms, the command must be a single line holding a single command (no `;`), may not
 use `<` or `>` redirection or the shell syntax `` ` ``, `$(`, `${` and `&`, and may only pipe into output filters.
-Filter arguments may not start with `-`. Filters that write files, send messages or run other commands (such as
+Filter arguments may not start with `-`, and filters may not use `{`, `$'` or `$"`, so regular-expression `{m,n}`
+quantifiers are not accepted in filters. Filters that write files, send messages or run other commands (such as
 `save`, `redirect`, `tee` and `append`) are refused. A bare `$` is allowed, so `| include up$` works.
 The allowed filters are:
 
@@ -153,7 +154,7 @@ The allowed filters are:
 | `eos` | `json`, `no-more`, `include`, `exclude`, `begin`, `section` |
 | `ios` | `include`, `exclude`, `begin`, `section`, `count` |
 | `nxos` | the `ios` filters, plus `json`, `json-pretty`, `xml`, `no-more`, `grep`, `egrep`, `last`, `head` |
-| `junos` | `display json`/`xml`/`set`, `no-more`, `match`, `except`, `count`, `last`, `find`, `trim` |
+| `junos` | `display json`/`xml`/`set`, `no-more`, `match`, `except`, `count`, `last`, `trim` |
 | `fortios` | `grep` |
 | `cumulus4x` | none; end the command with `json` instead |
 | not set | the `eos` and `ios` filters combined |
