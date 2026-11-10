@@ -68,7 +68,7 @@ const (
 	identPKIX                     // Cisco NX-OS (PKIX-SSH)
 	identCisco                    // Cisco IOS / IOS-XE
 	identObfuscated               // FortiOS: a random token, or FortiSSH_x.y on older releases
-	identLinux                    // Debian or Ubuntu based, e.g. Cumulus Linux
+	identLinux                    // Debian or Ubuntu based; /etc/os-release tells Cumulus Linux 4.x from other distributions
 	identCiscoBusiness            // Cisco Business switch OS, e.g. Catalyst 1200
 )
 
@@ -108,17 +108,18 @@ func classifyIdent(serverVersion string) identClass {
 const (
 	probeShowVersion  = "show version"
 	probeSystemStatus = "get system status"
+	probeOSRelease    = "cat /etc/os-release"
 )
 
 // probeCommandFor returns the one command to run for an identification
 // class, chosen so the likely platform accepts it. Platforms that are known
 // to be unsupported get an error before anything runs: on the Cisco Business
-// switch OS an exec request hangs, and on Linux it reaches a shell.
+// switch OS an exec request hangs. A Linux system reaches a shell, so the
+// probe only reads /etc/os-release.
 func probeCommandFor(c identClass, serverVersion string) (string, error) {
 	switch c {
 	case identLinux:
-		return "", fmt.Errorf("%w: the SSH server %q is a Linux distribution; Linux-based network operating systems such as Cumulus Linux are not supported yet",
-			errUnsupportedPlatform, displayValue(serverVersion))
+		return probeOSRelease, nil
 	case identCiscoBusiness:
 		return "", fmt.Errorf("%w: the SSH server %q is the Cisco Business switch OS (Catalyst 1200/1300, CBS), which does not answer SSH exec requests",
 			errUnsupportedPlatform, displayValue(serverVersion))
@@ -166,6 +167,32 @@ var versionPatterns = map[deviceType]*regexp.Regexp{
 	deviceTypeNXOS:    regexp.MustCompile(`(?m)^\s*(?:NXOS|system):\s+version\s+([\w.()-]+)`),
 	deviceTypeIOS:     regexp.MustCompile(`(?m)^\s*(?:Cisco IOS(?: XE)? Software|IOS \(tm\)).*?Version\s+([\w.()-]+)`),
 	deviceTypeFortiOS: regexp.MustCompile(`(?m)^Version:\s+Forti\S+\s+(v[\w.()-]+)`),
+	// The value may be quoted and the line may end in \r.
+	deviceTypeCumulus4x: regexp.MustCompile(`(?m)^VERSION_ID="?([\w.+~-]+)"?\r?$`),
+}
+
+var (
+	osReleaseCumulusRe   = regexp.MustCompile(`(?m)^ID="?cumulus-linux"?\r?$`)
+	osReleaseVersionRe   = versionPatterns[deviceTypeCumulus4x]
+	osReleaseVersion4xRe = regexp.MustCompile(`(?m)^VERSION_ID="?4\.`)
+)
+
+// matchOSRelease decides whether the output of probeOSRelease is Cumulus
+// Linux 4.x. Both ID and VERSION_ID must be whole lines, so a value echoed
+// inside another line cannot satisfy them. Anything else is unsupported and
+// passing device_type would not help.
+func matchOSRelease(output string) (deviceType, error) {
+	if osReleaseCumulusRe.MatchString(output) {
+		if osReleaseVersion4xRe.MatchString(output) {
+			return deviceTypeCumulus4x, nil
+		}
+		if m := osReleaseVersionRe.FindStringSubmatch(output); m != nil {
+			return "", fmt.Errorf("%w: unsupported release: Cumulus Linux %s is not supported; only 4.x (cumulus4x) is",
+				errUnsupportedPlatform, displayValue(m[1]))
+		}
+	}
+	return "", fmt.Errorf("%w: the SSH server is a Linux system that is not Cumulus Linux 4.x (cumulus4x is the only supported Linux platform)",
+		errUnsupportedPlatform)
 }
 
 // matchProbeOutput decides the platform from a probe command's output. It
@@ -288,7 +315,15 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 		return resolvedType{}, fmt.Errorf("detect platform: %w", err)
 	}
 
-	dt, err = matchProbeOutput(res.Command, res.Output)
+	if res.Command == probeOSRelease {
+		dt, err = matchOSRelease(res.Output)
+		if errors.Is(err, errUnsupportedPlatform) {
+			slog.Info("platform detection: unsupported platform", "host", sanitizeLog(cfg.Host)) //nolint:gosec // G706: value is sanitized before logging
+			return resolvedType{}, fmt.Errorf("detect platform: %w", err)
+		}
+	} else {
+		dt, err = matchProbeOutput(res.Command, res.Output)
+	}
 	if err != nil {
 		return resolvedType{}, fmt.Errorf("could not detect the platform of %s (SSH server %q): %w; pass device_type (%s)",
 			cfg.Host, displayValue(res.ServerVersion), err, supportedDeviceTypes)
@@ -309,7 +344,7 @@ const supportedDeviceTypes = "eos, ios, nxos, junos, fortios or cumulus4x"
 
 // syntaxErrorRe matches the messages platforms print for a command they do
 // not understand, which is what running another platform's syntax produces.
-var syntaxErrorRe = regexp.MustCompile(`(?mi)^\s*(?:% ?Invalid (?:input|command)|% ?Incomplete command|% ?Ambiguous command|syntax error|unknown command|Unknown action|Command fail\.|command parse error)`)
+var syntaxErrorRe = regexp.MustCompile(`(?mi)^\s*(?:ERROR: Command not found|(?:-?bash: (?:line \d+: )?)?[\w.-]+: command not found|% ?Invalid (?:input|command)|% ?Incomplete command|% ?Ambiguous command|syntax error|unknown command|Unknown action|Command fail\.|command parse error)`)
 
 func looksLikeSyntaxError(text string) bool {
 	return syntaxErrorRe.MatchString(text)

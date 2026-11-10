@@ -314,6 +314,21 @@ func TestHandlersUnsupportedPlatformRunsNothing(t *testing.T) {
 	}
 }
 
+func TestHandlersUnsupportedCumulusRunsNothingBeyondProbe(t *testing.T) {
+	resetDetection(t)
+	f := &fakeProbe{ident: identCumulus, outputs: map[string]string{probeOSRelease: readFixture(t, "cumulus54_os_release.txt")}}
+	runProbe = f.probe
+	ran := stubRunCommand(t, "output", nil)
+
+	_, _, err := GetConfig(context.Background(), nil, GetConfigInput{Host: "mgmt1", Username: "u"})
+	if !errors.Is(err, errUnsupportedPlatform) || !strings.Contains(err.Error(), "Cumulus Linux 5.4.0 is not supported") {
+		t.Fatalf("GetConfig() error = %v, want errUnsupportedPlatform naming Cumulus Linux 5.4.0", err)
+	}
+	if len(*ran) != 0 || len(f.ran) != 1 || f.ran[0] != probeOSRelease {
+		t.Fatalf("ran %q, probes %q; want only the os-release probe", *ran, f.ran)
+	}
+}
+
 func TestHandlersRejectBadArgsBeforeDetection(t *testing.T) {
 	resetDetection(t)
 	f := &fakeProbe{ident: identEOS}
