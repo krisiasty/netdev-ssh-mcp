@@ -162,7 +162,7 @@ func main() {
 			"On FortiOS 7.4+, probe maps to execute traceroute-options queries, source maps to source, " +
 			"and outgoing_interface maps to device; max_hops, timeout, and vrf are not supported. " +
 			"On Cumulus Linux 4.x the tool runs 'traceroute [-m max_hops] [-w timeout] [-q probe] [-s source-ip | -i source-iface | -i vrf] destination'; " +
-			"vrf cannot be combined with source, outgoing_interface is not supported, and when traceroute exits with status 1 (nothing answered) its output is returned instead of an error. " +
+			"vrf cannot be combined with source, and outgoing_interface is not supported. " +
 			"Optional parameters: max_hops, timeout (per-probe seconds), probe (probes per hop, not used on JunOS), " +
 			"source (source IP or interface), vrf (routing-instance on JunOS), outgoing_interface (FortiOS only).",
 	}, netdev.RunTraceroute)

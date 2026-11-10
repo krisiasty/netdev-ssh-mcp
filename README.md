@@ -245,8 +245,9 @@ runs `execute traceroute`, then resets the options within the same SSH session. 
 | `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`; sets syntax |
 
 The same character restrictions as `run_ping` apply to `destination`, `source`,
-`vrf` and `outgoing_interface`. The Cumulus Linux 4.x notes for `run_ping` apply too: `source` with `vrf` is
-refused, `outgoing_interface` is not supported, and a traceroute that exits with status 1 returns its output.
+`vrf` and `outgoing_interface`. On Cumulus Linux 4.x, `source` with `vrf` is refused and `outgoing_interface` is not
+supported, as for `run_ping`. A completed trace exits with status 0 even when the destination is unreachable, so any
+non-zero exit status is reported as an error.
 
 FortiOS limitations:
 

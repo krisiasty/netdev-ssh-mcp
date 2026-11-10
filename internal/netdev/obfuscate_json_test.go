@@ -21,6 +21,16 @@ func TestObfuscateJSONHidesSecrets(t *testing.T) {
 		},
 		{"pretty line", `    "password": "FAKEbgp",`, `    "password": "<<FAKEbgp>>",`},
 		{"camel case key", `"snmpCommunity": "FAKEc"`, `"snmpCommunity": "<<FAKEc>>"`},
+		// Keys are classified after decoding their JSON escapes.
+		{"unicode escaped key", `{"pa\u0073sword":"FAKEescaped"}`, `{"pa\u0073sword":"<<FAKEescaped>>"}`},
+		{"upper-case unicode escape", `{"pa\u0053sword":"FAKEescaped"}`, `{"pa\u0053sword":"<<FAKEescaped>>"}`},
+		{"invalid escape falls back to raw key", `{"password\q":"FAKEbad"}`, `{"password\q":"<<FAKEbad>>"}`},
+		{"escaped dash", `{"shared\u002dsecret":"FAKEs","x":1}`, `{"shared\u002dsecret":"<<FAKEs>>","x":1}`},
+		{
+			"escaped communities key with nested names",
+			`{"comm\u0075nities": {"FAKEpublic": {"access": "ro"}}}`,
+			`{"comm\u0075nities": {"<<FAKEpublic>>": {"<<access>>": "<<ro>>"}}}`,
+		},
 		{"dashed key", `"community-password":"FAKEc"`, `"community-password":"<<FAKEc>>"`},
 		{"underscored key", `"shared_secret": "FAKEr"`, `"shared_secret": "<<FAKEr>>"`},
 		{"auth password key", `"authPassword": "FAKEa"`, `"authPassword": "<<FAKEa>>"`},

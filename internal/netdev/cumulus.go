@@ -142,10 +142,13 @@ func buildCumulusTraceroute(destination string, maxHops, timeout, probe int, sou
 	return []string{strings.Join(parts, " ") + cumulusMergeStderr}, nil
 }
 
-// cumulusNoReplyOutput returns the command output when a cumulus4x ping or
-// traceroute exited with status 1, which Linux uses for "no reply received".
-// That is a result, not a failure; any other status stays an error.
-func cumulusNoReplyOutput(dt deviceType, err error) (string, bool) {
+// cumulusPingNoReplyOutput returns the command output when a cumulus4x ping
+// exited with status 1, which Linux ping uses for "no reply received". That
+// is a result, not a failure; any other status stays an error. It is not used
+// for traceroute: Linux traceroute exits 0 for a completed trace, reachable or
+// not, and uses a non-zero status, 1 included, for errors such as a source
+// interface it cannot bind.
+func cumulusPingNoReplyOutput(dt deviceType, err error) (string, bool) {
 	var cmdErr *sshclient.CommandError
 	if dt != deviceTypeCumulus4x || !errors.As(err, &cmdErr) || cmdErr.ExitStatus != 1 {
 		return "", false

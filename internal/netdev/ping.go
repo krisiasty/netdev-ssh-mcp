@@ -73,9 +73,9 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 		out, err = runCommand(ctx, cfg, commands[0])
 	}
 	if err != nil {
-		// Linux ping and traceroute exit 1 when nothing answered; on Cumulus
-		// that output is the result.
-		if noReply, ok := cumulusNoReplyOutput(rt.dt, err); ok {
+		// Linux ping exits 1 when nothing answered; on Cumulus that output
+		// is the result.
+		if noReply, ok := cumulusPingNoReplyOutput(rt.dt, err); ok {
 			out, err = noReply, nil
 		}
 	}

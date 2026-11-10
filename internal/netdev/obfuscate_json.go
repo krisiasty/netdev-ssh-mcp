@@ -1,6 +1,7 @@
 package netdev
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 )
@@ -21,6 +22,18 @@ var jsonKeySeparators = strings.NewReplacer("-", "", "_", "")
 func isSecretJSONKey(key string) bool {
 	k := jsonKeySeparators.Replace(strings.ToLower(key))
 	return slices.ContainsFunc(secretJSONKeyWords, func(w string) bool { return strings.Contains(k, w) })
+}
+
+// decodeJSONKey returns the text of the quoted JSON string quoted with its
+// escapes decoded, so an escaped key such as "pa\u0073sword" is classified
+// as the "password" it is. A string that does not decode, such as one with an
+// invalid escape, is returned without its quotes as written.
+func decodeJSONKey(quoted string) string {
+	var key string
+	if err := json.Unmarshal([]byte(quoted), &key); err != nil {
+		return quoted[1 : len(quoted)-1]
+	}
+	return key
 }
 
 // obfuscateJSON hashes the values of secret keys in JSON text and reports
@@ -51,7 +64,7 @@ func jsonSpans(text string) []span {
 			continue
 		}
 		end, closed := scanJSONString(text, i)
-		if closed && r.isKey(end) && isSecretJSONKey(text[i+1:end-1]) {
+		if closed && r.isKey(end) && isSecretJSONKey(decodeJSONKey(text[i:end])) {
 			colon := skipJSONSpace(text, end)
 			i = r.value(skipJSONSpace(text, colon+1))
 			continue
