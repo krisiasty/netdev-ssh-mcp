@@ -19,6 +19,12 @@ type TrustHostKeyInput struct {
 	ReplaceExisting bool   `json:"replace_existing,omitempty" jsonschema:"replace an existing mismatched key after you verify the new fingerprint"`
 }
 
+// The SSH calls trust_host_key makes; tests replace them.
+var (
+	inspectHostKey = sshclient.InspectHostKey
+	trustHostKey   = sshclient.TrustHostKey
+)
+
 // TrustHostKey fetches and optionally stores an SSH host key in known_hosts.
 func TrustHostKey(ctx context.Context, req *mcp.CallToolRequest, args TrustHostKeyInput) (*mcp.CallToolResult, any, error) {
 	if args.Host == "" {
@@ -33,9 +39,9 @@ func TrustHostKey(ctx context.Context, req *mcp.CallToolRequest, args TrustHostK
 	slog.Info("trust_host_key", "host", sanitizeLog(args.Host), "port", port, "confirm", args.Confirm, "replace_existing", args.ReplaceExisting)
 
 	if !args.Confirm {
-		info, err := sshclient.InspectHostKey(args.Host, port)
+		info, err := inspectHostKey(ctx, args.Host, port)
 		if err != nil {
-			slog.Error("trust_host_key inspect failed", "host", args.Host, "port", port, "err", err)
+			logFailure(ctx, "trust_host_key inspect", err, "host", args.Host, "port", port)
 			return nil, nil, fmt.Errorf("trust_host_key: %w", err)
 		}
 		text := strings.Join([]string{
@@ -50,9 +56,9 @@ func TrustHostKey(ctx context.Context, req *mcp.CallToolRequest, args TrustHostK
 		}, nil, nil
 	}
 
-	result, err := sshclient.TrustHostKey(args.Host, port, args.ReplaceExisting)
+	result, err := trustHostKey(ctx, args.Host, port, args.ReplaceExisting)
 	if err != nil {
-		slog.Error("trust_host_key failed", "host", args.Host, "port", port, "err", err)
+		logFailure(ctx, "trust_host_key", err, "host", args.Host, "port", port)
 		return nil, nil, fmt.Errorf("trust_host_key: %w", err)
 	}
 

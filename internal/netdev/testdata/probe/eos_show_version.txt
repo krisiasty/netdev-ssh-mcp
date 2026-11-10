@@ -1,0 +1,17 @@
+Arista DCS-7050CX3-32C-R
+Hardware version: 11.00
+Serial number: SSJ00000000
+Hardware MAC address: 0000.5e00.5301
+System MAC address: 0000.5e00.5301
+
+Software image version: 4.35.7.2M
+Architecture: x86_64
+Internal build version: 4.35.7.2M-00000000.43572M
+Internal build ID: 00000000-0000-0000-0000-000000000000
+Image format version: 3.0
+Image optimization: Default
+
+Uptime: 3 days, 0 hours and 25 minutes
+Total memory: 16280712 kB
+Free memory: 12826832 kB
+

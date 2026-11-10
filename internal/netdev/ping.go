@@ -22,7 +22,7 @@ type RunPingInput struct {
 	VRF         string `json:"vrf,omitempty" jsonschema:"VRF name"`
 	Size        int    `json:"size,omitempty" jsonschema:"packet size in bytes"`
 	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface for FortiOS ping"`
-	DeviceType  string `json:"device_type,omitempty" jsonschema:"device type controlling ping syntax: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS); defaults to eos/ios syntax if omitted"`
+	DeviceType  string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS); if omitted, the platform is auto-detected over SSH and reported in the result"`
 }
 
 // RunPing executes a ping command on a network device.
@@ -39,10 +39,6 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 	if args.Username == "" {
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
-	dt, err := normalizeDeviceType(args.DeviceType)
-	if err != nil {
-		return nil, nil, err
-	}
 	if args.Count < 0 {
 		return nil, nil, fmt.Errorf("count must be a positive integer")
 	}
@@ -52,8 +48,17 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 	if args.Size < 0 {
 		return nil, nil, fmt.Errorf("size must be a positive integer")
 	}
+	// Reject unsafe arguments before detection opens a connection.
+	if err := checkCommandArgs(args.Destination, args.Source, args.VRF, args.OutgoingIf); err != nil {
+		return nil, nil, err
+	}
 
-	commands, err := buildPingCommands(args.Destination, dt, args.Count, args.Size, args.Timeout, args.Source, args.VRF, args.OutgoingIf)
+	cfg := connConfig(args.Host, args.Port, args.Username)
+	rt, err := resolveDeviceType(ctx, cfg, args.DeviceType, false)
+	if err != nil {
+		return nil, nil, fmt.Errorf("run_ping: %w", err)
+	}
+	commands, err := buildPingCommands(args.Destination, rt.dt, args.Count, args.Size, args.Timeout, args.Source, args.VRF, args.OutgoingIf)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -61,19 +66,20 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 
 	slog.Info("run_ping", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "cmd", sanitizeLog(commandLog)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
+	cfg.CommandTimeout = longCommandTimeout
 	var out string
-	if dt == deviceTypeFortiOS {
-		out, err = runCommands(connConfig(args.Host, args.Port, args.Username), commands)
+	if rt.dt == deviceTypeFortiOS {
+		out, err = runCommands(ctx, cfg, commands)
 	} else {
-		out, err = runCommand(connConfig(args.Host, args.Port, args.Username), commands[0])
+		out, err = runCommand(ctx, cfg, commands[0])
 	}
 	if err != nil {
-		slog.Error("run_ping failed", "host", args.Host, "destination", args.Destination, "err", err)
-		return nil, nil, fmt.Errorf("run_ping: %w", err)
+		logFailure(ctx, "run_ping", err, "host", args.Host, "destination", args.Destination)
+		return nil, nil, runError(ctx, "run_ping", cfg, rt, err)
 	}
 
 	slog.Info("run_ping done", "host", args.Host, "bytes", len(out))
 	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: out}},
+		Content: append([]mcp.Content{&mcp.TextContent{Text: out}}, afterRun(cfg, rt, out, nil)...),
 	}, nil, nil
 }

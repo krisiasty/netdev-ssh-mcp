@@ -1,0 +1,27 @@
+Cisco Nexus Operating System (NX-OS) Software
+TAC support: http://www.cisco.com/tac
+Copyright (C) 2002-2024, Cisco and/or its affiliates.
+All rights reserved.
+
+Software
+  BIOS: version 5.3.1
+ NXOS: version 9.3(14)
+  BIOS compile time:  05/17/2019
+  NXOS image file is: bootflash:///nxos.9.3.14-compact.bin
+  NXOS compile time:  9/30/2024 12:00:00 [09/12/2024 03:38:34]
+
+
+Hardware
+  cisco Nexus 3172T Chassis 
+  Intel(R) Pentium(R) CPU  @ 2.00GHz with 4029684 kB of memory.
+  Processor Board ID FOC00000000
+
+  Device name: Arista-lookalike
+  bootflash:    1880320 kB
+
+Kernel uptime is 153 day(s), 3 hour(s), 42 minute(s), 19 second(s)
+
+Last reset 
+  Reason: Reload due to unknown reason, possible power loss
+  System version: 9.3(14)
+  Service: 

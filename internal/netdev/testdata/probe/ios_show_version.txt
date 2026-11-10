@@ -1,0 +1,11 @@
+Cisco IOS Software, C3750 Software (C3750-IPSERVICESK9-M), Version 12.2(55)SE12, RELEASE SOFTWARE (fc2)
+Technical Support: http://www.cisco.com/techsupport
+Copyright (c) 1986-2017 by Cisco Systems, Inc.
+Compiled Thu 02-Feb-17 10:43 by prod_rel_team
+
+ROM: Bootstrap program is C3750 boot loader
+BOOTLDR: C3750 Boot Loader (C3750-HBOOT-M) Version 12.2(44)SE5, RELEASE SOFTWARE (fc1)
+
+switch1 uptime is 2 years, 3 weeks, 1 day, 4 hours, 12 minutes
+System returned to ROM by power-on
+System image file is "flash:/c3750-ipservicesk9-mz.122-55.SE12.bin"

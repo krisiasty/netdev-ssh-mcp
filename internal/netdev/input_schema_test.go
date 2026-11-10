@@ -22,6 +22,7 @@ func TestToolInputSchemaRequiredFields(t *testing.T) {
 		{name: "run_show_command", typ: reflect.TypeFor[RunShowCommandInput](), want: []string{"command", "host"}},
 		{name: "run_ping", typ: reflect.TypeFor[RunPingInput](), want: []string{"destination", "host"}},
 		{name: "run_traceroute", typ: reflect.TypeFor[RunTracerouteInput](), want: []string{"destination", "host"}},
+		{name: "detect_platform", typ: reflect.TypeFor[DetectPlatformInput](), want: []string{"host"}},
 		{name: "trust_host_key", typ: reflect.TypeFor[TrustHostKeyInput](), want: []string{"host"}},
 	}
 

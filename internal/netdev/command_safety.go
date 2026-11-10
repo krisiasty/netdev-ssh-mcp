@@ -61,14 +61,6 @@ var allowedPipes = map[deviceType][]string{
 // junosDisplayFormats are the arguments allowed after JunOS "| display".
 var junosDisplayFormats = []string{"json", "xml", "set"}
 
-func pipesFor(dt deviceType) []string {
-	if dt == "" {
-		// No device_type means EOS/IOS syntax.
-		return slices.Concat(allowedPipes[deviceTypeEOS], allowedPipes[deviceTypeIOS])
-	}
-	return allowedPipes[dt]
-}
-
 // checkOperationalCommand verifies that command is a single line holding a
 // single command (no ";"), starts with verb as a whole word, uses no
 // redirection, and pipes only into filters allowed for the platform.
@@ -91,7 +83,7 @@ func checkOperationalCommand(command, verb string, dt deviceType) error {
 		return fmt.Errorf("command must start with '%s'", verb)
 	}
 
-	allowed := pipesFor(dt)
+	allowed := allowedPipes[dt]
 	for _, seg := range segments[1:] {
 		fields := strings.Fields(strings.ToLower(seg))
 		if len(fields) == 0 {

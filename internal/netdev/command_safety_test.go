@@ -31,7 +31,6 @@ func TestNormalizeOperationalCommandBlocksInjection(t *testing.T) {
 		{"eos semicolon", deviceTypeEOS, "show version ; reload", "';'"},
 		{"junos semicolon", deviceTypeJunos, "show version ; request system reboot", "';'"},
 		{"fortios semicolon", deviceTypeFortiOS, "get system status ; execute reboot", "';'"},
-		{"no type semicolon", "", "show version ; configure terminal", "';'"},
 		{"semicolon inside pipe", deviceTypeIOS, "show version | include x;configure terminal", "';'"},
 
 		// Redirection writes files on the device.
@@ -49,7 +48,6 @@ func TestNormalizeOperationalCommandBlocksInjection(t *testing.T) {
 		{"ios append", deviceTypeIOS, "show version | append flash:out.txt", "not allowed"},
 		{"ios redirect", deviceTypeIOS, "show version | redirect tftp://192.0.2.1/x", "not allowed"},
 		{"nxos tee", deviceTypeNXOS, "show version | tee bootflash:out.txt", "not allowed"},
-		{"no type redirect", "", "show version | redirect flash:out.txt", "not allowed"},
 		{"empty pipe", deviceTypeEOS, "show version |", "empty pipe"},
 		{"empty pipe in middle", deviceTypeEOS, "show version || json", "empty pipe"},
 
@@ -84,8 +82,6 @@ func TestNormalizeOperationalCommandAllowsReads(t *testing.T) {
 		{"junos match no-more", deviceTypeJunos, "show route | match 10.0.0 | no-more"},
 		{"fortios get", deviceTypeFortiOS, "get system status"},
 		{"fortios grep", deviceTypeFortiOS, "get router info routing-table all | grep 10.0.0"},
-		{"no type json", "", "show version | json"},
-		{"no type section", "", "show ip route | section 10.0.0.0"},
 		{"uppercase verb", deviceTypeEOS, "SHOW version"},
 	}
 
@@ -109,7 +105,7 @@ func TestBuildCommandsRejectUnsafeArgs(t *testing.T) {
 		"192.0.2.1;reload",
 		strings.Repeat("a", maxArgLen+1),
 	}
-	platforms := []deviceType{"", deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos, deviceTypeFortiOS}
+	platforms := allDeviceTypes
 
 	for _, dt := range platforms {
 		for _, v := range bad {
@@ -152,7 +148,7 @@ func TestCheckCommandArgAllowsRealValues(t *testing.T) {
 func TestRunShowCommandInjectionNeverReachesSSH(t *testing.T) {
 	original := runCommand
 	defer func() { runCommand = original }()
-	runCommand = func(cfg sshclient.ConnConfig, cmd string) (string, error) {
+	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
 		t.Fatalf("runCommand called with %q", cmd)
 		return "", nil
 	}
@@ -171,11 +167,11 @@ func TestRunShowCommandInjectionNeverReachesSSH(t *testing.T) {
 func TestRunPingInjectionNeverReachesSSH(t *testing.T) {
 	originalOne, originalMany := runCommand, runCommands
 	defer func() { runCommand, runCommands = originalOne, originalMany }()
-	runCommand = func(cfg sshclient.ConnConfig, cmd string) (string, error) {
+	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
 		t.Fatalf("runCommand called with %q", cmd)
 		return "", nil
 	}
-	runCommands = func(cfg sshclient.ConnConfig, cmds []string) (string, error) {
+	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
 		t.Fatalf("runCommands called with %q", cmds)
 		return "", nil
 	}
