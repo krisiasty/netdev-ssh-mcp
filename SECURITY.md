@@ -72,10 +72,21 @@ issue, not as an advisory:
 So a report need not re-cover this ground:
 
 - `run_show_command` accepts a single command on a single line — no control
-  characters, no `;`, no `<`/`>` redirection — and pipes only into a
-  per-platform allowlist of output filters. Ping and traceroute arguments are
-  limited to letters, digits and `. _ : / @ % -`. Refused input never reaches
-  the device.
+  characters, no `;`, no `<`/`>` redirection, and on every platform none of the
+  shell syntax `` ` ``, `$(`, `${` and `&` — and pipes only into a per-platform
+  allowlist of output filters whose arguments may not start with `-`. Ping and
+  traceroute arguments are limited to letters, digits and `. _ : / @ % -`.
+  Refused input never reaches the device.
+- On Cumulus Linux 4.x (`cumulus4x`) bash runs the command, so the checks are
+  stricter: `run_show_command` accepts only `net show` commands whose words
+  match a character allowlist and do not start with `-`; ping and traceroute
+  arguments may not start with `-`; and the only thing the server adds to the
+  commands it builds is a trailing `2>&1`, which callers cannot supply.
+- Any `device_type` other than `cumulus4x` is refused, before a session is
+  opened, when the SSH server identifies itself as a Linux system (Debian or
+  Ubuntu). This is the main defence on Linux SSH servers: a list of refused
+  characters cannot be complete for bash while still allowing regular
+  expressions in output filters.
 - Secrets are replaced with HMAC-SHA256 tokens under an obfuscation key. The key
   is only read, never logged or written; without one, a random key held in
   memory is used for each run. Obfuscation fails closed if no key is set.
@@ -85,6 +96,16 @@ So a report need not re-cover this ground:
   tool arguments are stripped of control characters.
 - CI runs `golangci-lint` (including `gosec`), CodeQL, `govulncheck` and the
   test suite on every push and pull request, and `govulncheck` weekly.
+
+Known limits of the Cumulus Linux support:
+
+- A Cumulus switch whose SSH banner hides "Debian" (for example with
+  `DebianBanner no`) is not recognised as Linux. If a caller then passes a wrong
+  explicit `device_type`, bash runs a command that passed only that platform's
+  checks, and a filter such as `| grep PATTERN FILE` can read files the device
+  account can read. That output is obfuscated like any other.
+- Nothing has been tested on a real Cumulus Linux 4.3 switch; the support is
+  built from vendor documentation and sample output.
 
 ## Scope
 

@@ -143,8 +143,9 @@ every word must contain only letters, digits and `. _ : / , @ %` and `-`, no wor
 separated by spaces. The server appends `2>&1` itself so that error messages are returned.
 
 On the other platforms, the command must be a single line holding a single command (no `;`), may not
-use `<` or `>` redirection, and may only pipe into output filters. Filters that write files, send messages or run
-other commands (such as `save`, `redirect`, `tee` and `append`) are refused.
+use `<` or `>` redirection or the shell syntax `` ` ``, `$(`, `${` and `&`, and may only pipe into output filters.
+Filter arguments may not start with `-`. Filters that write files, send messages or run other commands (such as
+`save`, `redirect`, `tee` and `append`) are refused. A bare `$` is allowed, so `| include up$` works.
 The allowed filters are:
 
 | `device_type` | Allowed after `\|` |
@@ -567,8 +568,9 @@ Sensitive values are obfuscated by default in `get_config` and
 commands (BGP neighbor passwords, OSPF keys, SNMP communities and SNMPv3 keys, 802.1X RADIUS secrets) and the
 `snmpd.conf` and `/etc/tacplus_servers` syntax, JSON output is covered on every platform: the value under a key that
 names a secret (for example `password`, `secret`, `community`, `psk` or `key-string`) is replaced, including every
-key and value nested under such a key. The `run_ping` and `run_traceroute` tools are not
-affected — their output contains no sensitive values.
+key and value nested under such a key. BGP community values in JSON output (for example `show ip bgp … | json` or
+`net show bgp … json`) are therefore hashed, because `community` is a secret key name; text output keeps them.
+The `run_ping` and `run_traceroute` tools are not affected — their output contains no sensitive values.
 
 Each secret is replaced with a token of the form `[h:<12 hex digits>]`: a
 truncated HMAC-SHA256 of the secret under an obfuscation key. Without the key,
