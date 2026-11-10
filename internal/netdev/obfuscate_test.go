@@ -171,6 +171,21 @@ func TestObfuscateConfigHidesSecrets(t *testing.T) {
 		{"cumulus 27", `trap2sink 192.0.2.30 <<FAKEcomm>> 162`},
 		{"cumulus 28", `informsink 192.0.2.30 <<FAKEcomm>>`},
 		{"cumulus 29", `secret=<<FAKEtacacs>>`},
+		{"cumulus fix 1", `createUser alice SHA -l <<0xFAKEauthkey>> AES -l <<0xFAKEprivkey>>`},
+		{"cumulus fix 2", `createUser alice SHA -m <<0xFAKEauthkey>> AES -m <<0xFAKEprivkey>>`},
+		{"cumulus fix 3", `createUser alice -l <<0xFAKEauthkey>>`},
+		{"cumulus fix 4", `secret=<<FAKE tacacs key>>`},
+		{"cumulus fix 5", `secret=<<"FAKEa"FAKEb>>`},
+		{"cumulus fix 6", `trapcommunity <<FAKEcomm>>`},
+		{"cumulus fix 7", `authcommunity log,execute,net <<FAKEcomm>>`},
+		{"cumulus fix 8", `authcommunity log <<FAKEcomm>> 10.0.0.0/8 -V view`},
+		{"cumulus fix 9", `com2sec notConfigUser default <<FAKEcomm>>`},
+		{"cumulus fix 10", `com2sec -Cn ctx notConfigUser 10.0.0.0/8 <<FAKEcomm>>`},
+		{"cumulus fix 11", `com2sec6 notConfigUser default <<FAKEcomm>>`},
+		{"cumulus fix 12", `trapsess -v 2c -c <<FAKEcomm>> 192.0.2.30`},
+		{"cumulus fix 13", `trapsess -v 3 -u alice -l authPriv -a SHA -A <<FAKEauth>> -x AES -X <<FAKEpriv>> 192.0.2.30`},
+		{"cumulus fix 14", `rocommunity -Cn ctx <<FAKEcomm>> default`},
+		{"cumulus fix 15", `rwcommunity6 -Cn ctx <<FAKEcomm>> default`},
 	}
 
 	for _, tt := range tests {
@@ -210,6 +225,7 @@ func TestObfuscateConfigLeavesNonSecretsAlone(t *testing.T) {
 		`trapsink 192.0.2.30`,
 		`Version 1 and 2c Community String  Configured`,
 		`net show snmp-server status`,
+		`trapsess -v 2c 192.0.2.30`,
 	}
 	input := strings.Join(lines, "\n")
 	got, err := obfuscateConfig(input)

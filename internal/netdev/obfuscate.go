@@ -146,15 +146,26 @@ var sensitivePatterns = []sensitivePattern{
 	pattern(boundary + `das-client-secret\s+` + value),
 
 	// Cumulus Linux 4.x: snmpd.conf and /etc/tacplus_servers
-	// rocommunity|rwcommunity[6] <value> [source] [-V view]  (snmpd.conf)
-	pattern(`^\s*r[ow]community6?\s+` + value),
-	// createUser [-e ENGINEID] NAME [AUTHALGO] <authpass> [PRIVALGO [<privpass>]]  (snmpd.conf, SNMPv3)
-	pattern(`^\s*createuser\s+(?:-e\s+\S+\s+)?\S+\s+(?:(?:md5|sha\S*)\s+)?` + value + `(?:\s+(?:des|aes\S*)\s+` + value + `)?`),
+	// rocommunity|rwcommunity[6] [-Cn CONTEXT] <value> [source] [-V view]  (snmpd.conf)
+	pattern(`^\s*r[ow]community6?\s+(?:-Cn\s+\S+\s+)?` + value),
+	// createUser [-e ENGINEID] NAME [AUTHALGO] [-m|-l] <authpass> [PRIVALGO [-m|-l] <privpass>]  (snmpd.conf, SNMPv3)
+	pattern(`^\s*createuser\s+(?:-e\s+\S+\s+)?\S+\s+(?:(?:md5|sha\S*)\s+)?(?:-[ml]\s+)?` + value + `(?:\s+(?:des|aes\S*)\s+(?:-[ml]\s+)?` + value + `)?`),
 	// trapsink|trap2sink|informsink HOST <value> [port]  (snmpd.conf). The
 	// community is required, so "trapsink HOST" is left alone.
 	pattern(`^\s*(?:trap|trap2|inform)sink\s+\S+\s+` + value),
-	// secret=<value>  (/etc/tacplus_servers)
-	pattern(boundary + `secret=` + value),
+	// trapcommunity <value>  (snmpd.conf)
+	pattern(`^\s*trapcommunity\s+` + value),
+	// authcommunity TYPES <value> [source] [-V view]  (snmpd.conf)
+	pattern(`^\s*authcommunity\s+\S+\s+` + value),
+	// com2sec[6] [-Cn CONTEXT] SECNAME SOURCE <value>  (snmpd.conf)
+	pattern(`^\s*com2sec6?\s+(?:-Cn\s+\S+\s+)?\S+\s+\S+\s+` + value),
+	// trapsess ... -c <community> | -A <authpass> | -X <privpass> ...  (snmpd.conf). The
+	// flags are case-sensitive: -a and -x name algorithms, not secrets.
+	pattern(`^\s*trapsess\s(?:.*\s)?(?-i:-c)\s+` + value),
+	pattern(`^\s*trapsess\s(?:.*\s)?(?-i:-A)\s+` + value),
+	pattern(`^\s*trapsess\s(?:.*\s)?(?-i:-X)\s+` + value),
+	// secret=<value>  (/etc/tacplus_servers). The value runs to the end of the line and may hold spaces.
+	pattern(boundary + `secret=(.*\S)`),
 
 	// Catch-all: any quoted value on a line JunOS marks as secret. Covers
 	// secret-bearing statements that have no specific pattern above.
