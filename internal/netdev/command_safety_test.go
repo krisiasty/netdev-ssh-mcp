@@ -393,9 +393,6 @@ func TestNormalizeOperationalCommandFilterErrorListsFilters(t *testing.T) {
 	}
 }
 
-// Without device_type a command is checked against every platform before
-// detection: one that some platform accepts passes, one that none accepts
-// fails.
 // A command starting with "get" can only be FortiOS, so its error is the
 // FortiOS one rather than EOS's "must start with 'show'".
 func TestCheckCommandOnAnyPlatformGetUsesFortiOSError(t *testing.T) {
@@ -413,6 +410,9 @@ func TestCheckCommandOnAnyPlatformGetUsesFortiOSError(t *testing.T) {
 	}
 }
 
+// Without device_type a command is checked against every platform before
+// detection: one that some platform accepts passes, one that none accepts
+// fails.
 func TestCheckCommandOnAnyPlatformFilters(t *testing.T) {
 	for _, command := range []string{"show logging | last 50", "show version | display json", "get system interface | grep port1", "show ip route | count via"} {
 		if err := checkCommandOnAnyPlatform(command); err != nil {
