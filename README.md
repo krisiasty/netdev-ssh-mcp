@@ -144,8 +144,8 @@ separated by spaces. The server appends `2>&1` itself so that error messages are
 
 On the other platforms, the command must be a single line holding a single command (no `;`), must start with the
 verb in lower case (`show`, or `get` on FortiOS), may not use `<` or `>` redirection or the shell syntax `` ` ``,
-`$(`, `${` and `&`, and may only pipe into output filters. Filters that write files, send messages or run other
-commands (such as `save`, `redirect`, `tee` and `append`) are refused.
+`$(`, `${` and `&`, and may only pipe into output filters, named in lower case. Filters that write files, send
+messages or run other commands (such as `save`, `redirect`, `tee` and `append`) are refused.
 
 Each word after a filter's name may contain only letters, digits and `. _ : / , @ % ^ * + ? = -`, may not start with
 `-`, `*` or `?`, and may use `$` only as its last character, so `| include up$` and `| include ^Gi.*up` work. Words

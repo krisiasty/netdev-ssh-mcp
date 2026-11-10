@@ -74,10 +74,12 @@ So a report need not re-cover this ground:
 - `run_show_command` accepts a single command on a single line that starts with
   the verb in lower case — no control characters, no `;`, no `<`/`>`
   redirection, and none of the shell syntax `` ` ``, `$(`, `${` and `&` — and
-  pipes only into a per-platform allowlist of output filters. Every word after a
-  filter's name must match an allowlist of characters (letters, digits and
-  `. _ : / , @ % ^ * + ? = -`, with `$` only as the last character) and must not
-  start with `-`, `*` or `?`, so bash cannot expand it into anything but itself.
+  pipes only into a per-platform allowlist of output filters, named in lower
+  case. Every word after a filter's name must match an allowlist of characters
+  (letters, digits and `. _ : / , @ % ^ * + ? = -`, with `$` only as the last
+  character) and must not start with `-`, `*` or `?`, so it cannot start a
+  command or expand to a leading `-`. A glob after the first character (`x*`,
+  `/etc/*`) can still expand to file names with the same prefix.
   Ping and traceroute arguments are limited to letters, digits and
   `. _ : / @ % -`. Refused input never reaches the device.
 - On Cumulus Linux 4.x (`cumulus4x`) bash runs the command, so the checks are
@@ -107,9 +109,12 @@ Known limits of the Cumulus Linux support:
   caller then passes a wrong explicit `device_type`, bash runs a command that
   passed only that platform's checks. It cannot start another command or pass
   an option, but several allowed filters are Linux programs (`grep`, `egrep`,
-  `head` and `last`), so files named as plain arguments, as in
-  `| grep x /etc/foo` or a glob such as `/etc/*`, can be read if the device
-  account can read them. That output is obfuscated like any other.
+  `head`, and `last`, listed to be safe although it reads only its default log
+  without `-f`). Files named as plain arguments, as in `| grep x /etc/foo` or a
+  glob such as `/etc/*`, can be read if the device account can read them; that
+  output is obfuscated like any other. `grep` and `head` can also be pointed at
+  large or endless input (`/dev/zero`, deep globs), which runs until the command
+  timeout.
 - Nothing has been tested on a real Cumulus Linux 4.3 switch; the support is
   built from vendor documentation and sample output.
 

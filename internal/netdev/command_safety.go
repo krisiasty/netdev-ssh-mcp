@@ -73,9 +73,11 @@ const shellSyntaxList = "'`', '$(', '${' or '&'"
 // filterArgPattern is what a word after a pipe filter's name may be. On a
 // Linux system such as Cumulus Linux bash runs the command, and several
 // filters (grep, egrep, head, last) are also Linux programs, so a word must
-// stay a literal argument after bash expands it: no quotes, backslashes,
-// brackets, braces, "~" or parameters. "$" is allowed only as the last
-// character, where bash leaves it alone, for regex anchors such as "up$".
+// not be able to start a command or expand to a leading "-": no quotes,
+// backslashes, brackets, braces, "~" or parameters. "$" is allowed only as
+// the last character, where bash leaves it alone, for regex anchors such as
+// "up$". A glob after the first character ("x*", "/etc/*") can still expand
+// to file names with the same prefix.
 var filterArgPattern = regexp.MustCompile(`^[A-Za-z0-9._:/,@%^*+?=-]+\$?$`)
 
 const filterArgChars = "letters, digits and . _ : / , @ % ^ * + ? = -"
@@ -83,8 +85,8 @@ const filterArgChars = "letters, digits and . _ : / , @ % ^ * + ? = -"
 // checkOperationalCommand verifies that command is a single line holding a
 // single command (no ";"), starts with verb exactly (lower case) as a whole
 // word, uses no redirection or shell syntax, and pipes only into filters
-// allowed for the platform, each argument of which matches filterArgPattern
-// and does not start with "-", "*" or "?".
+// allowed for the platform, named exactly (lower case), each argument of
+// which matches filterArgPattern and does not start with "-", "*" or "?".
 func checkOperationalCommand(command, verb string, dt deviceType) error {
 	for _, r := range command {
 		if unicode.IsControl(r) || r == ' ' || r == ' ' {
@@ -126,8 +128,13 @@ func checkOperationalCommand(command, verb string, dt deviceType) error {
 		if len(words) == 0 {
 			return fmt.Errorf("empty pipe in command")
 		}
-		filter := strings.ToLower(words[0])
+		// The name must match exactly, like the verb: on a Linux system
+		// HEAD and GET are lwp-request, which fetches URLs.
+		filter := words[0]
 		if !slices.Contains(allowed, filter) {
+			if slices.Contains(allowed, strings.ToLower(filter)) {
+				return fmt.Errorf("pipe filter '| %s' must be in lower case", filter)
+			}
 			return fmt.Errorf("pipe '| %s' is not allowed; allowed filters: %s", filter, strings.Join(allowed, ", "))
 		}
 		for _, arg := range words[1:] {
@@ -141,7 +148,10 @@ func checkOperationalCommand(command, verb string, dt deviceType) error {
 			}
 		}
 		if dt == deviceTypeJunos && filter == "display" &&
-			(len(words) != 2 || !slices.Contains(junosDisplayFormats, strings.ToLower(words[1]))) {
+			(len(words) != 2 || !slices.Contains(junosDisplayFormats, words[1])) {
+			if len(words) == 2 && slices.Contains(junosDisplayFormats, strings.ToLower(words[1])) {
+				return fmt.Errorf("'| display' format must be in lower case")
+			}
 			return fmt.Errorf("'| display' must be followed by one of: %s", strings.Join(junosDisplayFormats, ", "))
 		}
 	}

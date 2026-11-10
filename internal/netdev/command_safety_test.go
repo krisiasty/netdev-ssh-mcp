@@ -204,6 +204,30 @@ func TestNormalizeOperationalCommandRequiresLowerCaseVerb(t *testing.T) {
 	}
 }
 
+// A filter name must match exactly in lower case, like the verb: on a Linux
+// system HEAD and GET are lwp-request, which fetches URLs.
+func TestNormalizeOperationalCommandRequiresLowerCaseFilter(t *testing.T) {
+	tests := []struct {
+		dt      deviceType
+		command string
+	}{
+		{deviceTypeNXOS, "show version | HEAD http://192.0.2.1/"},
+		{deviceTypeNXOS, "show version | GREP x"},
+		{deviceTypeFortiOS, "get system status | GREP x"},
+		{deviceTypeEOS, "show version | Include x"},
+		{deviceTypeIOS, "show version | Include x"},
+		{deviceTypeJunos, "show version | MATCH x"},
+		{deviceTypeJunos, "show version | Display json"},
+		{deviceTypeJunos, "show version | display JSON"},
+	}
+	for _, tt := range tests {
+		got, err := normalizeOperationalCommand(tt.command, tt.dt)
+		if err == nil || !strings.Contains(err.Error(), "lower case") {
+			t.Errorf("normalizeOperationalCommand(%q, %q) = %q, %v; want error containing %q", tt.command, tt.dt, got, err, "lower case")
+		}
+	}
+}
+
 // JunOS "| find" is not allowed: on a Linux system it is find(1), which can
 // run programs and delete files.
 func TestNormalizeOperationalCommandRefusesJunosFind(t *testing.T) {

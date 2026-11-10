@@ -122,7 +122,7 @@ func main() {
 			"Append '| json' for structured output (Arista/Cisco), or '| no-more' to disable pagination. " +
 			"The command must be a single line holding one command, start with the verb in lower case ('show', or 'get' on FortiOS), " +
 			"have no ';', '<'/'>' redirection, or the shell syntax '`', '$(', '${' and '&', " +
-			"and may only pipe into output filters such as include, exclude, begin, section, count, grep, match or display json; " +
+			"and may only pipe into output filters, named in lower case, such as include, exclude, begin, section, count, grep, match or display json; " +
 			"pipes that write files or run other commands are refused. " +
 			"Each word after a filter's name may contain only letters, digits and . _ : / , @ % ^ * + ? = -, must not start with '-', '*' or '?', " +
 			"and may use '$' only as its last character (for example '| include up$'); quotes, brackets, braces and backslashes are not accepted, " +
