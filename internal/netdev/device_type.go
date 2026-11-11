@@ -115,12 +115,15 @@ var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, 
 // supported platform would accept, so it fails before detection logs in to
 // the device. The platform's own check still runs once the type is known.
 func checkCommandOnAnyPlatform(command string) error {
-	// Only Cumulus commands start with "net", and only FortiOS commands with
+	// Only Cumulus commands start with "net" or "nv", and only FortiOS commands with
 	// "get"; that platform's error is the useful one.
 	first, _, _ := strings.Cut(strings.TrimSpace(command), " ")
 	switch {
 	case first == "net":
 		_, err := normalizeCumulusCommand(strings.TrimSpace(command))
+		return err
+	case first == "nv":
+		_, err := normalizeCumulus5Command(strings.TrimSpace(command))
 		return err
 	case strings.EqualFold(first, "get"):
 		_, err := normalizeOperationalCommand(command, deviceTypeFortiOS)
@@ -148,6 +151,9 @@ func normalizeOperationalCommand(command string, dt deviceType) (string, error) 
 
 	if dt == deviceTypeCumulus4x {
 		return normalizeCumulusCommand(trimmed)
+	}
+	if dt == deviceTypeCumulus5x {
+		return normalizeCumulus5Command(trimmed)
 	}
 	if dt == deviceTypeFortiOS {
 		return normalizeFortiOSOperationalCommand(trimmed, lower)

@@ -111,7 +111,7 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_show_command",
 		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x device via SSH and run an operational read command. " +
-			"Arista/Cisco/JunOS commands must start with 'show'. FortiOS commands must start with 'get'. Cumulus Linux 4.x commands must start with 'net show'. " +
+			"Arista/Cisco/JunOS commands must start with 'show'. FortiOS commands must start with 'get'. Cumulus Linux 4.x commands must start with 'net show', Cumulus Linux 5.x commands with 'nv show'. " +
 			deviceTypeGuidance +
 			"Running-config and startup-config are not allowed here — use the get_config tool instead. " +
 			"On JunOS, 'show configuration' is also blocked and redirected to get_config. " +
@@ -119,6 +119,10 @@ func main() {
 			"On Cumulus Linux 4.x, 'net show configuration', 'net show commit' and 'net show rollback' (or any abbreviation of them) are blocked and redirected to get_config, " +
 			"the command may end with 'json' for structured output, takes no pipes or redirection, and its words may contain only " +
 			"letters, digits and . _ : / , @ % -. " +
+			"On Cumulus Linux 5.x the command must start with 'nv show', may end with '-o json' for structured output (no other option is accepted), " +
+			"takes no pipes or redirection, and its words may contain only the same characters. " +
+			"'nv show system config' is blocked and redirected to get_config, and so are paths that point into a secret " +
+			"(SNMP communities, SNMPv3 passwords, and password, secret or md5-key leaves); use get_config or show the parent path with -o json instead. " +
 			"On the other platforms the command must be a single line holding one command, start with the verb in lower case ('show', or 'get' on FortiOS), " +
 			"and have no ';' or '<'/'>' redirection; its words may contain only letters, digits and . _ : / , @ % + = ^ $ -. " +
 			"It may pipe only into these filters, written exactly in lower case, where N is a number of up to 6 digits and W is one plain word: " +
@@ -132,7 +136,7 @@ func main() {
 			"when no filter fits, run the command without one and extract what you need from the full output. " +
 			"Examples: 'show bgp summary | json', 'show interfaces status | json', " +
 			"'show lldp neighbors detail | json', 'show inventory | json', 'show version | json', " +
-			"'get system status', 'get router info routing-table all', 'net show interface json'.",
+			"'get system status', 'get router info routing-table all', 'net show interface json', 'nv show interface -o json'.",
 	}, netdev.RunShowCommand)
 
 	mcp.AddTool(server, &mcp.Tool{
