@@ -236,7 +236,7 @@ options within the same SSH session. On Cumulus Linux (4.x and 5.x) it runs Linu
 | `vrf` | string | no | — | VRF name |
 | `size` | int | no | — | Packet size in bytes |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
-| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`, `cumulus5x`; sets ping syntax |
+| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`, `cumulus5x` |
 
 `destination`, `source`, `vrf` and `outgoing_interface` may only contain
 letters, digits and `. _ : / @ % -`, which covers addresses, hostnames and
@@ -282,7 +282,7 @@ Linux `traceroute [--no-vrf-switch] [-m max_hops] [-w timeout] [-q probe] [-s so
 | `source` | string | no | — | Source IP address or interface name |
 | `vrf` | string | no | — | VRF name |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
-| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`, `cumulus5x`; sets syntax |
+| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`, `cumulus5x` |
 
 The same character restrictions as `run_ping` apply to `destination`, `source`,
 `vrf` and `outgoing_interface`.
