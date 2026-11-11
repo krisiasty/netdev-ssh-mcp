@@ -47,8 +47,10 @@ or a command joined with `;`) before detection logs in to the device.
 
 When a command fails, the error names the command and its exit status and, if the device rejected the syntax, says so.
 It never includes what the device printed: that output is untrusted, can contain secrets, and would bypass the
-obfuscation applied to successful output. The one exception is `run_ping` and `run_traceroute` on Cumulus Linux,
-where Linux states the reason only in the output and the output holds no secrets; there it follows the exit status.
+obfuscation applied to successful output. There are two exceptions on Cumulus Linux, where the reason is stated only
+in the output. For `run_ping` and `run_traceroute` the output holds no secrets, and it follows the exit status. For a
+failed `run_show_command` or `get_config` on Cumulus Linux 5.x, the error includes the output of `nv` (NVUE's message),
+with terminal escape sequences removed and obfuscation applied first.
 
 Some platforms are recognised and refused. The Cisco Business switch OS is recognised from the SSH identification
 string before any command runs; Linux systems are identified by the `/etc/os-release` probe. Unsupported results are
@@ -167,7 +169,8 @@ by spaces. The server appends `2>&1` itself. `nv set`, `nv config` (other than t
   and `md5-key`, and any word containing `password` or `secret`. NVUE accepts an unambiguous abbreviation of a path
   word, so an abbreviation (any prefix) of one of those words is refused too.
 - `nv show system config` and its abbreviations, such as `nv show sys conf`, are refused: use `get_config`.
-- When `nv` fails, the result is the error message NVUE prints, after obfuscation, instead of only the exit status.
+- When `nv` fails (here or in `get_config`), the result is the error message NVUE prints, after obfuscation, instead
+  of only the exit status.
   Terminal escape sequences (colour, bold) are removed from `nv` output.
 
 > **Preliminary.** The Cumulus Linux 5.x support is built from NVIDIA's documentation and has not been tested on a 5.x
@@ -233,7 +236,7 @@ options within the same SSH session. On Cumulus Linux (4.x and 5.x) it runs Linu
 | `vrf` | string | no | — | VRF name |
 | `size` | int | no | — | Packet size in bytes |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
-| `device_type` | string | no | detected | Device type, as for `get_config`; sets ping syntax |
+| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`, `cumulus5x`; sets ping syntax |
 
 `destination`, `source`, `vrf` and `outgoing_interface` may only contain
 letters, digits and `. _ : / @ % -`, which covers addresses, hostnames and
@@ -279,7 +282,7 @@ Linux `traceroute [--no-vrf-switch] [-m max_hops] [-w timeout] [-q probe] [-s so
 | `source` | string | no | — | Source IP address or interface name |
 | `vrf` | string | no | — | VRF name |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
-| `device_type` | string | no | detected | Device type, as for `get_config`; sets syntax |
+| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`, `cumulus5x`; sets syntax |
 
 The same character restrictions as `run_ping` apply to `destination`, `source`,
 `vrf` and `outgoing_interface`.
