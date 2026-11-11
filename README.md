@@ -593,17 +593,17 @@ Restart Claude Desktop after editing the config.
 
 ## Obfuscation
 
-Sensitive values are obfuscated by default in `get_config` and
-`run_show_command` output. Besides each platform's configuration syntax, which includes the Cumulus Linux 4.x NCLU
-commands (BGP neighbor passwords, OSPF keys, SNMP communities and SNMPv3 keys, 802.1X RADIUS secrets) and the
-`snmpd.conf` and `/etc/tacplus_servers` syntax, JSON output is covered on every platform: the value under a key that
-names a secret (for example `password`, `secret`, `community` or `psk`, or any key containing `key` or `md5`, such as
-`tacacsKey` or `keyMaterial`) is replaced, including every key and value nested under such a key. The value is replaced
-whatever its form: a JSON string or number, a bare word that is not JSON, or a single-quoted string as in Python
-output; only `true`, `false` and `null` (and Python's `True`, `False` and `None`) are kept. Only `keyId`,
-`keychain`, `keyChainName`, `keyType` and `keyAlgorithm` are kept, since they name a key rather than hold it. BGP community values in JSON output (for example `show ip bgp … | json` or
-`net show bgp … json`) are therefore hashed, because `community` is a secret key name; text output keeps them.
-The `run_ping` and `run_traceroute` tools are not affected — their output contains no sensitive values.
+Sensitive values are obfuscated by default in `get_config` and `run_show_command` output. Besides each platform's
+configuration syntax, which includes the Cumulus Linux 4.x NCLU commands (BGP neighbor passwords, OSPF keys, SNMP
+communities and SNMPv3 keys, 802.1X RADIUS secrets) and the `snmpd.conf` and `/etc/tacplus_servers` syntax, JSON output
+is covered on every platform: the value under a key that names a secret (for example `password`, `secret`, `community`
+or `psk`, or any key containing `key` or `md5`, such as `tacacsKey` or `keyMaterial`) is replaced, including every key
+and value nested under such a key. The value is replaced whatever its form: a JSON string or number, a bare word that is
+not JSON, or a single-quoted string as in Python output; only `true`, `false` and `null` (and Python's `True`, `False`
+and `None`) are kept. Only `keyId`, `keychain`, `keyChainName`, `keyType` and `keyAlgorithm` are kept, since they name a
+key rather than hold it. BGP community values in JSON output (for example `show ip bgp … | json` or `net show bgp …
+json`) are therefore hashed, because `community` is a secret key name; text output keeps them. The `run_ping` and
+`run_traceroute` tools are not affected — their output contains no sensitive values.
 
 Each secret is replaced with a token of the form `[h:<12 hex digits>]`: a
 truncated HMAC-SHA256 of the secret under an obfuscation key. Without the key,
