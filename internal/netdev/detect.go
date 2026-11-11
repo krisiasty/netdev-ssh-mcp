@@ -174,7 +174,7 @@ var versionPatterns = map[deviceType]*regexp.Regexp{
 var (
 	osReleaseCumulusRe   = regexp.MustCompile(`(?m)^ID="?cumulus-linux"?\r?$`)
 	osReleaseVersionRe   = versionPatterns[deviceTypeCumulus4x]
-	osReleaseVersion4xRe = regexp.MustCompile(`(?m)^VERSION_ID="?4\.`)
+	osReleaseVersion4xRe = regexp.MustCompile(`(?m)^VERSION_ID="?4\.[\w.+~-]*"?\r?$`)
 )
 
 // matchOSRelease decides whether the output of probeOSRelease is Cumulus
@@ -457,15 +457,26 @@ func explicitTypeHint(r resolvedType) string {
 // detected type may be wrong, so it was forgotten.
 const detectedRejectedNotice = "The device rejected the command syntax. The detected device_type was forgotten, so the next call without device_type detects the platform again."
 
+// detectedMismatchNotice explains a refused Linux SSH server after detection:
+// the detected type no longer describes the server at that address, so it
+// was forgotten rather than suggested for later calls.
+const detectedMismatchNotice = "The detected device_type does not match this SSH server, so it was forgotten; the next call without device_type detects the platform again."
+
 // afterRun inspects a command's outcome. A syntax error on a detected type
 // drops the cached detection so the next call probes again; on an explicit
-// type it yields a hint. It returns the notices to append to the result.
+// type it yields a hint. A detected type whose server was refused as an
+// unsupported platform (refuseLinuxServer) is dropped too, and is not
+// suggested for later calls. It returns the notices to append to the result.
 func afterRun(cfg sshclient.ConnConfig, r resolvedType, output string, runErr error) []mcp.Content {
 	syntaxErr := rejectedSyntax(output, runErr)
 
 	var notices []mcp.Content
 	switch r.source {
 	case sourceProbe, sourceCache:
+		if errors.Is(runErr, errUnsupportedPlatform) {
+			forgetType(cacheKey(cfg.Host, cfg.Port))
+			return []mcp.Content{&mcp.TextContent{Text: detectedMismatchNotice}}
+		}
 		notices = append(notices, &mcp.TextContent{Text: detectedNotice(r)})
 		if syntaxErr {
 			forgetType(cacheKey(cfg.Host, cfg.Port))

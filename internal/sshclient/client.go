@@ -401,7 +401,8 @@ type CommandError struct {
 	ExitStatus int
 	// Output is what the device wrote to stderr followed by stdout. Treat it
 	// as untrusted and do not show it to callers, except for a cumulus4x
-	// ping or traceroute that exited with status 1, whose output is the result.
+	// ping that exited with status 1 (no reply), whose output is the result.
+	// A traceroute's output is never returned this way.
 	Output []byte
 }
 

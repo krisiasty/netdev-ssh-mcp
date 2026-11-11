@@ -8,30 +8,44 @@ import (
 
 // secretJSONKeyWords are the words that mark a JSON key as holding a secret.
 // isSecretJSONKey matches them anywhere in a key, after lower-casing it and
-// removing "-" and "_", so "snmpCommunity", "community-password" and
-// "shared_secret" all match. The plural "communities" does not contain
-// "community", so it is listed separately.
+// removing "-" and "_", so "snmpCommunity", "community-password",
+// "shared_secret", "tacacsKey", "keyMaterial" and "md5Hash" all match. The
+// plural "communities" does not contain "community", so it is listed
+// separately. "key" and "md5" fail closed: a key name containing them is
+// secret unless it is one of nonSecretJSONKeys.
 var secretJSONKeyWords = []string{
 	"password", "passwd", "passphrase", "secret", "community", "communities", "psk", "preshared",
-	"keystring", "authenticationkey", "authkey", "md5key", "privacy",
+	"privacy", "key", "md5",
 }
+
+// nonSecretJSONKeys are whole key names, after the same normalisation, that
+// contain "key" but name a key's ID, key chain or algorithm rather than the
+// key itself, so they stay readable for troubleshooting. Any other name
+// containing "key" or "md5" is secret.
+var nonSecretJSONKeys = []string{"keyid", "keychain", "keychainname", "keytype", "keyalgorithm"}
 
 var jsonKeySeparators = strings.NewReplacer("-", "", "_", "")
 
 // isSecretJSONKey reports whether a JSON object key names a secret value.
 func isSecretJSONKey(key string) bool {
 	k := jsonKeySeparators.Replace(strings.ToLower(key))
-	return slices.ContainsFunc(secretJSONKeyWords, func(w string) bool { return strings.Contains(k, w) })
+	return !slices.Contains(nonSecretJSONKeys, k) &&
+		slices.ContainsFunc(secretJSONKeyWords, func(w string) bool { return strings.Contains(k, w) })
 }
 
 // decodeJSONKey returns the text of the quoted JSON string quoted with its
 // escapes decoded, so an escaped key such as "pa\u0073sword" is classified
 // as the "password" it is. A string that does not decode, such as one with an
-// invalid escape, is returned without its quotes as written.
+// invalid escape, is returned without its quotes as written. Only a string
+// with a backslash has escapes, so any other is returned without decoding.
 func decodeJSONKey(quoted string) string {
+	raw := quoted[1 : len(quoted)-1]
+	if !strings.Contains(raw, `\`) {
+		return raw
+	}
 	var key string
 	if err := json.Unmarshal([]byte(quoted), &key); err != nil {
-		return quoted[1 : len(quoted)-1]
+		return raw
 	}
 	return key
 }

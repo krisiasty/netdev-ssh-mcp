@@ -62,8 +62,6 @@ var sensitivePatterns = []sensitivePattern{
 	pattern(`^\s*snmp-server\s+user\s+.*?\spriv(?:\s+(?:aes-?\d+|aes|3des|des|\d{3}))*\s+` + value),
 	// Community name: <value> / Community: <value>  (show snmp community output)
 	pattern(`^\s*Community(?:\s+name)?:\s+` + value),
-	// neighbor IP|GROUP password [type] <value>  (BGP, Arista, Cisco)
-	pattern(`^\s*neighbor\s+\S+\s+password` + typeTokens + `\s+` + value),
 	// tacacs-server|radius-server [host IP [options]] key [type] <value>  (Arista, Cisco)
 	pattern(`^\s*(?:tacacs|radius)-server\s+(?:host\s+\S+\s+(?:\S+\s+)*?)?key` + typeTokens + `\s+` + value),
 	// key <type> <value> in a tacacs/radius server block  (Cisco IOS-XE)
@@ -126,7 +124,8 @@ var sensitivePatterns = []sensitivePattern{
 	pattern(`^\s*set\s+(?:passwd|password|passphrase|auth-passwd|group-password|psksecret(?:-remote|-local)?|ppk-secret|secret|private-key|local-key|peer-key|server-key|client-key|key)\s+` + quoted),
 
 	// Cumulus Linux 4.x: NCLU commands and block form
-	// [net add ...] neighbor IP|IFACE|GROUP password [type] <value>  (BGP)
+	// [net add ...] neighbor IP|IFACE|GROUP password [type] <value>  (BGP; also
+	// Arista and Cisco, which have no prefix)
 	pattern(boundary + `neighbor\s+\S+\s+password` + typeTokens + `\s+` + value),
 	// [net add ...] ospf message-digest-key ID ALGO <value>  (OSPF)
 	pattern(boundary + `ospf\s+message-digest-key\s+\d+\s+\S+` + typeTokens + `\s+` + value),

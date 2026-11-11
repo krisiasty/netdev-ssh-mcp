@@ -73,16 +73,18 @@ var filterForms = map[deviceType][]string{
 	deviceTypeFortiOS: {"grep W"},
 }
 
-// shellSyntax lists the shell constructs refused in run_show_command on every
-// platform: command substitution, braces (parameter and brace expansion;
-// "show {1..99999999}" makes bash build the whole list in memory) and "&"
-// (background job, "&&"). The verb's arguments are not limited to plain
-// words, so this is what keeps them from starting another command or
-// exhausting memory; in filter arguments plainWordPattern excludes them as
-// well.
-var shellSyntax = []string{"`", "$(", "{", "}", "&"}
+// commandWordPattern is what every word of a run_show_command command may
+// contain, on every platform: the plainWordPattern characters plus "^" and
+// "$", so that anchored regexes such as "show ip bgp regexp ^65000_" work.
+// On a Linux system bash runs the command, so everything else bash gives a
+// meaning to is excluded: quotes, backslashes, "`", "&", parentheses,
+// brackets, braces (brace expansion; "{1..99999999}" exhausts memory), globs
+// ("*", "?") and "~", "!" and "#". A "$" can then only expand a variable,
+// which reaches nothing but the argument list of a program that does not
+// exist. Filter arguments are limited further, to plainWordPattern.
+var commandWordPattern = regexp.MustCompile(`^[A-Za-z0-9._:/,@%+=^$-]+$`)
 
-const shellSyntaxList = "'`', '$(', '{', '}' or '&'"
+const commandWordRule = "letters, digits and . _ : / , @ % + = ^ $ -"
 
 func isPlainWord(w string) bool {
 	return plainWordPattern.MatchString(w) && !strings.HasPrefix(w, "-")
@@ -121,7 +123,8 @@ func matchesForm(words []string, form string) bool {
 }
 
 // checkOperationalCommand verifies that command is a single line holding a
-// single command (no ";"), uses no redirection or shell syntax, starts with
+// single command (no ";"), uses no redirection, has only commandWordPattern
+// characters in its words, starts with
 // verb exactly (lower case) as a whole word, and pipes only into the
 // platform's filterForms. The command is split on "|" first, so "|" need not
 // be surrounded by spaces, and each part is then split on spaces.
@@ -141,15 +144,16 @@ func checkOperationalCommand(command, verb string, dt deviceType) error {
 	if strings.ContainsAny(command, "<>") {
 		return fmt.Errorf("command must not use redirection ('<' or '>')")
 	}
+	segments := strings.Split(command, "|")
 	// On a Linux system such as Cumulus Linux a shell runs the command, so a
-	// wrong device_type must not let shell substitution or "&" through.
-	for _, s := range shellSyntax {
-		if strings.Contains(command, s) {
-			return fmt.Errorf("command must not use shell syntax (%s)", shellSyntaxList)
+	// wrong device_type must not let any shell syntax through.
+	for _, seg := range segments {
+		for _, w := range spaceSeparated(seg) {
+			if !commandWordPattern.MatchString(w) {
+				return fmt.Errorf("command words may only contain %s; quotes, brackets, braces, globs and other shell syntax are not allowed", commandWordRule)
+			}
 		}
 	}
-
-	segments := strings.Split(command, "|")
 	words := spaceSeparated(segments[0])
 	if len(words) == 0 || !strings.EqualFold(words[0], verb) {
 		return fmt.Errorf("command must start with '%s'", verb)
@@ -159,10 +163,9 @@ func checkOperationalCommand(command, verb string, dt deviceType) error {
 	if words[0] != verb {
 		return fmt.Errorf("command must start with '%s' in lower case", verb)
 	}
-	// The verb's own arguments are not limited to plain words, so that
-	// commands such as "show ip bgp regexp ^65000_" work: on a Linux system
-	// they only reach a "show" or "get" program that does not exist, and the
-	// checks above already stop them from starting another command.
+	// The verb's own arguments may also hold "^" and "$", so that commands
+	// such as "show ip bgp regexp ^65000_" work: on a Linux system they only
+	// reach a "show" or "get" program that does not exist.
 
 	forms := filterForms[dt]
 	for _, seg := range segments[1:] {

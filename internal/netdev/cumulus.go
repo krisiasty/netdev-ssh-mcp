@@ -29,12 +29,7 @@ var cumulusBlockedFamilies = []string{"configuration", "commit", "rollback"}
 // "net show" command that bash cannot split into anything else, and appends
 // cumulusMergeStderr. The returned command is otherwise exactly as written.
 func normalizeCumulusCommand(command string) (string, error) {
-	var words []string
-	for _, w := range strings.Split(command, " ") {
-		if w != "" {
-			words = append(words, w)
-		}
-	}
+	words := spaceSeparated(command)
 	for _, w := range words {
 		if !cumulusWordPattern.MatchString(w) {
 			return "", fmt.Errorf("command may only contain letters, digits and . _ : / , @ %% - in words separated by spaces")

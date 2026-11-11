@@ -73,7 +73,8 @@ So a report need not re-cover this ground:
 
 - `run_show_command` accepts a single command on a single line that starts with
   the verb in lower case — no control characters, no `;`, no `<`/`>`
-  redirection, no braces, and none of the shell syntax `` ` ``, `$(` and `&` — and
+  redirection, and words of only letters, digits and `. _ : / , @ % + = ^ $ -`,
+  so no quotes, brackets, braces, globs or other shell syntax — and
   pipes only into a short per-platform list of filter forms, matched exactly
   in lower case: each filter takes no argument, a fixed keyword
   (`display json`, `head lines N`), a number of up to 6 digits, or one plain

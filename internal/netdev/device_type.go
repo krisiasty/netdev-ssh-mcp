@@ -153,13 +153,21 @@ func normalizeOperationalCommand(command string, dt deviceType) (string, error) 
 	if err := checkOperationalCommand(trimmed, "show", dt); err != nil {
 		return "", err
 	}
-	// Runs of spaces are collapsed so that "show  running-config" is
-	// redirected too; the command itself is sent as written.
-	collapsed := strings.Join(spaceSeparated(lower), " ")
-	if strings.HasPrefix(collapsed, "show ru") || strings.HasPrefix(collapsed, "show sta") {
+	// The second word is checked on its own, so runs of spaces do not hide
+	// it; the command itself is sent as written. "star" is the shortest
+	// abbreviation of startup-config that does not also abbreviate show
+	// standby, stacks or statistics.
+	words := spaceSeparated(strings.Split(lower, "|")[0])
+	second := ""
+	if len(words) > 1 {
+		second = words[1]
+	}
+	if strings.HasPrefix(second, "ru") || strings.HasPrefix(second, "star") {
 		return "", fmt.Errorf("use the get_config tool for running-config and startup-config")
 	}
-	if dt == deviceTypeJunos && strings.HasPrefix(collapsed, "show configuration") {
+	// The JunOS CLI accepts any unambiguous abbreviation of "configuration"
+	// ("show conf"); "con" and shorter are ambiguous there.
+	if dt == deviceTypeJunos && len(second) >= 4 && strings.HasPrefix("configuration", second) {
 		return "", fmt.Errorf("use the get_config tool to retrieve device configuration")
 	}
 

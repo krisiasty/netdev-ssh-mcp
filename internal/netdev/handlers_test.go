@@ -873,3 +873,41 @@ func TestLinuxServerRefusalReachesCaller(t *testing.T) {
 		})
 	}
 }
+
+// TestLinuxServerRefusalForgetsDetectedType checks that a cached detection
+// refused by refuseLinuxServer is forgotten, and that the error does not tell
+// the caller to pass the type that no longer fits the SSH server.
+func TestLinuxServerRefusalForgetsDetectedType(t *testing.T) {
+	origOne, origMany := runCommand, runCommands
+	t.Cleanup(func() { runCommand, runCommands = origOne, origMany })
+	refuse := func(cfg sshclient.ConnConfig) (string, error) {
+		if cfg.CheckServerVersion == nil {
+			return "", nil
+		}
+		if err := cfg.CheckServerVersion(identCumulus); err != nil {
+			return "", fmt.Errorf("SSH server sw1:22: %w", err)
+		}
+		return "", nil
+	}
+	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, _ string) (string, error) { return refuse(cfg) }
+	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, _ []string) (string, error) { return refuse(cfg) }
+
+	for name, call := range commandToolCalls {
+		t.Run(name, func(t *testing.T) {
+			resetDetection(t)
+			key := cacheKey("sw1", 0)
+			storeType(key, resolvedType{dt: deviceTypeEOS, source: sourceProbe})
+
+			err := call(t.Context(), "")
+			if !errors.Is(err, errUnsupportedPlatform) {
+				t.Fatalf("error = %v, want errUnsupportedPlatform", err)
+			}
+			if strings.Contains(err.Error(), "Pass device_type=eos") || !strings.Contains(err.Error(), detectedMismatchNotice) {
+				t.Fatalf("error = %v, want the mismatch notice and no device_type suggestion", err)
+			}
+			if _, ok := cachedType(key); ok {
+				t.Fatal("cached type kept, want it forgotten")
+			}
+		})
+	}
+}

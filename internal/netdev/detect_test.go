@@ -513,6 +513,7 @@ func TestMatchOSRelease(t *testing.T) {
 		{name: "markers inside other lines", output: "NAME=\"ID=cumulus-linux\"\nPRETTY_NAME=VERSION_ID=4.3\n", wantErr: "not Cumulus Linux 4.x"},
 		{name: "version marker inside another line", output: "ID=cumulus-linux\nVERSION_ID=5.4.0\nHOME_URL_VERSION_ID=4.3\n", wantErr: "Cumulus Linux 5.4.0 is not supported"},
 		{name: "id prefix only", output: "ID=cumulus-linux-x\nVERSION_ID=4.3.0\n", wantErr: "not Cumulus Linux 4.x"},
+		{name: "version not a whole line", output: "ID=cumulus-linux\nVERSION_ID=4.junk extra text\n", wantErr: "not Cumulus Linux 4.x"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

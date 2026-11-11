@@ -129,8 +129,9 @@ get router info routing-table all
 net show interface json
 ```
 
-> `show running-config` and `show startup-config` are not allowed here — use
-> the `get_config` tool instead.
+> `show running-config` and `show startup-config` (and their abbreviations, such as `show run` or `show start`) are not
+> allowed here — use the `get_config` tool instead. On JunOS, `show configuration` and its abbreviations, such as
+> `show conf`, are refused too.
 >
 > On FortiOS, `show`, `config`, `execute`, and `diagnose` commands are blocked
 > here. Use `get_config`, `run_ping`, or `run_traceroute` instead.
@@ -143,9 +144,9 @@ every word must contain only letters, digits and `. _ : / , @ %` and `-`, no wor
 separated by spaces. The server appends `2>&1` itself so that error messages are returned.
 
 On the other platforms, the command must be a single line holding a single command (no `;`), must start with the
-verb in lower case (`show`, or `get` on FortiOS), and may not use `<` or `>` redirection, braces (`{`, `}`) or the
-shell syntax `` ` ``, `$(` and `&`. Words are separated by spaces. The words before the first `|` are otherwise free,
-so `show ip bgp regexp ^65000_` works.
+verb in lower case (`show`, or `get` on FortiOS), and may not use `<` or `>` redirection. Words are separated by
+spaces, and every word may contain only letters, digits and `. _ : / , @ % + = ^ $ -`, so quotes, brackets, braces,
+globs and other shell syntax are refused. `^` and `$` are there for regexes such as `show ip bgp regexp ^65000_`.
 
 After `|` (with or without spaces around it), only the filters below are accepted, written exactly as shown, in lower
 case. `W` is one plain word: letters, digits and `. _ : / , @ % + = -`, not starting with `-`. `N` is a number of up
@@ -580,8 +581,9 @@ Sensitive values are obfuscated by default in `get_config` and
 `run_show_command` output. Besides each platform's configuration syntax, which includes the Cumulus Linux 4.x NCLU
 commands (BGP neighbor passwords, OSPF keys, SNMP communities and SNMPv3 keys, 802.1X RADIUS secrets) and the
 `snmpd.conf` and `/etc/tacplus_servers` syntax, JSON output is covered on every platform: the value under a key that
-names a secret (for example `password`, `secret`, `community`, `psk` or `key-string`) is replaced, including every
-key and value nested under such a key. BGP community values in JSON output (for example `show ip bgp … | json` or
+names a secret (for example `password`, `secret`, `community` or `psk`, or any key containing `key` or `md5`, such as
+`tacacsKey` or `keyMaterial`) is replaced, including every key and value nested under such a key. Only `keyId`,
+`keychain`, `keyChainName`, `keyType` and `keyAlgorithm` are kept, since they name a key rather than hold it. BGP community values in JSON output (for example `show ip bgp … | json` or
 `net show bgp … json`) are therefore hashed, because `community` is a secret key name; text output keeps them.
 The `run_ping` and `run_traceroute` tools are not affected — their output contains no sensitive values.
 

@@ -105,6 +105,20 @@ func TestNormalizeOperationalCommand(t *testing.T) {
 		{name: "running-config spaces nxos", command: "show  run | include hostname", deviceType: deviceTypeNXOS, wantErr: "use the get_config tool"},
 		{name: "junos configuration with two spaces", command: "show  configuration", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
 		{name: "junos configuration with spaces and filter", command: "show   configuration | display set", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
+		{name: "running-config before pipe without space", command: "show run|include hostname", deviceType: deviceTypeEOS, wantErr: "use the get_config tool"},
+		{name: "startup-config abbreviated", command: "show start", deviceType: deviceTypeIOS, wantErr: "use the get_config tool"},
+		{name: "startup-config shortest abbreviation", command: "show star", deviceType: deviceTypeIOS, wantErr: "use the get_config tool"},
+		// Other commands that start with "sta" are not startup-config.
+		{name: "ios standby", command: "show standby brief", deviceType: deviceTypeIOS, want: "show standby brief"},
+		{name: "ios stacks", command: "show stacks", deviceType: deviceTypeIOS, want: "show stacks"},
+		{name: "ios statistics", command: "show statistics", deviceType: deviceTypeIOS, want: "show statistics"},
+		{name: "eos standby", command: "show standby", deviceType: deviceTypeEOS, want: "show standby"},
+		// JunOS accepts abbreviations of "configuration".
+		{name: "junos conf", command: "show conf", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
+		{name: "junos config", command: "show config | display set", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
+		{name: "junos configurat", command: "show configurat", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
+		{name: "junos connections", command: "show connections", deviceType: deviceTypeJunos, want: "show connections"},
+		{name: "eos show configuration sessions", command: "show configuration sessions", deviceType: deviceTypeEOS, want: "show configuration sessions"},
 	}
 
 	for _, tt := range tests {

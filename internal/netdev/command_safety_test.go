@@ -299,9 +299,9 @@ func TestNormalizeOperationalCommandRefusesFilters(t *testing.T) {
 	}
 }
 
-// The verb's own arguments, before the first "|", are not limited to plain
-// words (only filter arguments are), but shell syntax is still refused there
-// with its own message.
+// The verb's own arguments, before the first "|", may hold "^" and "$" for
+// regexes, which filter arguments may not, but every other character outside
+// commandWordPattern is refused there with its own message.
 func TestNormalizeOperationalCommandVerbArguments(t *testing.T) {
 	accepted := []struct {
 		dt      deviceType
@@ -310,6 +310,8 @@ func TestNormalizeOperationalCommandVerbArguments(t *testing.T) {
 		{deviceTypeIOS, "show ip bgp regexp ^65000_"},
 		{deviceTypeEOS, "show ip bgp regexp ^65000_"},
 		{deviceTypeEOS, "show ip bgp regexp ^65000_ | include 10.0.0.0/8"},
+		{deviceTypeIOS, "show ip bgp regexp _65000$"},
+		{deviceTypeNXOS, "show interface ethernet1/1-4,1/7 status"},
 		{deviceTypeEOS, "show interfaces | include up"},
 		{deviceTypeIOS, "show interfaces Gi0/1 | include up"},
 		{deviceTypeNXOS, "show interface Ethernet1/1 | include up"},
@@ -351,6 +353,18 @@ func TestNormalizeOperationalCommandVerbArguments(t *testing.T) {
 		{"a}", "shell syntax"},
 		{"x | include {a,b}", "shell syntax"},
 		{"x | include a}", "shell syntax"},
+		// Other shell syntax is refused by the allowlist, not by name.
+		{"$[1+1]", "shell syntax"},
+		{"~root", "shell syntax"},
+		{"/*/*/*", "shell syntax"},
+		{"a?", "shell syntax"},
+		{"'a b'", "shell syntax"},
+		{`"a b"`, "shell syntax"},
+		{`a\b`, "shell syntax"},
+		{"!1", "shell syntax"},
+		{"a#b", "shell syntax"},
+		{"(a)", "shell syntax"},
+		{"x | include ^a", "not allowed"},
 		// A "|" always starts a filter, even inside the verb's own regex.
 		{"ip bgp regexp a|b", "not allowed"},
 	}

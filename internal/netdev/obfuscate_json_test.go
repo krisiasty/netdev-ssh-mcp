@@ -158,13 +158,18 @@ func TestIsSecretJSONKey(t *testing.T) {
 	secret := []string{
 		"password", "PASSWD", "passPhrase", "clientSecret", "snmp_community", "psk", "pre-shared-key", "snmpCommunities",
 		"preSharedKey", "key-string", "keyString", "authentication-key", "authKey", "md5_key", "privacyProtocolKey",
+		"key", "KEY", "tacacsKey", "radius_key", "ospfKey", "keys", "md5", "authMd5",
+		// "key" and "md5" fail closed: any name holding them is secret
+		// unless it is listed in nonSecretJSONKeys.
+		"keyValue", "key_value", "keyData", "keyMaterial", "keyHex", "privateKeyPem", "md5Hash", "md5Digest",
+		"keyIdValue", "keychainKey",
 	}
 	for _, k := range secret {
 		if !isSecretJSONKey(k) {
 			t.Errorf("isSecretJSONKey(%q) = false, want true", k)
 		}
 	}
-	plain := []string{"keepalive", "authentication", "key", "description", "remoteAs", "privilege"}
+	plain := []string{"keepalive", "authentication", "description", "remoteAs", "privilege", "keyId", "key_id", "KeyChain", "key-chain-name", "keyType", "keyAlgorithm"}
 	for _, k := range plain {
 		if isSecretJSONKey(k) {
 			t.Errorf("isSecretJSONKey(%q) = true, want false", k)
@@ -191,6 +196,10 @@ func TestObfuscateRunsJSONAndLinePasses(t *testing.T) {
 			"{\n  \"communities\": [\n    \"<<FAKEone>>\",\n    \"<<FAKEtwo>>\"\n  ],\n  \"keepalive\": 60\n}",
 		},
 		{"crypt value in json", `"password": "<<$6$FAKEsalt$FAKEhash>>"`},
+		// Keys named after a bare key or md5, as the line patterns treat them.
+		{"tacacs key", `{"tacacsKey": "<<FAKEt>>"}`},
+		{"bare key", `{"key": "<<FAKEk>>"}`},
+		{"nested md5", `{"auth": {"md5": "<<FAKEm>>"}}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
