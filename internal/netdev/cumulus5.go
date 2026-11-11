@@ -1,10 +1,13 @@
 package netdev
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/krisiasty/netdev-ssh-mcp/internal/sshclient"
 )
 
 // cumulus5RefusedPathWords are the NVUE path words, besides any word that
@@ -186,4 +189,33 @@ func nvueRowSpans(line string, offset int) []span {
 		spans = append(spans, span{start: offset + w[0], end: offset + w[1]})
 	}
 	return spans
+}
+
+// ansiRe matches a CSI sequence: ESC [, parameters, then a final byte.
+var ansiRe = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]")
+
+// stripANSI removes CSI escape sequences and any remaining lone ESC, which
+// nv prints for bold or colour and which can split a secret row's words.
+func stripANSI(s string) string {
+	return strings.ReplaceAll(ansiRe.ReplaceAllString(s, ""), "\x1b", "")
+}
+
+// cumulus5CommandError adds the device output to the error of a failed
+// cumulus5x command, since nv states the reason only there. The output may
+// hold secrets, so it is obfuscated; if that fails the error is returned
+// unchanged. Call it after logging, so the output stays out of the log.
+func cumulus5CommandError(dt deviceType, err error) error {
+	var cmdErr *sshclient.CommandError
+	if dt != deviceTypeCumulus5x || !errors.As(err, &cmdErr) {
+		return err
+	}
+	out := strings.TrimSpace(stripANSI(string(cmdErr.Output)))
+	if out == "" {
+		return err
+	}
+	safe, _, oerr := obfuscate(out)
+	if oerr != nil {
+		return err
+	}
+	return fmt.Errorf("%w; device output:\n%s", err, safe)
 }

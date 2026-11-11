@@ -569,6 +569,9 @@ func TestLooksLikeSyntaxErrorCumulus(t *testing.T) {
 		{"-bash: show: command not found", true},
 		{"  ERROR: Command not found", true},
 		{"Description: ERROR: Command not found", false},
+		{"Error: Ambiguous Command:", true},
+		{"Ambiguous Command:", true},
+		{"Error: The requested item does not exist", false},
 	}
 	for _, tt := range tests {
 		if got := looksLikeSyntaxError(tt.text); got != tt.want {

@@ -377,7 +377,7 @@ const supportedDeviceTypes = "eos, ios, nxos, junos, fortios, cumulus4x or cumul
 
 // syntaxErrorRe matches the messages platforms print for a command they do
 // not understand, which is what running another platform's syntax produces.
-var syntaxErrorRe = regexp.MustCompile(`(?mi)^\s*(?:ERROR: Command not found|(?:-?bash: (?:line \d+: )?)?[\w.-]+: command not found|% ?Invalid (?:input|command)|% ?Incomplete command|% ?Ambiguous command|syntax error|unknown command|Unknown action|Command fail\.|command parse error)`)
+var syntaxErrorRe = regexp.MustCompile(`(?mi)^\s*(?:ERROR: Command not found|(?:-?bash: (?:line \d+: )?)?[\w.-]+: command not found|% ?Invalid (?:input|command)|% ?Incomplete command|% ?Ambiguous command|syntax error|unknown command|Unknown action|Command fail\.|command parse error|(?:Error: )?Ambiguous Command:)`)
 
 func looksLikeSyntaxError(text string) bool {
 	return syntaxErrorRe.MatchString(text)

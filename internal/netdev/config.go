@@ -52,9 +52,12 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 	out, err := runCommand(ctx, cfg, cmd)
 	if err != nil {
 		logFailure(ctx, "get_config", err, "host", args.Host)
-		return nil, nil, runError(ctx, "get_config", cfg, rt, err)
+		return nil, nil, runError(ctx, "get_config", cfg, rt, cumulus5CommandError(rt.dt, err))
 	}
 
+	if rt.dt == deviceTypeCumulus5x {
+		out = stripANSI(out)
+	}
 	res, err := obfuscatedResult(out)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get_config: %w", err)

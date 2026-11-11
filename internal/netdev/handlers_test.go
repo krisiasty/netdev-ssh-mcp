@@ -937,3 +937,55 @@ func TestResolveTargetCumulusSkipsLinuxCheck(t *testing.T) {
 		t.Fatalf("refuseLinuxServer() = %v", err)
 	}
 }
+
+func TestRunShowCommandCumulus5StripsEscapes(t *testing.T) {
+	stubRunCommand(t, "\x1b[1mpassword\x1b[0m   FAKEx\n", nil)
+	res, _, err := RunShowCommand(context.Background(), nil, RunShowCommandInput{Host: "sw1", Username: "u", Command: "nv show system aaa", DeviceType: "cumulus5x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := res.Content[0].(*mcp.TextContent).Text
+	if strings.Contains(text, "\x1b") || strings.Contains(text, "FAKEx") {
+		t.Errorf("result = %q, want no escape and no secret", text)
+	}
+}
+
+func TestCumulus5FailedCommandReturnsObfuscatedOutput(t *testing.T) {
+	cmdErr := &sshclient.CommandError{Command: "c", ExitStatus: 1, Output: []byte("Error: The requested item does not exist\npassword   FAKEy\n")}
+	calls := map[string]func(dt string) error{
+		"run_show_command": func(dt string) error {
+			_, _, err := RunShowCommand(context.Background(), nil, RunShowCommandInput{Host: "sw1", Username: "u", Command: "nv show system aaa", DeviceType: dt})
+			return err
+		},
+		"get_config": func(dt string) error {
+			_, _, err := GetConfig(context.Background(), nil, GetConfigInput{Host: "sw1", Username: "u", DeviceType: dt})
+			return err
+		},
+	}
+	for name, call := range calls {
+		for _, dt := range []string{"cumulus5x", "eos"} {
+			t.Run(name+"/"+dt, func(t *testing.T) {
+				stubRunCommand(t, "", cmdErr)
+				var logs bytes.Buffer
+				orig := slog.Default()
+				t.Cleanup(func() { slog.SetDefault(orig) })
+				slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+				var err error
+				if dt == "eos" && name == "run_show_command" {
+					_, _, err = RunShowCommand(context.Background(), nil, RunShowCommandInput{Host: "sw1", Username: "u", Command: "show version", DeviceType: dt})
+				} else {
+					err = call(dt)
+				}
+				if err == nil {
+					t.Fatal("want error")
+				}
+				if strings.Contains(err.Error(), "FAKEy") || strings.Contains(logs.String(), "FAKEy") || strings.Contains(logs.String(), "does not exist") {
+					t.Errorf("secret or device output leaked: err=%q log=%q", err, logs.String())
+				}
+				if got := strings.Contains(err.Error(), "The requested item does not exist"); got != (dt == "cumulus5x") {
+					t.Errorf("err = %q, device output present = %v", err, got)
+				}
+			})
+		}
+	}
+}

@@ -57,9 +57,12 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 	out, err := runCommand(ctx, cfg, command)
 	if err != nil {
 		logFailure(ctx, "run_show_command", err, "host", args.Host, "command", command)
-		return nil, nil, runError(ctx, "run_show_command", cfg, rt, err)
+		return nil, nil, runError(ctx, "run_show_command", cfg, rt, cumulus5CommandError(rt.dt, err))
 	}
 
+	if rt.dt == deviceTypeCumulus5x {
+		out = stripANSI(out)
+	}
 	res, err := obfuscatedResult(out)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run_show_command: %w", err)

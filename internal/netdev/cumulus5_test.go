@@ -110,3 +110,15 @@ func TestNormalizeOperationalCommandCumulus5x(t *testing.T) {
 		t.Error("net show accepted on cumulus5x")
 	}
 }
+
+func TestStripANSI(t *testing.T) {
+	if got := stripANSI("\x1b[1mpassword\x1b[0m  FAKE"); got != "password  FAKE" {
+		t.Errorf("stripANSI = %q", got)
+	}
+	if got := stripANSI("plain text\n"); got != "plain text\n" {
+		t.Errorf("stripANSI = %q", got)
+	}
+	if got := stripANSI("a\x1bb"); got != "ab" {
+		t.Errorf("lone ESC: stripANSI = %q", got)
+	}
+}
