@@ -13,10 +13,35 @@ import (
 // supplies must therefore stay on one line and must not reach commands or
 // pipes that change device state or write files.
 
-// argPattern is what a destination, source, VRF or interface name may contain:
+// wordClass is an allowlist of the characters a word may contain: letters,
+// digits and the punctuation in chars. Every allowlist below is built from
+// one, so its pattern and the rule its error message states cannot differ.
+type wordClass struct {
+	re *regexp.Regexp
+	// rule lists the characters, for error messages.
+	rule string
+}
+
+// newWordClass returns the wordClass for letters, digits and the ASCII
+// punctuation characters in chars, listed in rule in that order.
+func newWordClass(chars string) wordClass {
+	var class strings.Builder
+	for _, c := range chars {
+		// In a character class, "\" before ASCII punctuation makes it literal.
+		class.WriteString(`\` + string(c))
+	}
+	return wordClass{
+		re:   regexp.MustCompile(`^[A-Za-z0-9` + class.String() + `]+$`),
+		rule: "letters, digits and " + strings.Join(strings.Split(chars, ""), " "),
+	}
+}
+
+func (c wordClass) match(w string) bool { return c.re.MatchString(w) }
+
+// argChars is what a destination, source, VRF or interface name may contain:
 // IPv4/IPv6 addresses (with zone), hostnames and interface names such as
 // Ethernet1/1, Gi0/0.100 or ae0.0. No whitespace, quotes, pipes or redirection.
-var argPattern = regexp.MustCompile(`^[A-Za-z0-9._:/@%-]+$`)
+var argChars = newWordClass("._:/@%-")
 
 const maxArgLen = 255
 
@@ -26,8 +51,8 @@ func checkCommandArg(name, value string) error {
 	if value == "" {
 		return nil
 	}
-	if len(value) > maxArgLen || !argPattern.MatchString(value) {
-		return fmt.Errorf("%s may only contain letters, digits and . _ : / @ %% -", name)
+	if len(value) > maxArgLen || !argChars.match(value) {
+		return fmt.Errorf("%s may only contain %s", name, argChars.rule)
 	}
 	return nil
 }
@@ -47,27 +72,95 @@ func checkCommandArgs(destination, source, vrf, outgoingInterface string) error 
 	return nil
 }
 
-// allowedPipes lists the output filters permitted after "|" in
-// run_show_command, per platform. Filters that write files, send messages or
-// run other commands (save, redirect, tee, append, request, ...) are absent.
-var allowedPipes = map[deviceType][]string{
-	deviceTypeEOS:     {"json", "no-more", "include", "exclude", "begin", "section"},
-	deviceTypeIOS:     {"include", "exclude", "begin", "section", "count"},
-	deviceTypeNXOS:    {"json", "json-pretty", "xml", "no-more", "include", "exclude", "begin", "section", "count", "grep", "egrep", "last", "head"},
-	deviceTypeJunos:   {"display", "no-more", "match", "except", "count", "last", "find", "trim"},
-	deviceTypeFortiOS: {"grep"},
+// plainWordChars is what a filter's argument (W in filterForms) may
+// contain. On a Linux system bash runs the command and several filters (grep,
+// egrep, head, last) are Linux programs, so a word holds no quotes,
+// backslashes, "$", globs, brackets, braces, "~" or regex syntax other than
+// "."; it also must not start with "-", so it cannot be an option.
+var plainWordChars = newWordClass("._:/,@%+=-")
+
+var plainWordRule = plainWordChars.rule + ", not starting with '-'"
+
+// numberPattern is what an N in filterForms may be.
+var numberPattern = regexp.MustCompile(`^[0-9]{1,6}$`)
+
+// filterForms lists, per platform, the only segments accepted after a "|" in
+// run_show_command. In a form, "W" stands for one plain word and "N" for a
+// number; every other word must match exactly, in lower case. Filters that
+// write files, send messages or run other commands (save, redirect, tee,
+// append, request, ...) are absent, and so is JunOS find: on a Linux system
+// it is find(1), which can run programs and delete files.
+var filterForms = map[deviceType][]string{
+	deviceTypeEOS:     {"json", "no-more", "include W", "exclude W", "begin W", "section W"},
+	deviceTypeIOS:     {"include W", "exclude W", "begin W", "section W", "count W"},
+	deviceTypeNXOS:    {"json", "json-pretty", "xml", "no-more", "include W", "exclude W", "begin W", "section W", "count", "grep W", "egrep W", "head", "head lines N", "last", "last N"},
+	deviceTypeJunos:   {"display json", "display xml", "display set", "no-more", "match W", "except W", "count", "last", "last N", "trim N"},
+	deviceTypeFortiOS: {"grep W"},
 }
 
-// junosDisplayFormats are the arguments allowed after JunOS "| display".
-var junosDisplayFormats = []string{"json", "xml", "set"}
+// commandWordChars is what every word of a run_show_command command may
+// contain, on every platform: the plainWordChars characters plus "^" and
+// "$", so that anchored regexes such as "show ip bgp regexp ^65000_" work.
+// On a Linux system bash runs the command, so everything else bash gives a
+// meaning to is excluded: quotes, backslashes, "`", "&", parentheses,
+// brackets, braces (brace expansion; "{1..99999999}" exhausts memory), globs
+// ("*", "?") and "~", "!" and "#". A "$" can then only expand a variable,
+// which reaches nothing but the argument list of a program that does not
+// exist. Filter arguments are limited further, to plainWordChars.
+var commandWordChars = newWordClass("._:/,@%+=^$-")
+
+// isOption reports whether w would be read as an option.
+func isOption(w string) bool { return strings.HasPrefix(w, "-") }
+
+func isPlainWord(w string) bool {
+	return plainWordChars.match(w) && !isOption(w)
+}
+
+// spaceSeparated splits s into words on spaces; runs of spaces are allowed.
+// checkOperationalCommand refuses any other whitespace first.
+func spaceSeparated(s string) []string {
+	return slices.DeleteFunc(strings.Split(s, " "), func(w string) bool { return w == "" })
+}
+
+// matchesForm reports whether words is exactly the filter form, a
+// space-separated entry of filterForms.
+func matchesForm(words []string, form string) bool {
+	want := strings.Split(form, " ")
+	if len(words) != len(want) {
+		return false
+	}
+	for i, w := range want {
+		switch w {
+		case "W":
+			if !isPlainWord(words[i]) {
+				return false
+			}
+		case "N":
+			if !numberPattern.MatchString(words[i]) {
+				return false
+			}
+		default:
+			if words[i] != w {
+				return false
+			}
+		}
+	}
+	return true
+}
 
 // checkOperationalCommand verifies that command is a single line holding a
-// single command (no ";"), starts with verb as a whole word, uses no
-// redirection, and pipes only into filters allowed for the platform.
+// single command (no ";"), uses no redirection, has only commandWordChars
+// characters in its words, starts with
+// verb exactly (lower case) as a whole word, and pipes only into the
+// platform's filterForms. The command is split on "|" first, so "|" need not
+// be surrounded by spaces, and each part is then split on spaces.
 func checkOperationalCommand(command, verb string, dt deviceType) error {
 	for _, r := range command {
 		if unicode.IsControl(r) || r == ' ' || r == ' ' {
 			return fmt.Errorf("command must be a single line without control characters")
+		}
+		if unicode.IsSpace(r) && r != ' ' {
+			return fmt.Errorf("command words must be separated by plain spaces only")
 		}
 	}
 	// Some CLIs (IOS XE, NX-OS) accept ";" as a command separator.
@@ -77,25 +170,50 @@ func checkOperationalCommand(command, verb string, dt deviceType) error {
 	if strings.ContainsAny(command, "<>") {
 		return fmt.Errorf("command must not use redirection ('<' or '>')")
 	}
-
 	segments := strings.Split(command, "|")
-	if fields := strings.Fields(segments[0]); len(fields) == 0 || !strings.EqualFold(fields[0], verb) {
+	// On a Linux system such as Cumulus Linux a shell runs the command, so a
+	// wrong device_type must not let any shell syntax through.
+	for _, seg := range segments {
+		for _, w := range spaceSeparated(seg) {
+			if !commandWordChars.match(w) {
+				return fmt.Errorf("command words may only contain %s; quotes, brackets, braces, globs and other shell syntax are not allowed", commandWordChars.rule)
+			}
+		}
+	}
+	words := spaceSeparated(segments[0])
+	if len(words) == 0 || !strings.EqualFold(words[0], verb) {
 		return fmt.Errorf("command must start with '%s'", verb)
 	}
+	// On a Linux system the verb is a program name, and those are case
+	// sensitive: GET is lwp-request, which fetches URLs.
+	if words[0] != verb {
+		return fmt.Errorf("command must start with '%s' in lower case", verb)
+	}
+	// The verb's own arguments may also hold "^" and "$", so that commands
+	// such as "show ip bgp regexp ^65000_" work: on a Linux system they only
+	// reach a "show" or "get" program that does not exist.
 
-	allowed := allowedPipes[dt]
+	forms := filterForms[dt]
 	for _, seg := range segments[1:] {
-		fields := strings.Fields(strings.ToLower(seg))
-		if len(fields) == 0 {
+		words := spaceSeparated(seg)
+		if len(words) == 0 {
 			return fmt.Errorf("empty pipe in command")
 		}
-		if !slices.Contains(allowed, fields[0]) {
-			return fmt.Errorf("pipe '| %s' is not allowed; allowed filters: %s", fields[0], strings.Join(allowed, ", "))
-		}
-		if dt == deviceTypeJunos && fields[0] == "display" &&
-			(len(fields) != 2 || !slices.Contains(junosDisplayFormats, fields[1])) {
-			return fmt.Errorf("'| display' must be followed by one of: %s", strings.Join(junosDisplayFormats, ", "))
+		if !slices.ContainsFunc(forms, func(form string) bool { return matchesForm(words, form) }) {
+			return fmt.Errorf("pipe '| %s' is not allowed; filters allowed on %s: %s; %s; "+
+				"filter names are lower case and regular expressions other than '.' are not supported, "+
+				"so when no filter fits, run the command without one and extract what you need from the output",
+				strings.Join(words, " "), dt, strings.Join(forms, ", "), filterPlaceholders(forms))
 		}
 	}
 	return nil
+}
+
+// filterPlaceholders explains the W and N placeholders used in forms.
+func filterPlaceholders(forms []string) string {
+	s := "W is one plain word (" + plainWordRule + ")"
+	if slices.ContainsFunc(forms, func(form string) bool { return strings.HasSuffix(form, " N") }) {
+		s += " and N is a number of up to 6 digits"
+	}
+	return s
 }

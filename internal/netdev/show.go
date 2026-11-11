@@ -13,10 +13,10 @@ import (
 // RunShowCommandInput defines the input parameters for the run_show_command tool.
 type RunShowCommandInput struct {
 	Host       string `json:"host"       jsonschema:"hostname or IP address of the network device"`
-	Command    string `json:"command"    jsonschema:"command to execute: use 'show ...' on Arista/Cisco/JunOS or 'get ...' on FortiOS"`
+	Command    string `json:"command"    jsonschema:"command to execute: use 'show ...' on Arista/Cisco/JunOS, 'get ...' on FortiOS or 'net show ...' on Cumulus Linux 4.x"`
 	Username   string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port       int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
-	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), or fortios (FortiGate/FortiOS); if omitted, the platform is auto-detected over SSH and reported in the result"`
+	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), or cumulus4x (Cumulus Linux 4.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
 }
 
 // RunShowCommand executes an arbitrary show command on a network device.
@@ -40,8 +40,7 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 		}
 	}
 
-	cfg := connConfig(args.Host, args.Port, args.Username)
-	rt, err := resolveDeviceType(ctx, cfg, args.DeviceType, false)
+	cfg, rt, err := resolveTarget(ctx, args.Host, args.Port, args.Username, args.DeviceType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run_show_command: %w", err)
 	}

@@ -228,3 +228,94 @@ func TestRunCommandErrorOmitsDeviceOutput(t *testing.T) {
 		t.Fatalf("RunCommand() error = %q, Output %q; want stdout in Output only", err, cmdErr.Output)
 	}
 }
+
+// TestCommandErrorExitStatus checks that CommandError reports the exit status
+// of a command that ran and -1 when the failure was not an exit status.
+func TestCommandErrorExitStatus(t *testing.T) {
+	s := startTestServer(t, "SSH-2.0-OpenSSH_9.9", map[string]testReply{
+		"ping -c 5 192.0.2.1 2>&1": {output: "100% packet loss\n", status: 3},
+	})
+	cfg := useTestServer(t, s, 5*time.Second)
+
+	_, err := RunCommand(t.Context(), cfg, "ping -c 5 192.0.2.1 2>&1")
+	var cmdErr *CommandError
+	if !errors.As(err, &cmdErr) || cmdErr.ExitStatus != 3 {
+		t.Fatalf("RunCommand() error = %v, want *CommandError with ExitStatus 3", err)
+	}
+
+	// A channel closed without an exit status is not an ExitError.
+	addr := startSSHServer(t, func(ch gossh.Channel) { _ = ch.Close() }, newSigner(t, "ed25519"))
+	cfg = useTestServer(t, &testServer{addr: addr}, 5*time.Second)
+	_, err = RunCommand(t.Context(), cfg, "anything")
+	if !errors.As(err, &cmdErr) || cmdErr.ExitStatus != -1 {
+		t.Fatalf("RunCommand() error = %v, want *CommandError with ExitStatus -1", err)
+	}
+}
+
+// TestCheckServerVersionRefusesBeforeSession checks that a refusing
+// CheckServerVersion stops RunCommand and RunCommands after the handshake,
+// before a session is opened: the server never answers a session request,
+// so a call that opened one would hang instead of returning the refusal.
+func TestCheckServerVersionRefusesBeforeSession(t *testing.T) {
+	refused := errors.New("refused")
+	calls := map[string]func(ctx context.Context, cfg ConnConfig) error{
+		"RunCommand": func(ctx context.Context, cfg ConnConfig) error {
+			_, err := RunCommand(ctx, cfg, "show version")
+			return err
+		},
+		"RunCommands": func(ctx context.Context, cfg ConnConfig) error {
+			_, err := RunCommands(ctx, cfg, []string{"show version", "show clock"})
+			return err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			srv := startStallingServer(t, stallSession)
+			usePasswordAuth(t)
+			cfg := srv.connConfig()
+			var seen string
+			cfg.CheckServerVersion = func(serverVersion string) error {
+				seen = serverVersion
+				return refused
+			}
+
+			done := make(chan error, 1)
+			go func() { done <- call(t.Context(), cfg) }()
+			var err error
+			select {
+			case err = <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("call did not return; it opened a session despite the refusal")
+			}
+			if !errors.Is(err, refused) || !strings.Contains(err.Error(), srv.addr.String()) {
+				t.Fatalf("error = %v, want the refusal naming %s", err, srv.addr)
+			}
+			if seen != "SSH-2.0-Go" {
+				t.Fatalf("CheckServerVersion got %q, want the server's identification", seen)
+			}
+			waitFor(t, srv.closed, "the connection to close")
+			if len(srv.reached) != 0 || len(srv.commands()) != 0 {
+				t.Fatalf("session requests = %d, commands = %q; want none", len(srv.reached), srv.commands())
+			}
+		})
+	}
+}
+
+// TestCheckServerVersionAccepts checks that an accepting CheckServerVersion
+// sees the identification string and the command then runs as usual.
+func TestCheckServerVersionAccepts(t *testing.T) {
+	s := startTestServer(t, "SSH-2.0-OpenSSH_8.7", map[string]testReply{
+		"show clock": {output: "12:00:00\n"},
+	})
+	cfg := useTestServer(t, s, 5*time.Second)
+	var seen string
+	cfg.CheckServerVersion = func(serverVersion string) error {
+		seen = serverVersion
+		return nil
+	}
+
+	out, err := RunCommand(t.Context(), cfg, "show clock")
+	if err != nil || out != "12:00:00\n" || seen != "SSH-2.0-OpenSSH_8.7" {
+		t.Fatalf("RunCommand() = %q, %v, check saw %q", out, err, seen)
+	}
+}

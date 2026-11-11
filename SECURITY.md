@@ -71,11 +71,26 @@ issue, not as an advisory:
 
 So a report need not re-cover this ground:
 
-- `run_show_command` accepts a single command on a single line — no control
-  characters, no `;`, no `<`/`>` redirection — and pipes only into a
-  per-platform allowlist of output filters. Ping and traceroute arguments are
-  limited to letters, digits and `. _ : / @ % -`. Refused input never reaches
-  the device.
+- `run_show_command` accepts a single command on a single line that starts with
+  the verb in lower case — no control characters, no `;`, no `<`/`>`
+  redirection, and words of only letters, digits and `. _ : / , @ % + = ^ $ -`,
+  so no quotes, brackets, braces, globs or other shell syntax — and
+  pipes only into a short per-platform list of filter forms, matched exactly
+  in lower case: each filter takes no argument, a fixed keyword
+  (`display json`, `head lines N`), a number of up to 6 digits, or one plain
+  word of letters, digits and `. _ : / , @ % + = -` that does not start with
+  `-`. A filter argument therefore holds no option, quote, glob, expansion or
+  second word. Ping and traceroute arguments are limited to letters, digits and
+  `. _ : / @ % -`. Refused input never reaches the device.
+- On Cumulus Linux 4.x (`cumulus4x`) bash runs the command, so the checks are
+  stricter: `run_show_command` accepts only `net show` commands whose words
+  match a character allowlist and do not start with `-`; ping and traceroute
+  arguments may not start with `-`; and the only thing the server adds to the
+  commands it builds is a trailing `2>&1`, which callers cannot supply.
+- Any `device_type` other than `cumulus4x` is refused, before a session is
+  opened, when the SSH server identifies itself as a Linux system (Debian or
+  Ubuntu). This is the main defence on Linux SSH servers; the filter list
+  above limits what a switch that hides its banner can be made to do.
 - Secrets are replaced with HMAC-SHA256 tokens under an obfuscation key. The key
   is only read, never logged or written; without one, a random key held in
   memory is used for each run. Obfuscation fails closed if no key is set.
@@ -85,6 +100,28 @@ So a report need not re-cover this ground:
   tool arguments are stripped of control characters.
 - CI runs `golangci-lint` (including `gosec`), CodeQL, `govulncheck` and the
   test suite on every push and pull request, and `govulncheck` weekly.
+
+Known limits of the Cumulus Linux support:
+
+- A Cumulus switch that announces Debian in its SSH banner is refused outright
+  for every `device_type` other than `cumulus4x`. A switch whose banner hides
+  "Debian" (for example with `DebianBanner no`) is not recognised as Linux. If a
+  caller then passes a wrong explicit `device_type`, bash runs a command that
+  passed only that platform's checks. It cannot start another command, and
+  the words before the first `|` hold no glob, brace, quote or expansion, so
+  bash passes them unchanged to a `show` or `get` program that a Linux system
+  does not normally have. Of the filters,
+  `grep W` and `egrep W` only filter their input with one pattern, and `head`
+  only prints its first lines. `head lines N` instead reads
+  the files named `lines` and `N` in the account's working directory, if they
+  exist, and `last` and `last N` print the login records the account can read
+  (`N` selects a user or terminal name); neither can be pointed at any other
+  file. Output is obfuscated like any other. The other filter names are not
+  part of a base Debian install; `display` (ImageMagick), if present, would
+  only try to open an image file named `json`, `xml` or `set`.
+- Only the `ping` and `traceroute` VRF handling has been checked on a real
+  Cumulus Linux 4.3 switch; the rest of the support is built from vendor
+  documentation and sample output.
 
 ## Scope
 

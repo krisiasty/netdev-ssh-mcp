@@ -68,7 +68,7 @@ const (
 	identPKIX                     // Cisco NX-OS (PKIX-SSH)
 	identCisco                    // Cisco IOS / IOS-XE
 	identObfuscated               // FortiOS: a random token, or FortiSSH_x.y on older releases
-	identLinux                    // Debian or Ubuntu based, e.g. Cumulus Linux
+	identLinux                    // Debian or Ubuntu based; /etc/os-release tells Cumulus Linux 4.x from other distributions
 	identCiscoBusiness            // Cisco Business switch OS, e.g. Catalyst 1200
 )
 
@@ -108,17 +108,18 @@ func classifyIdent(serverVersion string) identClass {
 const (
 	probeShowVersion  = "show version"
 	probeSystemStatus = "get system status"
+	probeOSRelease    = "cat /etc/os-release"
 )
 
 // probeCommandFor returns the one command to run for an identification
 // class, chosen so the likely platform accepts it. Platforms that are known
 // to be unsupported get an error before anything runs: on the Cisco Business
-// switch OS an exec request hangs, and on Linux it reaches a shell.
+// switch OS an exec request hangs. A Linux system reaches a shell, so the
+// probe only reads /etc/os-release.
 func probeCommandFor(c identClass, serverVersion string) (string, error) {
 	switch c {
 	case identLinux:
-		return "", fmt.Errorf("%w: the SSH server %q is a Linux distribution; Linux-based network operating systems such as Cumulus Linux are not supported yet",
-			errUnsupportedPlatform, displayValue(serverVersion))
+		return probeOSRelease, nil
 	case identCiscoBusiness:
 		return "", fmt.Errorf("%w: the SSH server %q is the Cisco Business switch OS (Catalyst 1200/1300, CBS), which does not answer SSH exec requests",
 			errUnsupportedPlatform, displayValue(serverVersion))
@@ -166,6 +167,32 @@ var versionPatterns = map[deviceType]*regexp.Regexp{
 	deviceTypeNXOS:    regexp.MustCompile(`(?m)^\s*(?:NXOS|system):\s+version\s+([\w.()-]+)`),
 	deviceTypeIOS:     regexp.MustCompile(`(?m)^\s*(?:Cisco IOS(?: XE)? Software|IOS \(tm\)).*?Version\s+([\w.()-]+)`),
 	deviceTypeFortiOS: regexp.MustCompile(`(?m)^Version:\s+Forti\S+\s+(v[\w.()-]+)`),
+	// The value may be quoted and the line may end in \r.
+	deviceTypeCumulus4x: regexp.MustCompile(`(?m)^VERSION_ID="?([\w.+~-]+)"?\r?$`),
+}
+
+var (
+	osReleaseCumulusRe   = regexp.MustCompile(`(?m)^ID="?cumulus-linux"?\r?$`)
+	osReleaseVersionRe   = versionPatterns[deviceTypeCumulus4x]
+	osReleaseVersion4xRe = regexp.MustCompile(`(?m)^VERSION_ID="?4\.[\w.+~-]*"?\r?$`)
+)
+
+// matchOSRelease decides whether the output of probeOSRelease is Cumulus
+// Linux 4.x. Both ID and VERSION_ID must be whole lines, so a value echoed
+// inside another line cannot satisfy them. Anything else is unsupported and
+// passing device_type would not help.
+func matchOSRelease(output string) (deviceType, error) {
+	if osReleaseCumulusRe.MatchString(output) {
+		if osReleaseVersion4xRe.MatchString(output) {
+			return deviceTypeCumulus4x, nil
+		}
+		if m := osReleaseVersionRe.FindStringSubmatch(output); m != nil {
+			return "", fmt.Errorf("%w: unsupported release: Cumulus Linux %s is not supported; only 4.x (cumulus4x) is",
+				errUnsupportedPlatform, displayValue(m[1]))
+		}
+	}
+	return "", fmt.Errorf("%w: the SSH server is a Linux system that is not Cumulus Linux 4.x (cumulus4x is the only supported Linux platform)",
+		errUnsupportedPlatform)
 }
 
 // matchProbeOutput decides the platform from a probe command's output. It
@@ -288,7 +315,15 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 		return resolvedType{}, fmt.Errorf("detect platform: %w", err)
 	}
 
-	dt, err = matchProbeOutput(res.Command, res.Output)
+	if res.Command == probeOSRelease {
+		dt, err = matchOSRelease(res.Output)
+		if errors.Is(err, errUnsupportedPlatform) {
+			slog.Info("platform detection: unsupported platform", "host", sanitizeLog(cfg.Host)) //nolint:gosec // G706: value is sanitized before logging
+			return resolvedType{}, fmt.Errorf("detect platform: %w", err)
+		}
+	} else {
+		dt, err = matchProbeOutput(res.Command, res.Output)
+	}
 	if err != nil {
 		return resolvedType{}, fmt.Errorf("could not detect the platform of %s (SSH server %q): %w; pass device_type (%s)",
 			cfg.Host, displayValue(res.ServerVersion), err, supportedDeviceTypes)
@@ -305,11 +340,39 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 	return r, nil
 }
 
-const supportedDeviceTypes = "eos, ios, nxos, junos or fortios"
+// resolveTarget returns the connection config and device type for a tool
+// that runs a device command. Every such tool gets its config here, so none
+// can skip the Linux check: unless the type is cumulus4x, the config refuses
+// a Linux SSH server before a session is opened. On a Linux system bash runs
+// the command, and only the cumulus4x checks are written for that; an
+// explicit device_type is never checked against the device otherwise.
+func resolveTarget(ctx context.Context, host string, port int, username, rawType string) (sshclient.ConnConfig, resolvedType, error) {
+	cfg := connConfig(host, port, username)
+	rt, err := resolveDeviceType(ctx, cfg, rawType, false)
+	if err != nil {
+		return cfg, rt, err
+	}
+	if rt.dt != deviceTypeCumulus4x {
+		cfg.CheckServerVersion = refuseLinuxServer
+	}
+	return cfg, rt, nil
+}
+
+// refuseLinuxServer is the CheckServerVersion for every device type other
+// than cumulus4x.
+func refuseLinuxServer(serverVersion string) error {
+	if classifyIdent(serverVersion) == identLinux {
+		return fmt.Errorf("%w: it identifies as %q, a Linux system; only device_type cumulus4x is supported on Linux",
+			errUnsupportedPlatform, displayValue(serverVersion))
+	}
+	return nil
+}
+
+const supportedDeviceTypes = "eos, ios, nxos, junos, fortios or cumulus4x"
 
 // syntaxErrorRe matches the messages platforms print for a command they do
 // not understand, which is what running another platform's syntax produces.
-var syntaxErrorRe = regexp.MustCompile(`(?mi)^\s*(?:% ?Invalid (?:input|command)|% ?Incomplete command|% ?Ambiguous command|syntax error|unknown command|Unknown action|Command fail\.|command parse error)`)
+var syntaxErrorRe = regexp.MustCompile(`(?mi)^\s*(?:ERROR: Command not found|(?:-?bash: (?:line \d+: )?)?[\w.-]+: command not found|% ?Invalid (?:input|command)|% ?Incomplete command|% ?Ambiguous command|syntax error|unknown command|Unknown action|Command fail\.|command parse error)`)
 
 func looksLikeSyntaxError(text string) bool {
 	return syntaxErrorRe.MatchString(text)
@@ -355,10 +418,19 @@ func requestCancelled(ctx context.Context) bool {
 }
 
 // logFailure logs a failed tool call. A cancelled request is a normal client
-// action, not a device failure, so it is logged at Info rather than Error.
+// action, and an unsupported platform is an answer, not a device failure, so
+// both are logged at Info rather than Error.
 func logFailure(ctx context.Context, tool string, err error, attrs ...any) {
 	if requestCancelled(ctx) {
 		slog.Info(tool+" cancelled by the client", attrs...)
+		return
+	}
+	if errors.Is(err, errUnsupportedPlatform) {
+		// The device was identified as one the device type does not
+		// support (refuseLinuxServer): an answer, not a failure. The
+		// error holds the reason and the server identification, already
+		// passed through displayValue.
+		slog.Info(tool+": unsupported platform", append(attrs, "err", err)...)
 		return
 	}
 	slog.Error(tool+" failed", append(attrs, "err", err)...)
@@ -387,15 +459,26 @@ func explicitTypeHint(r resolvedType) string {
 // detected type may be wrong, so it was forgotten.
 const detectedRejectedNotice = "The device rejected the command syntax. The detected device_type was forgotten, so the next call without device_type detects the platform again."
 
+// detectedMismatchNotice explains a refused Linux SSH server after detection:
+// the detected type no longer describes the server at that address, so it
+// was forgotten rather than suggested for later calls.
+const detectedMismatchNotice = "The detected device_type does not match this SSH server, so it was forgotten; the next call without device_type detects the platform again."
+
 // afterRun inspects a command's outcome. A syntax error on a detected type
 // drops the cached detection so the next call probes again; on an explicit
-// type it yields a hint. It returns the notices to append to the result.
+// type it yields a hint. A detected type whose server was refused as an
+// unsupported platform (refuseLinuxServer) is dropped too, and is not
+// suggested for later calls. It returns the notices to append to the result.
 func afterRun(cfg sshclient.ConnConfig, r resolvedType, output string, runErr error) []mcp.Content {
 	syntaxErr := rejectedSyntax(output, runErr)
 
 	var notices []mcp.Content
 	switch r.source {
 	case sourceProbe, sourceCache:
+		if errors.Is(runErr, errUnsupportedPlatform) {
+			forgetType(cacheKey(cfg.Host, cfg.Port))
+			return []mcp.Content{&mcp.TextContent{Text: detectedMismatchNotice}}
+		}
 		notices = append(notices, &mcp.TextContent{Text: detectedNotice(r)})
 		if syntaxErr {
 			forgetType(cacheKey(cfg.Host, cfg.Port))

@@ -117,7 +117,8 @@ func TestProbeCommandFor(t *testing.T) {
 		{ident: identIOS, want: probeShowVersion},
 		{ident: identDropbear, want: probeShowVersion},
 		{ident: identFortiOS, want: probeSystemStatus},
-		{ident: identCumulus, unsupported: true},
+		{ident: identCumulus, want: probeOSRelease},
+		{ident: identUbuntu, want: probeOSRelease},
 		{ident: identC1200, unsupported: true},
 	}
 	for _, tt := range tests {
@@ -282,23 +283,52 @@ func TestResolveDeviceType(t *testing.T) {
 		}
 	})
 
-	for _, ident := range []string{identCumulus, identC1200} {
-		t.Run("unsupported "+ident, func(t *testing.T) {
-			resetDetection(t)
-			f := &fakeProbe{ident: ident}
-			runProbe = f.probe
+	t.Run("unsupported "+identC1200, func(t *testing.T) {
+		resetDetection(t)
+		f := &fakeProbe{ident: identC1200}
+		runProbe = f.probe
+		_, err := resolveDeviceType(t.Context(), cfg, "", false)
+		if !errors.Is(err, errUnsupportedPlatform) {
+			t.Fatalf("resolveDeviceType() error = %v, want errUnsupportedPlatform", err)
+		}
+		if len(f.ran) != 0 {
+			t.Fatalf("ran %v on an unsupported platform, want nothing", f.ran)
+		}
+		if strings.Contains(err.Error(), "pass device_type") {
+			t.Fatalf("error %q suggests device_type, which cannot help here", err)
+		}
+	})
+
+	t.Run("cumulus 4.x from os-release", func(t *testing.T) {
+		resetDetection(t)
+		f := &fakeProbe{ident: identCumulus, outputs: map[string]string{probeOSRelease: readFixture(t, "cumulus43_os_release.txt")}}
+		runProbe = f.probe
+		r, err := resolveDeviceType(t.Context(), cfg, "", false)
+		if err != nil || r.dt != deviceTypeCumulus4x || r.source != sourceProbe || r.version != "4.3.0" {
+			t.Fatalf("resolveDeviceType() = %+v, %v; want probed cumulus4x 4.3.0", r, err)
+		}
+		if len(f.ran) != 1 || f.ran[0] != probeOSRelease {
+			t.Fatalf("ran %v, want only %q", f.ran, probeOSRelease)
+		}
+		if r, err = resolveDeviceType(t.Context(), cfg, "", false); err != nil || r.source != sourceCache || f.calls != 1 {
+			t.Fatalf("second resolveDeviceType() = %+v, %v, probes=%d; want cached", r, err, f.calls)
+		}
+	})
+
+	t.Run("cumulus 5.x is unsupported and not cached", func(t *testing.T) {
+		resetDetection(t)
+		f := &fakeProbe{ident: identCumulus, outputs: map[string]string{probeOSRelease: readFixture(t, "cumulus54_os_release.txt")}}
+		runProbe = f.probe
+		for range 2 {
 			_, err := resolveDeviceType(t.Context(), cfg, "", false)
-			if !errors.Is(err, errUnsupportedPlatform) {
-				t.Fatalf("resolveDeviceType() error = %v, want errUnsupportedPlatform", err)
+			if !errors.Is(err, errUnsupportedPlatform) || strings.Contains(err.Error(), "pass device_type") {
+				t.Fatalf("resolveDeviceType() error = %v, want errUnsupportedPlatform without a device_type suggestion", err)
 			}
-			if len(f.ran) != 0 {
-				t.Fatalf("ran %v on an unsupported platform, want nothing", f.ran)
-			}
-			if strings.Contains(err.Error(), "pass device_type") {
-				t.Fatalf("error %q suggests device_type, which cannot help here", err)
-			}
-		})
-	}
+		}
+		if f.calls != 2 || len(f.ran) != 2 || f.ran[0] != probeOSRelease {
+			t.Fatalf("probes = %d, ran %v; want 2 probes of %q (not cached)", f.calls, f.ran, probeOSRelease)
+		}
+	})
 
 	t.Run("no match is not cached", func(t *testing.T) {
 		resetDetection(t)
@@ -459,5 +489,72 @@ func TestDisplayValue(t *testing.T) {
 	}
 	if got := displayValue(strings.Repeat("a", 200)); len(got) != 83 {
 		t.Fatalf("displayValue() length = %d, want 83", len(got))
+	}
+}
+
+func TestMatchOSRelease(t *testing.T) {
+	c43 := readFixture(t, "cumulus43_os_release.txt")
+	tests := []struct {
+		name        string
+		output      string
+		want        deviceType
+		wantVersion string
+		wantErr     string
+	}{
+		{name: "4.2", output: readFixture(t, "cumulus42_os_release.txt"), want: deviceTypeCumulus4x, wantVersion: "4.2.0"},
+		{name: "4.3", output: c43, want: deviceTypeCumulus4x, wantVersion: "4.3.0"},
+		{name: "CRLF", output: strings.ReplaceAll(c43, "\n", "\r\n"), want: deviceTypeCumulus4x, wantVersion: "4.3.0"},
+		{name: "quoted", output: "ID=\"cumulus-linux\"\nVERSION_ID=\"4.3.0\"\n", want: deviceTypeCumulus4x, wantVersion: "4.3.0"},
+		{name: "5.4", output: readFixture(t, "cumulus54_os_release.txt"), wantErr: "Cumulus Linux 5.4.0 is not supported"},
+		{name: "debian", output: readFixture(t, "debian10_os_release.txt"), wantErr: "not Cumulus Linux 4.x"},
+		{name: "ubuntu", output: readFixture(t, "ubuntu2204_os_release.txt"), wantErr: "not Cumulus Linux 4.x"},
+		{name: "empty", output: "", wantErr: "not Cumulus Linux 4.x"},
+		{name: "id without version", output: "ID=cumulus-linux\n", wantErr: "not Cumulus Linux 4.x"},
+		{name: "markers inside other lines", output: "NAME=\"ID=cumulus-linux\"\nPRETTY_NAME=VERSION_ID=4.3\n", wantErr: "not Cumulus Linux 4.x"},
+		{name: "version marker inside another line", output: "ID=cumulus-linux\nVERSION_ID=5.4.0\nHOME_URL_VERSION_ID=4.3\n", wantErr: "Cumulus Linux 5.4.0 is not supported"},
+		{name: "id prefix only", output: "ID=cumulus-linux-x\nVERSION_ID=4.3.0\n", wantErr: "not Cumulus Linux 4.x"},
+		{name: "version not a whole line", output: "ID=cumulus-linux\nVERSION_ID=4.junk extra text\n", wantErr: "not Cumulus Linux 4.x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := matchOSRelease(tt.output)
+			if tt.wantErr == "" {
+				if err != nil || got != tt.want {
+					t.Fatalf("matchOSRelease() = %q, %v; want %q", got, err, tt.want)
+				}
+				if v := extractVersion(got, tt.output); v != tt.wantVersion {
+					t.Fatalf("extractVersion() = %q, want %q", v, tt.wantVersion)
+				}
+				return
+			}
+			if !errors.Is(err, errUnsupportedPlatform) || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("matchOSRelease() = %q, %v; want errUnsupportedPlatform containing %q", got, err, tt.wantErr)
+			}
+			if strings.Contains(err.Error(), "pass device_type") {
+				t.Fatalf("error %q suggests device_type, which cannot help here", err)
+			}
+			if tt.name == "5.4" && !strings.Contains(err.Error(), "cumulus4x") {
+				t.Fatalf("error %q does not name cumulus4x", err)
+			}
+		})
+	}
+}
+
+func TestLooksLikeSyntaxErrorCumulus(t *testing.T) {
+	tests := []struct {
+		text string
+		want bool
+	}{
+		{"ERROR: Command not found\nInvalid value here.", true},
+		{"bash: show: command not found", true},
+		{"bash: line 1: show: command not found", true},
+		{"-bash: show: command not found", true},
+		{"  ERROR: Command not found", true},
+		{"Description: ERROR: Command not found", false},
+	}
+	for _, tt := range tests {
+		if got := looksLikeSyntaxError(tt.text); got != tt.want {
+			t.Errorf("looksLikeSyntaxError(%q) = %v, want %v", tt.text, got, tt.want)
+		}
 	}
 }

@@ -15,3 +15,6 @@ Output of the platform detection probes, used by `detect_test.go`.
 Serial numbers, MAC addresses, build IDs and hostnames in captured output are replaced with placeholders. The NX-OS
 device name and the JunOS hostname are deliberately set to `Arista-lookalike`, to check that a device-chosen name
 cannot satisfy another platform's marker.
+
+The `*_os_release.txt` files are `/etc/os-release` as read by the `cat /etc/os-release` probe. The Cumulus Linux files follow
+the published format with the version changed; the Debian 10 and Ubuntu 22.04 files are the stock ones. None are captured.

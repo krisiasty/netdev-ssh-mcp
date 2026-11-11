@@ -105,6 +105,12 @@ type ConnConfig struct {
 	// used instead of it for commands run with this config. Commands known
 	// to take longer, such as ping and traceroute, set it.
 	CommandTimeout time.Duration
+	// CheckServerVersion, when set, is called by RunCommand and RunCommands
+	// with the server's identification string (such as "SSH-2.0-OpenSSH_9.9")
+	// once the connection is up and before a session is opened. If it returns
+	// an error, the connection is closed and nothing runs. The string is
+	// chosen by the device and is untrusted. Probe does not call it.
+	CheckServerVersion func(serverVersion string) error
 }
 
 // Options controls SSH host key handling and command timeouts.
@@ -270,6 +276,12 @@ func runSessionCommand(ctx context.Context, cfg ConnConfig, cmd string) (string,
 	}
 	defer func() { _ = client.Close() }()
 
+	if cfg.CheckServerVersion != nil {
+		if err := cfg.CheckServerVersion(string(client.ServerVersion())); err != nil {
+			return "", fmt.Errorf("SSH server %s: %w", addr, err)
+		}
+	}
+
 	out, err := runOnClient(ctx, client, addr, cmd, commandTimeoutFor(cfg))
 	if err != nil {
 		return "", err
@@ -366,7 +378,12 @@ func runOnClient(ctx context.Context, client *gossh.Client, addr, cmd string, ti
 		return "", limitErr(reason)
 	}
 	if err != nil {
-		return string(out), &CommandError{Command: cmd, Err: err, Output: append(stderr.Bytes(), out...)}
+		status := -1
+		var exitErr *gossh.ExitError
+		if errors.As(err, &exitErr) {
+			status = exitErr.ExitStatus()
+		}
+		return string(out), &CommandError{Command: cmd, Err: err, ExitStatus: status, Output: append(stderr.Bytes(), out...)}
 	}
 	return string(out), nil
 }
@@ -380,8 +397,10 @@ type CommandError struct {
 	Command string
 	// Err is the underlying error, usually a *ssh.ExitError.
 	Err error
+	// ExitStatus is the exit status when Err is a *ssh.ExitError, otherwise -1.
+	ExitStatus int
 	// Output is what the device wrote to stderr followed by stdout. Treat it
-	// as untrusted and do not show it to callers.
+	// as untrusted: it is the caller's decision whether any of it is shown.
 	Output []byte
 }
 

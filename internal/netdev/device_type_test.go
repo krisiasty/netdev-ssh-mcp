@@ -17,6 +17,9 @@ func TestNormalizeDeviceType(t *testing.T) {
 		{name: "fortios", input: "fortios", want: deviceTypeFortiOS},
 		{name: "fortigate alias", input: "fortigate", want: deviceTypeFortiOS},
 		{name: "junos", input: "junos", want: deviceTypeJunos},
+		{name: "cumulus4x", input: "cumulus4x", want: deviceTypeCumulus4x},
+		{name: "cumulus4x mixed case", input: " CUMULUS4X ", want: deviceTypeCumulus4x},
+		{name: "cumulus without version", input: "cumulus", wantErr: "'cumulus4x'"},
 		{name: "invalid", input: "asa", wantErr: "device_type must be"},
 	}
 
@@ -56,6 +59,8 @@ func TestBuildConfigCommand(t *testing.T) {
 		{name: "eos running", configType: "running", deviceType: deviceTypeEOS, want: "show running-config | no-more"},
 		{name: "junos running", configType: "running", deviceType: deviceTypeJunos, want: "show configuration | no-more"},
 		{name: "fortios running", configType: "running", deviceType: deviceTypeFortiOS, want: "show full-configuration"},
+		{name: "cumulus4x running", configType: "running", deviceType: deviceTypeCumulus4x, want: "net show configuration commands 2>&1"},
+		{name: "cumulus4x startup rejected", configType: "startup", deviceType: deviceTypeCumulus4x, wantErr: "Cumulus Linux does not have a separate startup-config"},
 		{name: "junos startup rejected", configType: "startup", deviceType: deviceTypeJunos, wantErr: "JunOS does not have a startup-config"},
 		{name: "fortios startup rejected", configType: "startup", deviceType: deviceTypeFortiOS, wantErr: "FortiOS does not have a startup-config"},
 	}
@@ -94,6 +99,29 @@ func TestNormalizeOperationalCommand(t *testing.T) {
 		{name: "fortios show blocked", command: "show system interface", deviceType: deviceTypeFortiOS, wantErr: "use the get_config tool"},
 		{name: "fortios execute blocked", command: "execute ping 1.1.1.1", deviceType: deviceTypeFortiOS, wantErr: "use run_ping or run_traceroute"},
 		{name: "fortios diagnose blocked", command: "diagnose debug enable", deviceType: deviceTypeFortiOS, wantErr: "diagnose commands are not supported"},
+		// Runs of spaces must not skip the get_config redirects.
+		{name: "running-config with two spaces", command: "show  running-config", deviceType: deviceTypeEOS, wantErr: "use the get_config tool"},
+		{name: "startup-config with three spaces", command: "show   startup-config", deviceType: deviceTypeIOS, wantErr: "use the get_config tool"},
+		{name: "running-config spaces nxos", command: "show  run | include hostname", deviceType: deviceTypeNXOS, wantErr: "use the get_config tool"},
+		{name: "junos configuration with two spaces", command: "show  configuration", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
+		{name: "junos configuration with spaces and filter", command: "show   configuration | display set", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
+		{name: "running-config before pipe without space", command: "show run|include hostname", deviceType: deviceTypeEOS, wantErr: "use the get_config tool"},
+		{name: "startup-config abbreviated", command: "show start", deviceType: deviceTypeIOS, wantErr: "use the get_config tool"},
+		{name: "startup-config abbreviation star", command: "show star", deviceType: deviceTypeIOS, wantErr: "use the get_config tool"},
+		{name: "eos startup-config shortest abbreviation", command: "show sta", deviceType: deviceTypeEOS, wantErr: "use the get_config tool"},
+		{name: "nxos startup-config sta", command: "show  STA | no-more", deviceType: deviceTypeNXOS, wantErr: "use the get_config tool"},
+		{name: "eos stat is not startup-config", command: "show stat", deviceType: deviceTypeEOS, want: "show stat"},
+		// Other commands that start with "sta" are not startup-config.
+		{name: "ios standby", command: "show standby brief", deviceType: deviceTypeIOS, want: "show standby brief"},
+		{name: "ios stacks", command: "show stacks", deviceType: deviceTypeIOS, want: "show stacks"},
+		{name: "ios statistics", command: "show statistics", deviceType: deviceTypeIOS, want: "show statistics"},
+		{name: "eos standby", command: "show standby", deviceType: deviceTypeEOS, want: "show standby"},
+		// JunOS accepts abbreviations of "configuration".
+		{name: "junos conf", command: "show conf", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
+		{name: "junos config", command: "show config | display set", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
+		{name: "junos configurati", command: "show configurati", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
+		{name: "junos connections", command: "show connections", deviceType: deviceTypeJunos, want: "show connections"},
+		{name: "eos show configuration sessions", command: "show configuration sessions", deviceType: deviceTypeEOS, want: "show configuration sessions"},
 	}
 
 	for _, tt := range tests {
@@ -224,5 +252,88 @@ func TestBuildersRejectUnresolvedType(t *testing.T) {
 	}
 	if _, err := buildTracerouteCommands("192.0.2.1", "", 0, 0, 0, "", "", ""); !errors.Is(err, errDeviceTypeUnresolved) {
 		t.Errorf("buildTracerouteCommands() error = %v", err)
+	}
+}
+
+func TestBuildCumulusPing(t *testing.T) {
+	tests := []struct {
+		name                        string
+		dest                        string
+		count, size, timeout        int
+		source, vrf, outgoing, want string
+		wantErr                     string
+	}{
+		{name: "default", dest: "192.0.2.1", want: "ping -c 5 192.0.2.1 2>&1"},
+		{name: "all", dest: "192.0.2.1", count: 3, size: 1400, timeout: 2, source: "10.0.0.1", want: "ping -c 3 -s 1400 -W 2 -I 10.0.0.1 192.0.2.1 2>&1"},
+		{name: "source interface", dest: "192.0.2.1", source: "swp1", want: "ping -c 5 -I swp1 192.0.2.1 2>&1"},
+		{name: "vrf", dest: "192.0.2.1", vrf: "mgmt", want: "ping -c 5 -I mgmt 192.0.2.1 2>&1"},
+		{name: "default vrf", dest: "192.0.2.1", vrf: "default", want: "ping -c 5 192.0.2.1 2>&1"},
+		{name: "ipv6", dest: "2001:db8::1", want: "ping -c 5 2001:db8::1 2>&1"},
+		{name: "vrf and source", dest: "192.0.2.1", source: "10.0.0.1", vrf: "mgmt", wantErr: "vrf cannot be combined with source"},
+		{name: "outgoing interface", dest: "192.0.2.1", outgoing: "swp1", wantErr: "outgoing_interface is only supported"},
+		{name: "option destination", dest: "-f", wantErr: "destination must not start with '-'"},
+		{name: "option source", dest: "192.0.2.1", source: "-I", wantErr: "source must not start with '-'"},
+		{name: "option vrf", dest: "192.0.2.1", vrf: "-x", wantErr: "vrf must not start with '-'"},
+		{name: "metacharacter", dest: "a;b", wantErr: "destination may only contain"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildPingCommands(tt.dest, deviceTypeCumulus4x, tt.count, tt.size, tt.timeout, tt.source, tt.vrf, tt.outgoing)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want substring %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || len(got) != 1 || got[0] != tt.want {
+				t.Fatalf("got %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildCumulusTraceroute(t *testing.T) {
+	tests := []struct {
+		name                        string
+		dest                        string
+		maxHops, timeout, probe     int
+		source, vrf, outgoing, want string
+		wantErr                     string
+	}{
+		{name: "default", dest: "192.0.2.1", want: "traceroute 192.0.2.1 2>&1"},
+		{name: "all", dest: "192.0.2.1", maxHops: 10, timeout: 2, probe: 1, source: "10.0.0.1", want: "traceroute -m 10 -w 2 -q 1 -s 10.0.0.1 192.0.2.1 2>&1"},
+		{name: "source interface", dest: "192.0.2.1", source: "swp1", want: "traceroute -i swp1 192.0.2.1 2>&1"},
+		{name: "source link-local", dest: "192.0.2.1", source: "fe80::1%swp1", want: "traceroute -s fe80::1%swp1 192.0.2.1 2>&1"},
+		{name: "mgmt vrf", dest: "192.0.2.1", vrf: "mgmt", want: "traceroute --no-vrf-switch 192.0.2.1 2>&1"},
+		{name: "mgmt vrf with options", dest: "192.0.2.1", maxHops: 2, vrf: "mgmt", want: "traceroute --no-vrf-switch -m 2 192.0.2.1 2>&1"},
+		{name: "default vrf", dest: "192.0.2.1", vrf: "default", want: "traceroute 192.0.2.1 2>&1"},
+		{name: "other vrf", dest: "192.0.2.1", vrf: "blue", want: "traceroute -i blue 192.0.2.1 2>&1"},
+		{name: "vrf and source", dest: "192.0.2.1", source: "10.0.0.1", vrf: "mgmt", wantErr: "vrf cannot be combined with source"},
+		{name: "outgoing interface", dest: "192.0.2.1", outgoing: "swp1", wantErr: "outgoing_interface is only supported"},
+		{name: "option destination", dest: "-f", wantErr: "destination must not start with '-'"},
+		{name: "option source", dest: "192.0.2.1", source: "-I", wantErr: "source must not start with '-'"},
+		{name: "option vrf", dest: "192.0.2.1", vrf: "-x", wantErr: "vrf must not start with '-'"},
+		{name: "metacharacter", dest: "a;b", wantErr: "destination may only contain"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := buildTracerouteCommands(tt.dest, deviceTypeCumulus4x, tt.maxHops, tt.timeout, tt.probe, tt.source, tt.vrf, tt.outgoing)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want substring %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || len(got) != 1 || got[0] != tt.want {
+				t.Fatalf("got %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestPingTimeoutMessageNamesCumulus(t *testing.T) {
+	_, err := buildPingCommands("192.0.2.1", deviceTypeEOS, 0, 0, 2, "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "timeout is only supported for device_type 'fortios' or 'cumulus4x'") {
+		t.Fatalf("error = %v", err)
 	}
 }

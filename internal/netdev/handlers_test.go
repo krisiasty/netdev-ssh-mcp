@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -313,6 +314,21 @@ func TestHandlersUnsupportedPlatformRunsNothing(t *testing.T) {
 	}
 }
 
+func TestHandlersUnsupportedCumulusRunsNothingBeyondProbe(t *testing.T) {
+	resetDetection(t)
+	f := &fakeProbe{ident: identCumulus, outputs: map[string]string{probeOSRelease: readFixture(t, "cumulus54_os_release.txt")}}
+	runProbe = f.probe
+	ran := stubRunCommand(t, "output", nil)
+
+	_, _, err := GetConfig(context.Background(), nil, GetConfigInput{Host: "mgmt1", Username: "u"})
+	if !errors.Is(err, errUnsupportedPlatform) || !strings.Contains(err.Error(), "Cumulus Linux 5.4.0 is not supported") {
+		t.Fatalf("GetConfig() error = %v, want errUnsupportedPlatform naming Cumulus Linux 5.4.0", err)
+	}
+	if len(*ran) != 0 || len(f.ran) != 1 || f.ran[0] != probeOSRelease {
+		t.Fatalf("ran %q, probes %q; want only the os-release probe", *ran, f.ran)
+	}
+}
+
 func TestHandlersRejectBadArgsBeforeDetection(t *testing.T) {
 	resetDetection(t)
 	f := &fakeProbe{ident: identEOS}
@@ -596,4 +612,312 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Cleanup(func() { slog.SetDefault(orig) })
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 	return &logs
+}
+
+func TestGetConfigCumulusUsesNetShowConfigurationCommands(t *testing.T) {
+	ran := stubRunCommand(t, "net add bgp neighbor swp51 password FAKEbgp\n", nil)
+	res, _, err := GetConfig(context.Background(), nil, GetConfigInput{Host: "leaf1", Username: "u", DeviceType: "cumulus4x"})
+	if err != nil {
+		t.Fatalf("GetConfig() error = %v", err)
+	}
+	if want := []string{"net show configuration commands 2>&1"}; !slices.Equal(*ran, want) {
+		t.Fatalf("GetConfig() ran %q, want %q", *ran, want)
+	}
+	if supportedDeviceTypes != "eos, ios, nxos, junos, fortios or cumulus4x" {
+		t.Fatalf("supportedDeviceTypes = %q", supportedDeviceTypes)
+	}
+	if len(res.Content) == 0 {
+		t.Fatal("GetConfig() returned no content")
+	}
+	if text := res.Content[0].(*mcp.TextContent).Text; strings.Contains(text, "FAKEbgp") {
+		t.Fatalf("result leaks secret: %q", text)
+	}
+}
+
+func TestRunShowCommandCumulus(t *testing.T) {
+	ran := stubRunCommand(t, "ok", nil)
+	_, _, err := RunShowCommand(context.Background(), nil, RunShowCommandInput{
+		Host: "sw1", Username: "cumulus", DeviceType: "cumulus4x", Command: "net show interface json",
+	})
+	if err != nil {
+		t.Fatalf("RunShowCommand() error = %v", err)
+	}
+	if len(*ran) != 1 || (*ran)[0] != "net show interface json 2>&1" {
+		t.Fatalf("ran %q, want exactly net show interface json 2>&1", *ran)
+	}
+
+	*ran = nil
+	_, _, err = RunShowCommand(context.Background(), nil, RunShowCommandInput{
+		Host: "sw1", Username: "cumulus", DeviceType: "cumulus4x", Command: "net show configuration",
+	})
+	if err == nil || !strings.Contains(err.Error(), "use the get_config tool") {
+		t.Fatalf("error = %v, want get_config error", err)
+	}
+	if len(*ran) != 0 {
+		t.Fatalf("ran %q, want nothing", *ran)
+	}
+}
+
+const cumulusLossOutput = "PING 192.0.2.1 (192.0.2.1) 56(84) bytes of data.\n--- 192.0.2.1 ping statistics ---\n5 packets transmitted, 0 received, 100% packet loss\n"
+
+// Linux ping exits 1 when nothing answered, which is a result. Linux
+// traceroute exits 0 for a completed trace, reachable or not, and uses a
+// non-zero status, 1 included, for errors such as a bad source interface. A
+// cumulus4x error carries the device output, which states the reason; other
+// platforms keep it out of the error. The log never gets it.
+func TestPingTracerouteCumulusExitStatus(t *testing.T) {
+	type testCase struct {
+		name    string
+		dt      string
+		status  int
+		wantErr bool
+	}
+	calls := map[string]struct {
+		call  func(dt string) (*mcp.CallToolResult, error)
+		tests []testCase
+	}{
+		"run_ping": {
+			call: func(dt string) (*mcp.CallToolResult, error) {
+				res, _, err := RunPing(context.Background(), nil, RunPingInput{Host: "sw1", Username: "u", Destination: "192.0.2.1", DeviceType: dt})
+				return res, err
+			},
+			tests: []testCase{
+				{name: "cumulus exit 1 is a result", dt: "cumulus4x", status: 1},
+				{name: "cumulus exit 2 is an error", dt: "cumulus4x", status: 2, wantErr: true},
+				{name: "eos exit 1 is an error", dt: "eos", status: 1, wantErr: true},
+			},
+		},
+		"run_traceroute": {
+			call: func(dt string) (*mcp.CallToolResult, error) {
+				res, _, err := RunTraceroute(context.Background(), nil, RunTracerouteInput{Host: "sw1", Username: "u", Destination: "192.0.2.1", DeviceType: dt})
+				return res, err
+			},
+			tests: []testCase{
+				{name: "cumulus exit 1 is an error", dt: "cumulus4x", status: 1, wantErr: true},
+				{name: "cumulus exit 2 is an error", dt: "cumulus4x", status: 2, wantErr: true},
+				{name: "eos exit 1 is an error", dt: "eos", status: 1, wantErr: true},
+			},
+		},
+	}
+	for name, tool := range calls {
+		call := tool.call
+		t.Run(name, func(t *testing.T) {
+			for _, tt := range tool.tests {
+				t.Run(tt.name, func(t *testing.T) {
+					stubRunCommand(t, "", &sshclient.CommandError{Command: "c", ExitStatus: tt.status, Output: []byte(cumulusLossOutput)})
+					var logs bytes.Buffer
+					orig := slog.Default()
+					t.Cleanup(func() { slog.SetDefault(orig) })
+					slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+					res, err := call(tt.dt)
+					if strings.Contains(logs.String(), "packet loss") {
+						t.Fatalf("log = %q, want no device output", logs.String())
+					}
+					if tt.wantErr {
+						wantOutput := tt.dt == "cumulus4x"
+						if err == nil || strings.Contains(err.Error(), "100% packet loss") != wantOutput {
+							t.Fatalf("error = %v, want device output in it: %v", err, wantOutput)
+						}
+						return
+					}
+					if err != nil {
+						t.Fatalf("error = %v", err)
+					}
+					if got := strings.Join(contentTexts(res.Content), "\n"); !strings.Contains(got, "100% packet loss") {
+						t.Fatalf("result = %q, want the device output", got)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestPingCumulusExitOneDetected(t *testing.T) {
+	resetDetection(t)
+	runProbe = (&fakeProbe{ident: identCumulus, outputs: map[string]string{probeOSRelease: readFixture(t, "cumulus43_os_release.txt")}}).probe
+	stubRunCommand(t, "", &sshclient.CommandError{Command: "c", ExitStatus: 1, Output: []byte(cumulusLossOutput)})
+	logs := captureLogs(t)
+
+	res, _, err := RunPing(context.Background(), nil, RunPingInput{Host: "sw1", Username: "u", Destination: "192.0.2.1"})
+	if err != nil {
+		t.Fatalf("error = %v", err)
+	}
+	texts := contentTexts(res.Content)
+	if len(texts) != 2 || texts[0] != cumulusLossOutput || !strings.Contains(texts[1], "device_type: cumulus4x (auto-detected") {
+		t.Fatalf("content = %q, want the output followed by the detection notice", texts)
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Fatalf("logs hold an error record: %s", logs)
+	}
+}
+
+// stubRunCommandConfigs records the connection config of each command a
+// handler runs and answers with out.
+func stubRunCommandConfigs(t *testing.T, out string) *[]sshclient.ConnConfig {
+	t.Helper()
+	origOne, origMany := runCommand, runCommands
+	t.Cleanup(func() { runCommand, runCommands = origOne, origMany })
+	var cfgs []sshclient.ConnConfig
+	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, _ string) (string, error) {
+		cfgs = append(cfgs, cfg)
+		return out, nil
+	}
+	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, _ []string) (string, error) {
+		cfgs = append(cfgs, cfg)
+		return out, nil
+	}
+	return &cfgs
+}
+
+// commandToolCalls runs each tool that runs a device command with device type
+// dt ("" detects it).
+var commandToolCalls = map[string]func(ctx context.Context, dt string) error{
+	"get_config": func(ctx context.Context, dt string) error {
+		_, _, err := GetConfig(ctx, nil, GetConfigInput{Host: "sw1", Username: "u", DeviceType: dt})
+		return err
+	},
+	"run_show_command": func(ctx context.Context, dt string) error {
+		command := "show version"
+		switch dt {
+		case "fortios":
+			command = "get system status"
+		case "cumulus4x":
+			command = "net show version"
+		}
+		_, _, err := RunShowCommand(ctx, nil, RunShowCommandInput{Host: "sw1", Username: "u", Command: command, DeviceType: dt})
+		return err
+	},
+	"run_ping": func(ctx context.Context, dt string) error {
+		_, _, err := RunPing(ctx, nil, RunPingInput{Host: "sw1", Username: "u", Destination: "192.0.2.1", DeviceType: dt})
+		return err
+	},
+	"run_traceroute": func(ctx context.Context, dt string) error {
+		_, _, err := RunTraceroute(ctx, nil, RunTracerouteInput{Host: "sw1", Username: "u", Destination: "192.0.2.1", DeviceType: dt})
+		return err
+	},
+}
+
+// TestNonCumulusTypeRefusesLinuxServer checks that every tool that runs a
+// command asks sshclient to refuse a Linux SSH server unless the device type
+// is cumulus4x: there bash runs the command, and only the cumulus4x checks
+// are written for it. FortiOS ping and traceroute take the RunCommands path.
+func TestNonCumulusTypeRefusesLinuxServer(t *testing.T) {
+	for name, call := range commandToolCalls {
+		t.Run(name, func(t *testing.T) {
+			for _, dt := range []string{"eos", "ios", "nxos", "junos", "fortios"} {
+				cfgs := stubRunCommandConfigs(t, "ok")
+				if err := call(t.Context(), dt); err != nil {
+					t.Fatalf("%s: error = %v", dt, err)
+				}
+				if len(*cfgs) != 1 || (*cfgs)[0].CheckServerVersion == nil {
+					t.Fatalf("%s: configs = %+v, want one with CheckServerVersion", dt, *cfgs)
+				}
+				check := (*cfgs)[0].CheckServerVersion
+				err := check(identCumulus)
+				if !errors.Is(err, errUnsupportedPlatform) || !strings.Contains(err.Error(), "only device_type cumulus4x is supported on Linux") {
+					t.Fatalf("%s: check(%q) = %v, want the Linux server refused", dt, identCumulus, err)
+				}
+				if err := check("SSH-2.0-OpenSSH_8.7"); err != nil {
+					t.Fatalf("%s: check(EOS ident) = %v, want nil", dt, err)
+				}
+			}
+
+			cfgs := stubRunCommandConfigs(t, "ok")
+			if err := call(t.Context(), "cumulus4x"); err != nil {
+				t.Fatalf("cumulus4x: error = %v", err)
+			}
+			if len(*cfgs) != 1 {
+				t.Fatalf("cumulus4x: configs = %+v, want one", *cfgs)
+			}
+			if check := (*cfgs)[0].CheckServerVersion; check != nil && check(identCumulus) != nil {
+				t.Fatalf("cumulus4x: check(%q) = %v, want the Linux server accepted", identCumulus, check(identCumulus))
+			}
+		})
+	}
+}
+
+// TestDetectedTypeRefusesLinuxServer checks that a detected or cached
+// non-cumulus4x type gets the same check: a cached detection can outlive
+// the device it describes.
+func TestDetectedTypeRefusesLinuxServer(t *testing.T) {
+	resetDetection(t)
+	runProbe = (&fakeProbe{ident: identEOS, outputs: map[string]string{probeShowVersion: readFixture(t, "eos_show_version.txt")}}).probe
+	cfgs := stubRunCommandConfigs(t, "ok")
+
+	if err := commandToolCalls["run_show_command"](t.Context(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(*cfgs) != 1 || (*cfgs)[0].CheckServerVersion == nil || !errors.Is((*cfgs)[0].CheckServerVersion(identCumulus), errUnsupportedPlatform) {
+		t.Fatalf("configs = %+v, want CheckServerVersion refusing a Linux server", *cfgs)
+	}
+}
+
+// TestLinuxServerRefusalReachesCaller checks how a refusal from
+// CheckServerVersion surfaces: with the tool prefix, as
+// errUnsupportedPlatform, and logged at Info rather than as a device failure.
+func TestLinuxServerRefusalReachesCaller(t *testing.T) {
+	origOne, origMany := runCommand, runCommands
+	t.Cleanup(func() { runCommand, runCommands = origOne, origMany })
+	refuse := func(cfg sshclient.ConnConfig) (string, error) {
+		if cfg.CheckServerVersion == nil {
+			return "FAKEdevice output", nil
+		}
+		if err := cfg.CheckServerVersion(identCumulus); err != nil {
+			return "", fmt.Errorf("SSH server sw1:22: %w", err)
+		}
+		return "FAKEdevice output", nil
+	}
+	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, _ string) (string, error) { return refuse(cfg) }
+	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, _ []string) (string, error) { return refuse(cfg) }
+
+	for name, call := range commandToolCalls {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			err := call(t.Context(), "eos")
+			if !errors.Is(err, errUnsupportedPlatform) || !strings.HasPrefix(err.Error(), name+": ") || strings.Contains(err.Error(), "FAKE") {
+				t.Fatalf("error = %v, want the refusal prefixed with %q", err, name)
+			}
+			if strings.Contains(logs.String(), "level=ERROR") {
+				t.Fatalf("logs = %q, want no ERROR", logs.String())
+			}
+		})
+	}
+}
+
+// TestLinuxServerRefusalForgetsDetectedType checks that a cached detection
+// refused by refuseLinuxServer is forgotten, and that the error does not tell
+// the caller to pass the type that no longer fits the SSH server.
+func TestLinuxServerRefusalForgetsDetectedType(t *testing.T) {
+	origOne, origMany := runCommand, runCommands
+	t.Cleanup(func() { runCommand, runCommands = origOne, origMany })
+	refuse := func(cfg sshclient.ConnConfig) (string, error) {
+		if cfg.CheckServerVersion == nil {
+			return "", nil
+		}
+		if err := cfg.CheckServerVersion(identCumulus); err != nil {
+			return "", fmt.Errorf("SSH server sw1:22: %w", err)
+		}
+		return "", nil
+	}
+	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, _ string) (string, error) { return refuse(cfg) }
+	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, _ []string) (string, error) { return refuse(cfg) }
+
+	for name, call := range commandToolCalls {
+		t.Run(name, func(t *testing.T) {
+			resetDetection(t)
+			key := cacheKey("sw1", 0)
+			storeType(key, resolvedType{dt: deviceTypeEOS, source: sourceProbe})
+
+			err := call(t.Context(), "")
+			if !errors.Is(err, errUnsupportedPlatform) {
+				t.Fatalf("error = %v, want errUnsupportedPlatform", err)
+			}
+			if strings.Contains(err.Error(), "Pass device_type=eos") || !strings.Contains(err.Error(), detectedMismatchNotice) {
+				t.Fatalf("error = %v, want the mismatch notice and no device_type suggestion", err)
+			}
+			if _, ok := cachedType(key); ok {
+				t.Fatal("cached type kept, want it forgotten")
+			}
+		})
+	}
 }

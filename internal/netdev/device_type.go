@@ -17,6 +17,8 @@ const (
 	deviceTypeNXOS    deviceType = "nxos"
 	deviceTypeJunos   deviceType = "junos"
 	deviceTypeFortiOS deviceType = "fortios"
+
+	deviceTypeCumulus4x deviceType = "cumulus4x"
 )
 
 var (
@@ -59,8 +61,10 @@ func normalizeDeviceType(raw string) (deviceType, error) {
 		return deviceTypeJunos, nil
 	case "fortigate", string(deviceTypeFortiOS):
 		return deviceTypeFortiOS, nil
+	case string(deviceTypeCumulus4x):
+		return deviceTypeCumulus4x, nil
 	default:
-		return "", fmt.Errorf("device_type must be 'eos', 'ios', 'nxos', 'junos', or 'fortios', got %q", raw)
+		return "", fmt.Errorf("device_type must be 'eos', 'ios', 'nxos', 'junos', 'fortios', or 'cumulus4x', got %q", raw)
 	}
 }
 
@@ -87,6 +91,11 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 			return "", fmt.Errorf("FortiOS does not have a startup-config; use config_type 'running' or omit it")
 		}
 		return "show full-configuration", nil
+	case deviceTypeCumulus4x:
+		if configType == "startup" {
+			return "", fmt.Errorf("config_type startup: Cumulus Linux does not have a separate startup-config; use config_type 'running' or omit it")
+		}
+		return "net show configuration commands" + cumulusMergeStderr, nil
 	case deviceTypeIOS:
 		return fmt.Sprintf("show %s-config", configType), nil
 	case deviceTypeEOS, deviceTypeNXOS:
@@ -97,12 +106,23 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 }
 
 // allDeviceTypes lists every supported platform.
-var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos, deviceTypeFortiOS}
+var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos, deviceTypeFortiOS, deviceTypeCumulus4x}
 
 // checkCommandOnAnyPlatform rejects a run_show_command command that no
 // supported platform would accept, so it fails before detection logs in to
 // the device. The platform's own check still runs once the type is known.
 func checkCommandOnAnyPlatform(command string) error {
+	// Only Cumulus commands start with "net", and only FortiOS commands with
+	// "get"; that platform's error is the useful one.
+	first, _, _ := strings.Cut(strings.TrimSpace(command), " ")
+	switch {
+	case first == "net":
+		_, err := normalizeCumulusCommand(strings.TrimSpace(command))
+		return err
+	case strings.EqualFold(first, "get"):
+		_, err := normalizeOperationalCommand(command, deviceTypeFortiOS)
+		return err
+	}
 	var firstErr error
 	for _, dt := range allDeviceTypes {
 		_, err := normalizeOperationalCommand(command, dt)
@@ -123,6 +143,9 @@ func normalizeOperationalCommand(command string, dt deviceType) (string, error) 
 	trimmed := strings.TrimSpace(command)
 	lower := strings.ToLower(trimmed)
 
+	if dt == deviceTypeCumulus4x {
+		return normalizeCumulusCommand(trimmed)
+	}
 	if dt == deviceTypeFortiOS {
 		return normalizeFortiOSOperationalCommand(trimmed, lower)
 	}
@@ -130,10 +153,22 @@ func normalizeOperationalCommand(command string, dt deviceType) (string, error) 
 	if err := checkOperationalCommand(trimmed, "show", dt); err != nil {
 		return "", err
 	}
-	if strings.HasPrefix(lower, "show ru") || strings.HasPrefix(lower, "show sta") {
+	// The second word is checked on its own, so runs of spaces do not hide
+	// it; the command itself is sent as written. "sta" means startup-config
+	// on EOS and NX-OS; on IOS it is ambiguous and the device rejects it anyway, so it
+	// is refused everywhere. Longer words that are not abbreviations of
+	// startup-config, such as standby, stacks or statistics, are allowed.
+	words := spaceSeparated(strings.Split(lower, "|")[0])
+	second := ""
+	if len(words) > 1 {
+		second = words[1]
+	}
+	if strings.HasPrefix(second, "ru") || second == "sta" || strings.HasPrefix(second, "star") {
 		return "", fmt.Errorf("use the get_config tool for running-config and startup-config")
 	}
-	if dt == deviceTypeJunos && strings.HasPrefix(lower, "show configuration") {
+	// The JunOS CLI accepts any unambiguous abbreviation of "configuration"
+	// ("show conf"); "con" and shorter are ambiguous there.
+	if dt == deviceTypeJunos && len(second) >= 4 && strings.HasPrefix("configuration", second) {
 		return "", fmt.Errorf("use the get_config tool to retrieve device configuration")
 	}
 
@@ -168,6 +203,9 @@ func buildPingCommands(destination string, dt deviceType, count, size, timeout i
 	if err := checkCommandArgs(destination, source, vrf, outgoingInterface); err != nil {
 		return nil, err
 	}
+	if dt == deviceTypeCumulus4x {
+		return buildCumulusPing(destination, count, size, timeout, source, vrf, outgoingInterface)
+	}
 	if dt == deviceTypeFortiOS {
 		if vrf != "" {
 			return nil, fmt.Errorf("FortiOS 7.4+ does not support vrf for run_ping")
@@ -197,7 +235,7 @@ func buildPingCommands(destination string, dt deviceType, count, size, timeout i
 	}
 
 	if timeout > 0 {
-		return nil, fmt.Errorf("timeout is only supported for device_type 'fortios'")
+		return nil, fmt.Errorf("timeout is only supported for device_type 'fortios' or 'cumulus4x'")
 	}
 	if outgoingInterface != "" {
 		return nil, fmt.Errorf("outgoing_interface is only supported for device_type 'fortios'")
@@ -241,6 +279,9 @@ func buildTracerouteCommands(destination string, dt deviceType, maxHops, timeout
 	}
 	if err := checkCommandArgs(destination, source, vrf, outgoingInterface); err != nil {
 		return nil, err
+	}
+	if dt == deviceTypeCumulus4x {
+		return buildCumulusTraceroute(destination, maxHops, timeout, probe, source, vrf, outgoingInterface)
 	}
 	if dt == deviceTypeFortiOS {
 		switch {

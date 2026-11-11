@@ -44,7 +44,7 @@ func pattern(expr string, skip ...string) sensitivePattern {
 }
 
 // sensitivePatterns covers Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper
-// JunOS and FortiOS syntax. Every pattern is applied to every line, so their
+// JunOS, FortiOS and Cumulus Linux 4.x syntax. Every pattern is applied to every line, so their
 // order does not matter and a line can hold several secrets.
 var sensitivePatterns = []sensitivePattern{
 	// enable secret|password [level N] [type] <value>  (Arista, Cisco)
@@ -62,8 +62,6 @@ var sensitivePatterns = []sensitivePattern{
 	pattern(`^\s*snmp-server\s+user\s+.*?\spriv(?:\s+(?:aes-?\d+|aes|3des|des|\d{3}))*\s+` + value),
 	// Community name: <value> / Community: <value>  (show snmp community output)
 	pattern(`^\s*Community(?:\s+name)?:\s+` + value),
-	// neighbor IP|GROUP password [type] <value>  (BGP, Arista, Cisco)
-	pattern(`^\s*neighbor\s+\S+\s+password` + typeTokens + `\s+` + value),
 	// tacacs-server|radius-server [host IP [options]] key [type] <value>  (Arista, Cisco)
 	pattern(`^\s*(?:tacacs|radius)-server\s+(?:host\s+\S+\s+(?:\S+\s+)*?)?key` + typeTokens + `\s+` + value),
 	// key <type> <value> in a tacacs/radius server block  (Cisco IOS-XE)
@@ -125,6 +123,49 @@ var sensitivePatterns = []sensitivePattern{
 	// FortiOS: set key "<value>" / set password "<value>"  (clear-text key-like values)
 	pattern(`^\s*set\s+(?:passwd|password|passphrase|auth-passwd|group-password|psksecret(?:-remote|-local)?|ppk-secret|secret|private-key|local-key|peer-key|server-key|client-key|key)\s+` + quoted),
 
+	// Cumulus Linux 4.x: NCLU commands and block form
+	// [net add ...] neighbor IP|IFACE|GROUP password [type] <value>  (BGP; also
+	// Arista and Cisco, which have no prefix)
+	pattern(boundary + `neighbor\s+\S+\s+password` + typeTokens + `\s+` + value),
+	// [net add ...] ospf message-digest-key ID ALGO <value>  (OSPF)
+	pattern(boundary + `ospf\s+message-digest-key\s+\d+\s+\S+` + typeTokens + `\s+` + value),
+	// [net add ...] ospf authentication-key <value>  (OSPF)
+	pattern(boundary + `ospf\s+authentication-key` + typeTokens + `\s+` + value),
+	// [net add snmp-server] readonly-community[-v6] <value> access ...  (SNMP)
+	pattern(boundary + `(?:readonly|readwrite)-community(?:-v6)?\s+` + value),
+	// [net add snmp-server trap-destination IP [vrf V]] community-password <value>  (SNMP)
+	pattern(boundary + `community-password\s+` + value),
+	// [net add snmp-server] username NAME auth-md5|auth-sha <value> [encrypt-des|encrypt-aes <value>]
+	// (SNMPv3, also on trap-destination ... username ... lines)
+	pattern(boundary + `auth-(?:md5|sha)\s+` + value),
+	pattern(boundary + `encrypt-(?:des|aes)\s+` + value),
+	// [net add dot1x radius] shared-secret <value>  (802.1X RADIUS)
+	pattern(boundary + `shared-secret\s+` + value),
+	// [net add dot1x radius das-client-ip IP [vrf V]] das-client-secret <value>  (802.1X RADIUS)
+	pattern(boundary + `das-client-secret\s+` + value),
+
+	// Cumulus Linux 4.x: snmpd.conf and /etc/tacplus_servers
+	// rocommunity|rwcommunity[6] [-Cn CONTEXT] <value> [source] [-V view]  (snmpd.conf)
+	pattern(`^\s*r[ow]community6?\s+(?:-Cn\s+\S+\s+)?` + value),
+	// createUser [-e ENGINEID] NAME [AUTHALGO] [-m|-l] <authpass> [PRIVALGO [-m|-l] <privpass>]  (snmpd.conf, SNMPv3)
+	pattern(`^\s*createuser\s+(?:-e\s+\S+\s+)?\S+\s+(?:(?:md5|sha\S*)\s+)?(?:-[ml]\s+)?` + value + `(?:\s+(?:des|aes\S*)\s+(?:-[ml]\s+)?` + value + `)?`),
+	// trapsink|trap2sink|informsink HOST <value> [port]  (snmpd.conf). The
+	// community is required, so "trapsink HOST" is left alone.
+	pattern(`^\s*(?:trap|trap2|inform)sink\s+\S+\s+` + value),
+	// trapcommunity <value>  (snmpd.conf)
+	pattern(`^\s*trapcommunity\s+` + value),
+	// authcommunity TYPES <value> [source] [-V view]  (snmpd.conf)
+	pattern(`^\s*authcommunity\s+\S+\s+` + value),
+	// com2sec[6] [-Cn CONTEXT] SECNAME SOURCE <value>  (snmpd.conf)
+	pattern(`^\s*com2sec6?\s+(?:-Cn\s+\S+\s+)?\S+\s+\S+\s+` + value),
+	// trapsess ... -c <community> | -A <authpass> | -X <privpass> ...  (snmpd.conf). The
+	// flags are case-sensitive: -a and -x name algorithms, not secrets.
+	pattern(`^\s*trapsess\s(?:.*\s)?(?-i:-c)\s+` + value),
+	pattern(`^\s*trapsess\s(?:.*\s)?(?-i:-A)\s+` + value),
+	pattern(`^\s*trapsess\s(?:.*\s)?(?-i:-X)\s+` + value),
+	// secret=<value>  (/etc/tacplus_servers). The value runs to the end of the line and may hold spaces.
+	pattern(boundary + `secret=(.*\S)`),
+
 	// Catch-all: any quoted value on a line JunOS marks as secret. Covers
 	// secret-bearing statements that have no specific pattern above.
 	pattern(quoted + `\s*;?\s*##\s*SECRET-DATA`),
@@ -161,7 +202,8 @@ func SetObfuscationKey(raw []byte, source string) {
 // always produces the same token, so outputs remain comparable without
 // revealing the secret, and tokens cannot be checked against guesses without
 // the key.
-// Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, and FortiOS syntax.
+// Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, FortiOS and Cumulus Linux 4.x syntax,
+// and JSON output on every platform.
 func obfuscate(config string) (out string, hashed bool, err error) {
 	if !Obfuscate {
 		return config, false, nil
@@ -169,13 +211,16 @@ func obfuscate(config string) (out string, hashed bool, err error) {
 	if obfuscationKey == nil {
 		return "", false, errObfuscationKeyNotSet
 	}
-	lines := strings.Split(config, "\n")
-	for i, line := range lines {
-		var h bool
-		lines[i], h = obfuscateLine(line)
-		hashed = hashed || h
+	// Both passes read the original text and only report spans, so neither can
+	// hide a secret from the other by rewriting what it sees.
+	spans := jsonSpans(config)
+	offset := 0
+	for line := range strings.SplitSeq(config, "\n") {
+		spans = append(spans, lineSpans(line, offset)...)
+		offset += len(line) + 1
 	}
-	return strings.Join(lines, "\n"), hashed, nil
+	out, hashed = hashSpans(config, spans)
+	return out, hashed, nil
 }
 
 // obfuscatedResult obfuscates device output and wraps it in a tool result.
@@ -194,47 +239,75 @@ func obfuscatedResult(output string) (*mcp.CallToolResult, error) {
 	return &mcp.CallToolResult{Content: content}, nil
 }
 
-type span struct{ start, end int }
+// span marks text[start:end] as a secret. A JSON number span is replaced with
+// a quoted token, so JSON output stays valid.
+type span struct {
+	start, end int
+	number     bool
+}
 
-// obfuscateLine hashes every secret any pattern finds in line and reports
-// whether it found any. Overlapping matches are merged so no part of a secret
-// survives.
-func obfuscateLine(line string) (string, bool) {
+// lineSpans returns a span for every secret any pattern finds in line, offset
+// by the line's position in the whole text.
+func lineSpans(line string, offset int) []span {
 	var spans []span
 	for _, p := range sensitivePatterns {
 		for _, m := range p.re.FindAllStringSubmatchIndex(line, -1) {
 			for g := 2; g+1 < len(m); g += 2 {
-				s := span{m[g], m[g+1]}
-				if s.start < 0 || s.start == s.end || p.skips(line[s.start:s.end]) {
+				start, end := m[g], m[g+1]
+				if start < 0 || start == end || p.skips(line[start:end]) {
 					continue
 				}
-				spans = append(spans, s)
+				spans = append(spans, span{start: offset + start, end: offset + end})
 			}
 		}
 	}
-	if len(spans) == 0 {
-		return line, false
-	}
+	return spans
+}
 
-	slices.SortFunc(spans, func(a, b span) int { return a.start - b.start })
+// hashSpans replaces every secret span in text with its token and reports
+// whether there were any. Overlapping and touching spans are merged first and
+// hashed as one, so no part of a secret survives. A merged span keeps the
+// quoting of a JSON number only when it is exactly that number.
+func hashSpans(text string, spans []span) (string, bool) {
+	if len(spans) == 0 {
+		return text, false
+	}
+	slices.SortFunc(spans, func(a, b span) int {
+		if a.start != b.start {
+			return a.start - b.start
+		}
+		return a.end - b.end
+	})
 	merged := spans[:1]
 	for _, s := range spans[1:] {
 		last := &merged[len(merged)-1]
-		if s.start < last.end {
-			last.end = max(last.end, s.end)
+		if s.start > last.end {
+			merged = append(merged, s)
 			continue
 		}
-		merged = append(merged, s)
+		switch {
+		case s.end > last.end:
+			// Sorted by start, so s covers the merged span only when it
+			// starts where the merged span starts.
+			last.number = s.number && s.start == last.start
+			last.end = s.end
+		case s.start == last.start && s.end == last.end:
+			last.number = last.number || s.number
+		}
 	}
 
 	var b strings.Builder
 	prev := 0
 	for _, s := range merged {
-		b.WriteString(line[prev:s.start])
-		b.WriteString(hashSecret(line[s.start:s.end]))
+		b.WriteString(text[prev:s.start])
+		token := hashSecret(text[s.start:s.end])
+		if s.number {
+			token = `"` + token + `"`
+		}
+		b.WriteString(token)
 		prev = s.end
 	}
-	b.WriteString(line[prev:])
+	b.WriteString(text[prev:])
 	return b.String(), true
 }
 
