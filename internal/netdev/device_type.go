@@ -19,6 +19,7 @@ const (
 	deviceTypeFortiOS deviceType = "fortios"
 
 	deviceTypeCumulus4x deviceType = "cumulus4x"
+	deviceTypeCumulus5x deviceType = "cumulus5x"
 )
 
 var (
@@ -63,8 +64,10 @@ func normalizeDeviceType(raw string) (deviceType, error) {
 		return deviceTypeFortiOS, nil
 	case string(deviceTypeCumulus4x):
 		return deviceTypeCumulus4x, nil
+	case string(deviceTypeCumulus5x):
+		return deviceTypeCumulus5x, nil
 	default:
-		return "", fmt.Errorf("device_type must be 'eos', 'ios', 'nxos', 'junos', 'fortios', or 'cumulus4x', got %q", raw)
+		return "", fmt.Errorf("device_type must be 'eos', 'ios', 'nxos', 'junos', 'fortios', 'cumulus4x', or 'cumulus5x', got %q", raw)
 	}
 }
 
@@ -106,7 +109,7 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 }
 
 // allDeviceTypes lists every supported platform.
-var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos, deviceTypeFortiOS, deviceTypeCumulus4x}
+var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos, deviceTypeFortiOS, deviceTypeCumulus4x, deviceTypeCumulus5x}
 
 // checkCommandOnAnyPlatform rejects a run_show_command command that no
 // supported platform would accept, so it fails before detection logs in to

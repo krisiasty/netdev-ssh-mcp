@@ -19,7 +19,9 @@ func TestNormalizeDeviceType(t *testing.T) {
 		{name: "junos", input: "junos", want: deviceTypeJunos},
 		{name: "cumulus4x", input: "cumulus4x", want: deviceTypeCumulus4x},
 		{name: "cumulus4x mixed case", input: " CUMULUS4X ", want: deviceTypeCumulus4x},
-		{name: "cumulus without version", input: "cumulus", wantErr: "'cumulus4x'"},
+		{name: "cumulus5x", input: "cumulus5x", want: deviceTypeCumulus5x},
+		{name: "cumulus5x mixed case", input: " CUMULUS5X ", want: deviceTypeCumulus5x},
+		{name: "cumulus without version", input: "cumulus", wantErr: "'cumulus5x'"},
 		{name: "invalid", input: "asa", wantErr: "device_type must be"},
 	}
 

@@ -170,10 +170,10 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "detect_platform",
 		Description: "Connect to a network device via SSH and identify its platform, returning the device_type to pass to the other tools " +
-			"(eos, ios, nxos, junos, fortios or cumulus4x) and a short software version. Detection reads the SSH server identification and runs " +
+			"(eos, ios, nxos, junos, fortios, cumulus4x or cumulus5x) and a short software version. Detection reads the SSH server identification and runs " +
 			"one read-only command ('show version', 'get system status' on FortiOS, or 'cat /etc/os-release' on Debian or Ubuntu based systems). Results are cached by this server per host; " +
 			"set refresh=true to probe again. Use it to resolve a list of hosts before working through them. " +
-			"Cumulus Linux 5.x, other Linux systems and the Cisco Business switch OS (e.g. Catalyst 1200) are recognised and reported as unsupported.",
+			"Other Linux systems and the Cisco Business switch OS (e.g. Catalyst 1200) are recognised and reported as unsupported.",
 	}, netdev.DetectPlatform)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -191,7 +191,7 @@ func main() {
 
 // deviceTypeGuidance is shared by the tools that take device_type.
 const deviceTypeGuidance = "device_type selects the platform syntax: 'eos' (Arista), 'ios' (Cisco IOS/IOS-XE), 'nxos' (Cisco NX-OS), " +
-	"'junos' (Juniper JunOS), 'fortios' (FortiGate/FortiOS) or 'cumulus4x' (Cumulus Linux 4.x; 5.x is not supported). Pass it when you know the platform, for example from an inventory " +
+	"'junos' (Juniper JunOS), 'fortios' (FortiGate/FortiOS), 'cumulus4x' (Cumulus Linux 4.x) or 'cumulus5x' (Cumulus Linux 5.x). Pass it when you know the platform, for example from an inventory " +
 	"system. If it is omitted, the platform is auto-detected over SSH, cached for the host, and reported in a note after the output; " +
 	"pass that value on later calls. To work through many hosts, call detect_platform for each one first. "
 

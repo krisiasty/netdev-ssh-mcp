@@ -316,13 +316,13 @@ func TestHandlersUnsupportedPlatformRunsNothing(t *testing.T) {
 
 func TestHandlersUnsupportedCumulusRunsNothingBeyondProbe(t *testing.T) {
 	resetDetection(t)
-	f := &fakeProbe{ident: identCumulus, outputs: map[string]string{probeOSRelease: readFixture(t, "cumulus54_os_release.txt")}}
+	f := &fakeProbe{ident: identCumulus, outputs: map[string]string{probeOSRelease: readFixture(t, "cumulus60_os_release.txt")}}
 	runProbe = f.probe
 	ran := stubRunCommand(t, "output", nil)
 
 	_, _, err := GetConfig(context.Background(), nil, GetConfigInput{Host: "mgmt1", Username: "u"})
-	if !errors.Is(err, errUnsupportedPlatform) || !strings.Contains(err.Error(), "Cumulus Linux 5.4.0 is not supported") {
-		t.Fatalf("GetConfig() error = %v, want errUnsupportedPlatform naming Cumulus Linux 5.4.0", err)
+	if !errors.Is(err, errUnsupportedPlatform) || !strings.Contains(err.Error(), "Cumulus Linux 6.0.0 is not supported") {
+		t.Fatalf("GetConfig() error = %v, want errUnsupportedPlatform naming Cumulus Linux 6.0.0", err)
 	}
 	if len(*ran) != 0 || len(f.ran) != 1 || f.ran[0] != probeOSRelease {
 		t.Fatalf("ran %q, probes %q; want only the os-release probe", *ran, f.ran)
@@ -623,7 +623,7 @@ func TestGetConfigCumulusUsesNetShowConfigurationCommands(t *testing.T) {
 	if want := []string{"net show configuration commands 2>&1"}; !slices.Equal(*ran, want) {
 		t.Fatalf("GetConfig() ran %q, want %q", *ran, want)
 	}
-	if supportedDeviceTypes != "eos, ios, nxos, junos, fortios or cumulus4x" {
+	if supportedDeviceTypes != "eos, ios, nxos, junos, fortios, cumulus4x or cumulus5x" {
 		t.Fatalf("supportedDeviceTypes = %q", supportedDeviceTypes)
 	}
 	if len(res.Content) == 0 {
@@ -814,7 +814,7 @@ func TestNonCumulusTypeRefusesLinuxServer(t *testing.T) {
 				}
 				check := (*cfgs)[0].CheckServerVersion
 				err := check(identCumulus)
-				if !errors.Is(err, errUnsupportedPlatform) || !strings.Contains(err.Error(), "only device_type cumulus4x is supported on Linux") {
+				if !errors.Is(err, errUnsupportedPlatform) || !strings.Contains(err.Error(), "only device_type cumulus4x or cumulus5x is supported on Linux") {
 					t.Fatalf("%s: check(%q) = %v, want the Linux server refused", dt, identCumulus, err)
 				}
 				if err := check("SSH-2.0-OpenSSH_8.7"); err != nil {
@@ -919,5 +919,21 @@ func TestLinuxServerRefusalForgetsDetectedType(t *testing.T) {
 				t.Fatal("cached type kept, want it forgotten")
 			}
 		})
+	}
+}
+
+func TestResolveTargetCumulusSkipsLinuxCheck(t *testing.T) {
+	for _, dt := range []string{"cumulus4x", "cumulus5x", "eos"} {
+		cfg, _, err := resolveTarget(t.Context(), "sw1", 22, "u", dt)
+		if err != nil {
+			t.Fatalf("%s: resolveTarget() error = %v", dt, err)
+		}
+		if isCumulus(deviceType(dt)) == (cfg.CheckServerVersion != nil) {
+			t.Fatalf("%s: CheckServerVersion set = %v", dt, cfg.CheckServerVersion != nil)
+		}
+	}
+	err := refuseLinuxServer(identCumulus)
+	if !errors.Is(err, errUnsupportedPlatform) || !strings.Contains(err.Error(), "only device_type cumulus4x or cumulus5x is supported on Linux") {
+		t.Fatalf("refuseLinuxServer() = %v", err)
 	}
 }

@@ -22,7 +22,7 @@ type RunTracerouteInput struct {
 	Source      string `json:"source,omitempty" jsonschema:"source IP address or interface name; on cumulus4x an address, or an interface with a root login, not combinable with vrf"`
 	VRF         string `json:"vrf,omitempty" jsonschema:"VRF name; maps to routing-instance on JunOS; on cumulus4x mgmt or default, or another VRF device with a root login, not combinable with source"`
 	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface; FortiOS only"`
-	DeviceType  string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), or cumulus4x (Cumulus Linux 4.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
+	DeviceType  string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), or cumulus4x (Cumulus Linux 4.x), or cumulus5x (Cumulus Linux 5.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
 }
 
 // RunTraceroute executes a traceroute command on a network device.
