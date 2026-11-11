@@ -97,8 +97,61 @@ func nvueCommandSpans(line string, offset int) []span {
 	}
 	var spans []span
 	for i := 2; i+1 < len(words); i++ {
-		if isNVUESecretName(line[words[i][0]:words[i][1]]) {
-			spans = append(spans, span{start: offset + words[i+1][0], end: offset + words[i+1][1]})
+		if !isNVUESecretName(line[words[i][0]:words[i][1]]) {
+			continue
+		}
+		start, end := words[i+1][0], words[i+1][1]
+		if q := line[start]; q == '\'' || q == '"' {
+			// A quoted value runs to its closing quote, or to the end of the line.
+			end = len(line)
+			if n := strings.IndexByte(line[start+1:], q); n >= 0 {
+				end = start + 1 + n + 1
+			}
+			for i+1 < len(words) && words[i+1][0] < end {
+				i++
+			}
+			i--
+		}
+		spans = append(spans, span{start: offset + start, end: offset + end})
+	}
+	return spans
+}
+
+// nvueYAMLSpans returns a span for every word under a secret-named map key
+// that stands alone on its line in YAML-like NVUE output ("readonly-community:"
+// followed by its indented subtree), keys included, as the JSON pass does. The
+// subtree ends at the first non-blank line indented no more than the key.
+func nvueYAMLSpans(text string) []span {
+	var spans []span
+	secretIndent := -1 // indentation of the open secret key, or -1
+	offset := 0
+	for line := range strings.SplitSeq(text, "\n") {
+		start := offset
+		offset += len(line) + 1
+		trimmed := strings.TrimLeft(line, " \t")
+		if strings.TrimSpace(trimmed) == "" {
+			continue
+		}
+		indent := len(line) - len(trimmed)
+		if secretIndent >= 0 {
+			if indent > secretIndent {
+				for _, w := range nvueWordPattern.FindAllStringIndex(line, -1) {
+					end := w[1]
+					if line[end-1] == ':' && end-1 > w[0] {
+						end--
+					}
+					spans = append(spans, span{start: start + w[0], end: start + end})
+				}
+				continue
+			}
+			secretIndent = -1
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) == 1 && strings.HasSuffix(fields[0], ":") {
+			name := strings.TrimSuffix(fields[0], ":")
+			if isNVUESecretName(name) && !strings.ContainsAny(name, `"'{}`) {
+				secretIndent = indent
+			}
 		}
 	}
 	return spans
@@ -122,8 +175,9 @@ func nvueRowSpans(line string, offset int) []span {
 	if !isNVUESecretName(first) || strings.ContainsAny(first, `"'{}`) {
 		return nil
 	}
-	rowShaped := strings.ContainsAny(line[words[0][0]:words[0][1]], "[:") ||
-		words[1][0]-words[0][1] >= 2
+	firstWord := line[words[0][0]:words[0][1]]
+	rowShaped := (strings.HasPrefix(firstWord, "[") && strings.HasSuffix(firstWord, "]")) ||
+		strings.HasSuffix(firstWord, ":") || words[1][0]-words[0][1] >= 2
 	if !rowShaped {
 		return nil
 	}

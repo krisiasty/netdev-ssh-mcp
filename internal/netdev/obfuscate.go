@@ -204,8 +204,9 @@ func SetObfuscationKey(raw []byte, source string) {
 // always produces the same token, so outputs remain comparable without
 // revealing the secret, and tokens cannot be checked against guesses without
 // the key.
-// Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, FortiOS and Cumulus Linux 4.x syntax,
-// and JSON output on every platform.
+// Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, FortiOS, Cumulus Linux 4.x (NCLU) and
+// Cumulus Linux 5.x (NVUE) syntax, and JSON output on every platform. Besides
+// the JSON and line passes it runs a YAML pass for NVUE's indented map output.
 func obfuscate(config string) (out string, hashed bool, err error) {
 	if !Obfuscate {
 		return config, false, nil
@@ -215,7 +216,7 @@ func obfuscate(config string) (out string, hashed bool, err error) {
 	}
 	// Both passes read the original text and only report spans, so neither can
 	// hide a secret from the other by rewriting what it sees.
-	spans := jsonSpans(config)
+	spans := append(jsonSpans(config), nvueYAMLSpans(config)...)
 	offset := 0
 	for line := range strings.SplitSeq(config, "\n") {
 		spans = append(spans, lineSpans(line, offset)...)
