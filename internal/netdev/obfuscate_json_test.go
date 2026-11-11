@@ -27,6 +27,16 @@ func TestObfuscateJSONHidesSecrets(t *testing.T) {
 			`{"neighbor":"swp51","password":"FAKEbgp","remoteAs":65000}`,
 			`{"neighbor":"swp51","password":"<<FAKEbgp>>","remoteAs":65000}`,
 		},
+		{
+			"nvue snmp v3 keys",
+			`{"username": {"monitor": {"auth-sha": {"FAKEauth": {"encrypt-aes": {"FAKEpriv": {}}}}}}}`,
+			`{"username": {"monitor": {"auth-sha": {"<<FAKEauth>>": {"<<encrypt-aes>>": {"<<FAKEpriv>>": {}}}}}}}`,
+		},
+		{
+			"nvue snmp v3 keys md5 des",
+			`{"username": {"monitor": {"auth-md5": {"FAKEauth": {"encrypt-des": {"FAKEpriv": {}}}}}}}`,
+			`{"username": {"monitor": {"auth-md5": {"<<FAKEauth>>": {"<<encrypt-des>>": {"<<FAKEpriv>>": {}}}}}}}`,
+		},
 		{"pretty line", `    "password": "FAKEbgp",`, `    "password": "<<FAKEbgp>>",`},
 		{"camel case key", `"snmpCommunity": "FAKEc"`, `"snmpCommunity": "<<FAKEc>>"`},
 		// Keys are classified after decoding their JSON escapes.
@@ -218,7 +228,7 @@ func TestIsSecretJSONKey(t *testing.T) {
 	secret := []string{
 		"password", "PASSWD", "passPhrase", "clientSecret", "snmp_community", "psk", "pre-shared-key", "snmpCommunities",
 		"preSharedKey", "key-string", "keyString", "authentication-key", "authKey", "md5_key", "privacyProtocolKey",
-		"key", "KEY", "tacacsKey", "radius_key", "ospfKey", "keys", "md5", "authMd5",
+		"auth-sha", "encrypt-aes", "encrypt-des", "key", "KEY", "tacacsKey", "radius_key", "ospfKey", "keys", "md5", "authMd5",
 		// "key" and "md5" fail closed: any name holding them is secret
 		// unless it is listed in nonSecretJSONKeys.
 		"keyValue", "key_value", "keyData", "keyMaterial", "keyHex", "privateKeyPem", "md5Hash", "md5Digest",

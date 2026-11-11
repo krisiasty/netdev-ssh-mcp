@@ -186,6 +186,24 @@ func TestObfuscateConfigHidesSecrets(t *testing.T) {
 		{"cumulus fix 13", `trapsess -v 3 -u alice -l authPriv -a SHA -A <<FAKEauth>> -x AES -X <<FAKEpriv>> 192.0.2.30`},
 		{"cumulus fix 14", `rocommunity -Cn ctx <<FAKEcomm>> default`},
 		{"cumulus fix 15", `rwcommunity6 -Cn ctx <<FAKEcomm>> default`},
+		// Cumulus Linux 5.x (NVUE)
+		{"nvue bgp neighbor password", `nv set vrf default router bgp neighbor swp51 password <<FAKEbgp>>`},
+		{"nvue bgp peer-group password", `nv set vrf default router bgp peer-group spine password <<FAKEpg>>`},
+		{"nvue ospf md5-key", `nv set interface swp1 router ospf authentication md5-key <<FAKEospf>>`},
+		{"nvue radius secret", `nv set system aaa radius server 10.0.0.9 secret <<FAKErad>>`},
+		{"nvue tacacs secret", `nv set system aaa tacacs server 1 secret <<FAKEtac>>`},
+		{"nvue hashed-password", `nv set system aaa user admin hashed-password <<$6$FAKEsalt$FAKEhash>>`},
+		{"nvue readonly-community", `nv set system snmp-server readonly-community <<FAKEro>> access any`},
+		{"nvue trap community-password", `nv set system snmp-server trap-destination 10.0.0.1 community-password <<FAKEtrap>> version 2c`},
+		{"nvue snmp v3 user", `nv set system snmp-server username monitor auth-sha <<FAKEauth>> encrypt-aes <<FAKEpriv>>`},
+		{"nvue undocumented password name", `nv set system ldap bind-password <<FAKEldap>>`},
+		{"nvue table password row", `password             <<*>>            <<*>>`},
+		{"nvue table bracket row", `[readonly-community]  <<FAKEro>>`},
+		{"nvue table plain row", `readonly-community   <<FAKEro2>>`},
+		{"nvue table md5-key row", `md5-key  <<$nvsec$FAKE01ab>>`},
+		{"nvue yaml password", `    password: <<FAKEyaml>>`},
+		{"nvue yaml secret", `  secret: <<$nvsec$FAKE02cd>>`},
+		{"nvsec anywhere", `bgp neighbor key <<$nvsec$FAKE03ef>>`},
 	}
 
 	for _, tt := range tests {
@@ -226,6 +244,12 @@ func TestObfuscateConfigLeavesNonSecretsAlone(t *testing.T) {
 		`Version 1 and 2c Community String  Configured`,
 		`net show snmp-server status`,
 		`trapsess -v 2c 192.0.2.30`,
+		`nv set interface swp1 link state up`,
+		`nv set system snmp-server listening-address localhost`,
+		`[interface]  swp1`,
+		`state: up`,
+		`S        10.0.0.0/8 [1/0] via 192.0.2.1`,
+		`C        192.0.2.0/24 is directly connected, GigabitEthernet0/0`,
 	}
 	input := strings.Join(lines, "\n")
 	got, err := obfuscateConfig(input)
@@ -451,5 +475,18 @@ func TestServerInstructions(t *testing.T) {
 	Obfuscate = false
 	if got := ServerInstructions(); got != "" {
 		t.Fatalf("ServerInstructions() with obfuscation off = %q, want empty", got)
+	}
+}
+
+func TestIsCumulus5SecretWord(t *testing.T) {
+	for _, w := range []string{"password", "READONLY-COMMUNITY", "enable-password", "md5-key", "shared-secret"} {
+		if !isCumulus5SecretWord(w) {
+			t.Errorf("isCumulus5SecretWord(%q) = false, want true", w)
+		}
+	}
+	for _, w := range []string{"s", "c", "pass", "readonly-comm", "", "interface"} {
+		if isCumulus5SecretWord(w) {
+			t.Errorf("isCumulus5SecretWord(%q) = true, want false", w)
+		}
 	}
 }

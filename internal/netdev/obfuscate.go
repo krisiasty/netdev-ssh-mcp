@@ -44,9 +44,11 @@ func pattern(expr string, skip ...string) sensitivePattern {
 }
 
 // sensitivePatterns covers Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper
-// JunOS, FortiOS and Cumulus Linux 4.x syntax. Every pattern is applied to every line, so their
+// JunOS, FortiOS and Cumulus Linux 4.x and 5.x syntax. Every pattern is applied to every line, so their
 // order does not matter and a line can hold several secrets.
 var sensitivePatterns = []sensitivePattern{
+	// $nvsec$... anywhere: an NVUE encrypted secret
+	pattern(`(\$nvsec\$[^\s";,]+)`),
 	// enable secret|password [level N] [type] <value>  (Arista, Cisco)
 	pattern(`^\s*enable\s+(?:secret|password)(?:\s+level\s+\d+)?` + typeTokens + `\s+` + value),
 	// username NAME [privilege N] [role R] secret|password [type] <value>  (Arista, Cisco)
@@ -261,7 +263,8 @@ func lineSpans(line string, offset int) []span {
 			}
 		}
 	}
-	return spans
+	spans = append(spans, nvueCommandSpans(line, offset)...)
+	return append(spans, nvueRowSpans(line, offset)...)
 }
 
 // hashSpans replaces every secret span in text with its token and reports
