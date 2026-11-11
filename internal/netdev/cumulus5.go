@@ -8,7 +8,8 @@ import (
 
 // cumulus5RefusedPathWords are the NVUE path words, besides any word that
 // contains "password" or "secret", whose "nv show" output is a secret. They are
-// compared lower-cased.
+// compared lower-cased. NVUE accepts an unambiguous abbreviation of a path
+// word, so a prefix of one is refused too (fail closed).
 var cumulus5RefusedPathWords = []string{
 	"readonly-community", "readwrite-community", "community-password",
 	"auth-md5", "auth-sha", "encrypt-aes", "encrypt-des",
@@ -16,10 +17,13 @@ var cumulus5RefusedPathWords = []string{
 }
 
 // isCumulus5RefusedPathWord reports whether the NVUE path word w points into a
-// secret.
+// secret, or abbreviates a word that does.
 func isCumulus5RefusedPathWord(w string) bool {
 	lower := strings.ToLower(w)
-	return slices.Contains(cumulus5RefusedPathWords, lower) ||
+	if lower == "" {
+		return false
+	}
+	return slices.ContainsFunc(cumulus5RefusedPathWords, func(r string) bool { return strings.HasPrefix(r, lower) }) ||
 		strings.Contains(lower, "password") || strings.Contains(lower, "secret")
 }
 
@@ -51,8 +55,14 @@ func normalizeCumulus5Command(command string) (string, error) {
 			return "", fmt.Errorf("this path shows a secret; use the get_config tool, or show the parent path with -o json")
 		}
 	}
-	if len(path) >= 2 && strings.ToLower(path[0]) == "system" && strings.ToLower(path[1]) == "config" {
+	// NVUE accepts abbreviations, so "sys conf" is "system config".
+	if len(path) >= 2 && isPrefixFold("system", path[0]) && isPrefixFold("config", path[1]) {
 		return "", fmt.Errorf("use the get_config tool to retrieve device configuration")
 	}
 	return command + cumulusMergeStderr, nil
+}
+
+// isPrefixFold reports whether w is a non-empty, case-insensitive prefix of word.
+func isPrefixFold(word, w string) bool {
+	return w != "" && strings.HasPrefix(word, strings.ToLower(w))
 }

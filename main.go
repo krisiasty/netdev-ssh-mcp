@@ -110,7 +110,7 @@ func main() {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_show_command",
-		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x device via SSH and run an operational read command. " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x or 5.x device via SSH and run an operational read command. " +
 			"Arista/Cisco/JunOS commands must start with 'show'. FortiOS commands must start with 'get'. Cumulus Linux 4.x commands must start with 'net show', Cumulus Linux 5.x commands with 'nv show'. " +
 			deviceTypeGuidance +
 			"Running-config and startup-config are not allowed here — use the get_config tool instead. " +
