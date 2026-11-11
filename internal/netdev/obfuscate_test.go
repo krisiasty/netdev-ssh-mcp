@@ -201,6 +201,8 @@ func TestObfuscateConfigHidesSecrets(t *testing.T) {
 		{"nvue table bracket row", `[readonly-community]  <<FAKEro>>`},
 		{"nvue table plain row", `readonly-community   <<FAKEro2>>`},
 		{"nvue table md5-key row", `md5-key  <<$nvsec$FAKE01ab>>`},
+		{"nvue table psk row", `pre-shared-key      <<FAKEpsk>>`},
+		{"nvue table bracket key row", `[key]  <<FAKEkey>>`},
 		{"nvue yaml password", `    password: <<FAKEyaml>>`},
 		{"nvue yaml secret", `  secret: <<$nvsec$FAKE02cd>>`},
 		{"nvsec anywhere", `bgp neighbor key <<$nvsec$FAKE03ef>>`},

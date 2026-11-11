@@ -105,15 +105,13 @@ func nvueCommandSpans(line string, offset int) []span {
 }
 
 // nvueRowSpans returns a span for every word after the first when the first
-// word, without surrounding brackets and a trailing colon, names a secret by
-// isCumulus5SecretWord, and the line has the shape of an NVUE row: the first
+// word, without surrounding brackets and a trailing colon, names a secret (see
+// isNVUESecretName), and the line has the shape of an NVUE row: the first
 // word is bracketed or ends in a colon ("[readonly-community] value",
 // "password: value"), or the next word starts after two or more spaces, as in
 // a table ("password  *  *"). Other lines, such as "password 3 <value>" or
 // 'secret "<value>"; ## note', are left to the platform patterns, so their
-// trailing words stay readable. isSecretJSONKey is deliberately not used:
-// it matches "key", "community" and "md5", which begin ordinary rows on other
-// platforms ("key chain KC1").
+// trailing words stay readable, as does a single-spaced "key chain KC1".
 func nvueRowSpans(line string, offset int) []span {
 	words := nvueWordPattern.FindAllStringIndex(line, -1)
 	if len(words) < 2 {
@@ -121,7 +119,7 @@ func nvueRowSpans(line string, offset int) []span {
 	}
 	first := strings.TrimSuffix(strings.Trim(line[words[0][0]:words[0][1]], "[]"), ":")
 	// A quoted or braced name is JSON, which the JSON pass handles.
-	if !isCumulus5SecretWord(first) || strings.ContainsAny(first, `"'{}`) {
+	if !isNVUESecretName(first) || strings.ContainsAny(first, `"'{}`) {
 		return nil
 	}
 	rowShaped := strings.ContainsAny(line[words[0][0]:words[0][1]], "[:") ||
