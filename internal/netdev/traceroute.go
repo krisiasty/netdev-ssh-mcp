@@ -19,8 +19,8 @@ type RunTracerouteInput struct {
 	MaxHops     int    `json:"max_hops,omitempty" jsonschema:"maximum number of hops (TTL); defaults to device default (usually 30)"`
 	Timeout     int    `json:"timeout,omitempty" jsonschema:"per-probe timeout in seconds"`
 	Probe       int    `json:"probe,omitempty" jsonschema:"number of probes per hop"`
-	Source      string `json:"source,omitempty" jsonschema:"source IP address or interface name; on cumulus4x an address, or an interface with a root login, not combinable with vrf"`
-	VRF         string `json:"vrf,omitempty" jsonschema:"VRF name; maps to routing-instance on JunOS; on cumulus4x mgmt or default, or another VRF device with a root login, not combinable with source"`
+	Source      string `json:"source,omitempty" jsonschema:"source IP address or interface name; on cumulus4x and cumulus5x an address, or an interface with a root login (on cumulus5x only on 5.0 and 5.1), not combinable with vrf"`
+	VRF         string `json:"vrf,omitempty" jsonschema:"VRF name; maps to routing-instance on JunOS; on cumulus4x and cumulus5x mgmt or default, or another VRF device with a root login (on cumulus5x only on 5.0 and 5.1), not combinable with source"`
 	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface; FortiOS only"`
 	DeviceType  string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), or cumulus4x (Cumulus Linux 4.x), or cumulus5x (Cumulus Linux 5.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
 }

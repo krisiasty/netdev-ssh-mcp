@@ -98,14 +98,14 @@ func main() {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "get_config",
-		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x device via SSH and retrieve its " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x or 5.x device via SSH and retrieve its " +
 			"running or startup configuration. Sensitive values (passwords, secrets, SNMP community names, " +
 			"BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with keyed hash tokens; " +
 			"identical tokens mean identical secrets, so configs from different devices can be compared. " +
 			deviceTypeGuidance +
 			"The command depends on the platform: 'show configuration' on JunOS, 'show full-configuration' on FortiOS, " +
-			"'show running-config' on IOS, 'show running-config | no-more' on EOS and NX-OS and 'net show configuration commands' on Cumulus Linux 4.x. " +
-			"JunOS, FortiOS and Cumulus Linux do not support config_type='startup'.",
+			"'show running-config' on IOS, 'show running-config | no-more' on EOS and NX-OS and 'net show configuration commands' on Cumulus Linux 4.x and 'nv config show -o commands' on Cumulus Linux 5.x. " +
+			"JunOS, FortiOS and Cumulus Linux (4.x and 5.x) do not support config_type='startup'.",
 	}, netdev.GetConfig)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -141,21 +141,21 @@ func main() {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_ping",
-		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x device via SSH and run a ping command. " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x or 5.x device via SSH and run a ping command. " +
 			"Useful for verifying reachability from the device's perspective — for example, testing connectivity " +
 			"to a BGP peer, next-hop, or management target. " +
 			deviceTypeGuidance +
 			"Optional parameters: count (number of probes), source (source IP or interface), " +
-			"vrf (VRF or routing-instance name on JunOS), size (packet size in bytes), timeout (FortiOS and Cumulus Linux 4.x only), " +
+			"vrf (VRF or routing-instance name on JunOS), size (packet size in bytes), timeout (FortiOS and Cumulus Linux 4.x and 5.x only), " +
 			"outgoing_interface (FortiOS only). FortiOS 7.4+ does not support vrf for ping via this tool. " +
 			"On Cumulus Linux 4.x the tool runs 'ping -c <count> [-s size] [-W timeout] [-I source|vrf] destination' with 5 probes unless count is set; " +
 			"vrf cannot be combined with source, outgoing_interface is not supported, and when nothing answers the output with its statistics " +
-			"is returned instead of an error.",
+			"is returned instead of an error. Cumulus Linux 5.x behaves the same as 4.x.",
 	}, netdev.RunPing)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_traceroute",
-		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x device via SSH and run a traceroute. " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x or 5.x device via SSH and run a traceroute. " +
 			"Shows the hop-by-hop path to a destination and per-hop latency. " +
 			"Useful for locating where connectivity breaks, verifying traffic follows the expected path, " +
 			"and identifying which hop introduces latency. " +
@@ -166,7 +166,7 @@ func main() {
 			"On FortiOS 7.4+, probe maps to execute traceroute-options queries, source maps to source, " +
 			"and outgoing_interface maps to device; max_hops, timeout, and vrf are not supported. " +
 			"On Cumulus Linux 4.x the tool runs 'traceroute [-m max_hops] [-w timeout] [-q probe] [-s source-ip | -i source-iface | -i vrf] destination'; " +
-			"vrf cannot be combined with source, and outgoing_interface is not supported. " +
+			"vrf cannot be combined with source, and outgoing_interface is not supported. Cumulus Linux 5.x behaves the same as 4.x. " +
 			"Optional parameters: max_hops, timeout (per-probe seconds), probe (probes per hop, not used on JunOS), " +
 			"source (source IP or interface), vrf (routing-instance on JunOS), outgoing_interface (FortiOS only).",
 	}, netdev.RunTraceroute)

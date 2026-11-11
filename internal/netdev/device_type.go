@@ -99,6 +99,11 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 			return "", fmt.Errorf("config_type startup: Cumulus Linux does not have a separate startup-config; use config_type 'running' or omit it")
 		}
 		return "net show configuration commands" + cumulusMergeStderr, nil
+	case deviceTypeCumulus5x:
+		if configType == "startup" {
+			return "", fmt.Errorf("config_type startup: Cumulus Linux does not have a separate startup-config; use config_type 'running' or omit it")
+		}
+		return "nv config show -o commands" + cumulusMergeStderr, nil
 	case deviceTypeIOS:
 		return fmt.Sprintf("show %s-config", configType), nil
 	case deviceTypeEOS, deviceTypeNXOS:
@@ -212,7 +217,7 @@ func buildPingCommands(destination string, dt deviceType, count, size, timeout i
 	if err := checkCommandArgs(destination, source, vrf, outgoingInterface); err != nil {
 		return nil, err
 	}
-	if dt == deviceTypeCumulus4x {
+	if isCumulus(dt) {
 		return buildCumulusPing(destination, count, size, timeout, source, vrf, outgoingInterface)
 	}
 	if dt == deviceTypeFortiOS {
@@ -244,7 +249,7 @@ func buildPingCommands(destination string, dt deviceType, count, size, timeout i
 	}
 
 	if timeout > 0 {
-		return nil, fmt.Errorf("timeout is only supported for device_type 'fortios' or 'cumulus4x'")
+		return nil, fmt.Errorf("timeout is only supported for device_type 'fortios', 'cumulus4x' or 'cumulus5x'")
 	}
 	if outgoingInterface != "" {
 		return nil, fmt.Errorf("outgoing_interface is only supported for device_type 'fortios'")
@@ -289,7 +294,7 @@ func buildTracerouteCommands(destination string, dt deviceType, maxHops, timeout
 	if err := checkCommandArgs(destination, source, vrf, outgoingInterface); err != nil {
 		return nil, err
 	}
-	if dt == deviceTypeCumulus4x {
+	if isCumulus(dt) {
 		return buildCumulusTraceroute(destination, maxHops, timeout, probe, source, vrf, outgoingInterface)
 	}
 	if dt == deviceTypeFortiOS {
