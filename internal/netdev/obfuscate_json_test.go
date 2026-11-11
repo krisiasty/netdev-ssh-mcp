@@ -3,6 +3,7 @@ package netdev
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // jsonPass hashes only what the JSON pass finds. obfuscate merges these spans
@@ -88,6 +89,10 @@ func TestObfuscateJSONHidesSecrets(t *testing.T) {
 			`'communities': [True, False, None, '<<FAKEa>>']`,
 		},
 		{"apostrophe before key", `it's "password": "FAKEp" isn't`, `it's "password": "<<FAKEp>>" isn't`},
+		// Single quotes inside an earlier single-quoted scan are skipped, but
+		// the keys around and inside that scan are still found.
+		{"escaped apostrophes before key", `'a\'b' 'password': 'FAKEx'`, `'a\'b' 'password': '<<FAKEx>>'`},
+		{"key inside escaped apostrophes", `it\'s "password": "FAKEp" isn\'t`, `it\'s "password": "<<FAKEp>>" isn\'t`},
 		{
 			"nested containers",
 			`{"communities": [{"name": "FAKEa", "ports": [161, 1161]}, "FAKEb"], "keepalive": 60}`,
@@ -143,6 +148,20 @@ func TestObfuscateJSONStopsAtFirstNonJSONWord(t *testing.T) {
 		got, hashed := jsonPass(tt.input)
 		if want := expand(tt.want); got != want || !hashed {
 			t.Errorf("jsonPass(%q) = %q, %v; want %q, true", tt.input, got, hashed, want)
+		}
+	}
+}
+
+// Every quote shape is scanned in linear time. A single-quoted scan used to
+// restart at every escaped quote, so 256 kB of \' took seconds; this input
+// now takes about a millisecond, and the quadratic scan over a minute.
+func TestJSONSpansLinear(t *testing.T) {
+	for _, unit := range []string{`\'`, `'x`, `\'"x"`, `'a': `, `\"`, `''   `} {
+		input := strings.Repeat(unit, (1<<20)/len(unit))
+		start := time.Now()
+		jsonSpans(input)
+		if d := time.Since(start); d > 2*time.Second {
+			t.Errorf("jsonSpans on 1 MB of %q took %v", unit, d)
 		}
 	}
 }

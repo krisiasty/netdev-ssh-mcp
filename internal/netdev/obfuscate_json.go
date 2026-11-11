@@ -72,9 +72,15 @@ func decodeJSONKey(quoted string) string {
 // word.
 func jsonSpans(text string) []span {
 	r := &jsonScanner{text: text}
+	// A single quote before scannedTo lies inside a single-quoted scan that
+	// found no secret key. A scan stops at the first unescaped quote, so
+	// that quote was escaped, and a scan from it would end in the same place
+	// with a suffix of the same text, which holds no secret key name either.
+	// Skipping it keeps runs of \' linear rather than quadratic.
+	scannedTo := 0
 	for i := 0; i < len(text); {
 		c := text[i]
-		if c != '"' && c != '\'' {
+		if c != '"' && (c != '\'' || i < scannedTo) {
 			i++
 			continue
 		}
@@ -86,7 +92,12 @@ func jsonSpans(text string) []span {
 		}
 		if c == '\'' {
 			// Most single quotes in text are apostrophes, not strings: step
-			// over this one alone, so that a key it would skip is still seen.
+			// over this one alone, so that a double-quoted key it would skip
+			// is still seen. Its closing quote may open the next string.
+			scannedTo = end
+			if closed {
+				scannedTo = end - 1
+			}
 			i++
 			continue
 		}
