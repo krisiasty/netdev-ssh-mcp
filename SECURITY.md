@@ -107,12 +107,10 @@ Known limits of the Cumulus Linux support:
   for every `device_type` other than `cumulus4x`. A switch whose banner hides
   "Debian" (for example with `DebianBanner no`) is not recognised as Linux. If a
   caller then passes a wrong explicit `device_type`, bash runs a command that
-  passed only that platform's checks. It cannot start another command. The
-  words before the first `|` are not limited to plain words: bash expands
-  globs in them and passes the result to a `show` or `get` program that a
-  Linux system does not normally have, so a deep glob (`/*/*/*/*`) can cost
-  CPU, and memory for the paths it matches, until the command timeout. Braces
-  are refused, so brace expansion cannot exhaust memory. Of the filters,
+  passed only that platform's checks. It cannot start another command, and
+  the words before the first `|` hold no glob, brace, quote or expansion, so
+  bash passes them unchanged to a `show` or `get` program that a Linux system
+  does not normally have. Of the filters,
   `grep W` and `egrep W` only filter their input with one pattern, and `head`
   only prints its first lines. `head lines N` instead reads
   the files named `lines` and `N` in the account's working directory, if they
@@ -121,8 +119,9 @@ Known limits of the Cumulus Linux support:
   file. Output is obfuscated like any other. The other filter names are not
   part of a base Debian install; `display` (ImageMagick), if present, would
   only try to open an image file named `json`, `xml` or `set`.
-- Nothing has been tested on a real Cumulus Linux 4.3 switch; the support is
-  built from vendor documentation and sample output.
+- Only the `ping` and `traceroute` VRF handling has been checked on a real
+  Cumulus Linux 4.3 switch; the rest of the support is built from vendor
+  documentation and sample output.
 
 ## Scope
 

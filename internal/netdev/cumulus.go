@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"regexp"
 	"strings"
 
 	"github.com/krisiasty/netdev-ssh-mcp/internal/sshclient"
@@ -15,11 +14,22 @@ import (
 // sure it reaches obfuscation. It is the only shell syntax the server adds.
 const cumulusMergeStderr = " 2>&1"
 
-// cumulusWordPattern is what each word of a Cumulus "net show" command may
+// On Cumulus Linux, ping and traceroute are wrapped by vrf-wrapper.sh, which
+// moves a command started in the management VRF to the default VRF unless it
+// is given --no-vrf-switch. An SSH login runs in the management VRF while that
+// VRF is enabled, which is the Cumulus default.
+const (
+	cumulusMgmtVRF    = "mgmt"
+	cumulusDefaultVRF = "default"
+	// cumulusNoVRFSwitch keeps the command in the login's VRF.
+	cumulusNoVRFSwitch = "--no-vrf-switch"
+)
+
+// cumulusWordChars is what each word of a Cumulus "net show" command may
 // contain. An SSH exec request is run by bash on Cumulus, so every shell
 // metacharacter (quotes, $, ;, &, |, <, >, parentheses, globs, ~, !, #, =)
 // must be excluded, along with whitespace other than ' '.
-var cumulusWordPattern = regexp.MustCompile(`^[A-Za-z0-9._:/,@%-]+$`)
+var cumulusWordChars = newWordClass("._:/,@%-")
 
 // cumulusBlockedFamilies are NCLU "net show" sub-commands that return
 // configuration or pending-change data; NCLU accepts any unambiguous prefix.
@@ -31,15 +41,15 @@ var cumulusBlockedFamilies = []string{"configuration", "commit", "rollback"}
 func normalizeCumulusCommand(command string) (string, error) {
 	words := spaceSeparated(command)
 	for _, w := range words {
-		if !cumulusWordPattern.MatchString(w) {
-			return "", fmt.Errorf("command may only contain letters, digits and . _ : / , @ %% - in words separated by spaces")
+		if !cumulusWordChars.match(w) {
+			return "", fmt.Errorf("command may only contain %s in words separated by spaces", cumulusWordChars.rule)
 		}
 	}
 	if len(words) < 2 || words[0] != "net" || words[1] != "show" {
 		return "", fmt.Errorf("command must start with 'net show'")
 	}
 	for _, w := range words[2:] {
-		if strings.HasPrefix(w, "-") {
+		if isOption(w) {
 			return "", fmt.Errorf("command words must not start with '-'")
 		}
 	}
@@ -63,7 +73,7 @@ func checkCumulusNetArgs(destination, source, vrf, outgoingInterface string) err
 		{"source", source},
 		{"vrf", vrf},
 	} {
-		if strings.HasPrefix(a.value, "-") {
+		if isOption(a.value) {
 			return fmt.Errorf("%s must not start with '-'", a.name)
 		}
 	}
@@ -98,11 +108,12 @@ func buildCumulusPing(destination string, count, size, timeout int, source, vrf,
 	if timeout > 0 {
 		parts = append(parts, "-W", fmt.Sprintf("%d", timeout))
 	}
-	// -I takes an address, an interface or a VRF device.
-	if source != "" {
+	// -I takes an address, an interface or a VRF device. The default VRF
+	// has no device; vrf-wrapper.sh already runs ping there.
+	switch {
+	case source != "":
 		parts = append(parts, "-I", source)
-	}
-	if vrf != "" {
+	case vrf != "" && vrf != cumulusDefaultVRF:
 		parts = append(parts, "-I", vrf)
 	}
 	parts = append(parts, destination)
@@ -110,12 +121,19 @@ func buildCumulusPing(destination string, count, size, timeout int, source, vrf,
 }
 
 // buildCumulusTraceroute builds the Linux traceroute command. -s takes a
-// source address and -i an interface or VRF device.
+// source address and -i an interface or VRF device. -i binds the socket to
+// that device, which on the 4.19 kernel of Cumulus 4.x needs root, and
+// traceroute, unlike ping, has no capability to do it for other users. So the
+// management VRF is reached by staying in the login's VRF (--no-vrf-switch),
+// and the default VRF, which has no device, by letting vrf-wrapper.sh switch.
 func buildCumulusTraceroute(destination string, maxHops, timeout, probe int, source, vrf, outgoingInterface string) ([]string, error) {
 	if err := checkCumulusNetArgs(destination, source, vrf, outgoingInterface); err != nil {
 		return nil, err
 	}
 	parts := []string{"traceroute"}
+	if vrf == cumulusMgmtVRF {
+		parts = append(parts, cumulusNoVRFSwitch)
+	}
 	if maxHops > 0 {
 		parts = append(parts, "-m", fmt.Sprintf("%d", maxHops))
 	}
@@ -130,7 +148,7 @@ func buildCumulusTraceroute(destination string, maxHops, timeout, probe int, sou
 		parts = append(parts, "-s", source)
 	case source != "":
 		parts = append(parts, "-i", source)
-	case vrf != "":
+	case vrf != "" && vrf != cumulusMgmtVRF && vrf != cumulusDefaultVRF:
 		parts = append(parts, "-i", vrf)
 	}
 	parts = append(parts, destination)
@@ -149,4 +167,21 @@ func cumulusPingNoReplyOutput(dt deviceType, err error) (string, bool) {
 		return "", false
 	}
 	return string(cmdErr.Output), true
+}
+
+// cumulusNetError adds the device output to the error of a failed cumulus4x
+// ping or traceroute. Linux states the reason only there ("connect: Network
+// is unreachable", "setsockopt SO_BINDTODEVICE: Operation not permitted"),
+// and that output holds no secrets: it is returned unobfuscated on success.
+// Call it after logging, so the output stays out of the log.
+func cumulusNetError(dt deviceType, err error) error {
+	var cmdErr *sshclient.CommandError
+	if dt != deviceTypeCumulus4x || !errors.As(err, &cmdErr) {
+		return err
+	}
+	out := strings.TrimSpace(string(cmdErr.Output))
+	if out == "" {
+		return err
+	}
+	return fmt.Errorf("%w; device output:\n%s", err, out)
 }

@@ -400,9 +400,7 @@ type CommandError struct {
 	// ExitStatus is the exit status when Err is a *ssh.ExitError, otherwise -1.
 	ExitStatus int
 	// Output is what the device wrote to stderr followed by stdout. Treat it
-	// as untrusted and do not show it to callers, except for a cumulus4x
-	// ping that exited with status 1 (no reply), whose output is the result.
-	// A traceroute's output is never returned this way.
+	// as untrusted: it is the caller's decision whether any of it is shown.
 	Output []byte
 }
 

@@ -662,7 +662,9 @@ const cumulusLossOutput = "PING 192.0.2.1 (192.0.2.1) 56(84) bytes of data.\n---
 
 // Linux ping exits 1 when nothing answered, which is a result. Linux
 // traceroute exits 0 for a completed trace, reachable or not, and uses a
-// non-zero status, 1 included, for errors such as a bad source interface.
+// non-zero status, 1 included, for errors such as a bad source interface. A
+// cumulus4x error carries the device output, which states the reason; other
+// platforms keep it out of the error. The log never gets it.
 func TestPingTracerouteCumulusExitStatus(t *testing.T) {
 	type testCase struct {
 		name    string
@@ -703,10 +705,18 @@ func TestPingTracerouteCumulusExitStatus(t *testing.T) {
 			for _, tt := range tool.tests {
 				t.Run(tt.name, func(t *testing.T) {
 					stubRunCommand(t, "", &sshclient.CommandError{Command: "c", ExitStatus: tt.status, Output: []byte(cumulusLossOutput)})
+					var logs bytes.Buffer
+					orig := slog.Default()
+					t.Cleanup(func() { slog.SetDefault(orig) })
+					slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 					res, err := call(tt.dt)
+					if strings.Contains(logs.String(), "packet loss") {
+						t.Fatalf("log = %q, want no device output", logs.String())
+					}
 					if tt.wantErr {
-						if err == nil || strings.Contains(err.Error(), "packet loss") {
-							t.Fatalf("error = %v, want an error without the device output", err)
+						wantOutput := tt.dt == "cumulus4x"
+						if err == nil || strings.Contains(err.Error(), "100% packet loss") != wantOutput {
+							t.Fatalf("error = %v, want device output in it: %v", err, wantOutput)
 						}
 						return
 					}

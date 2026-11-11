@@ -13,10 +13,35 @@ import (
 // supplies must therefore stay on one line and must not reach commands or
 // pipes that change device state or write files.
 
-// argPattern is what a destination, source, VRF or interface name may contain:
+// wordClass is an allowlist of the characters a word may contain: letters,
+// digits and the punctuation in chars. Every allowlist below is built from
+// one, so its pattern and the rule its error message states cannot differ.
+type wordClass struct {
+	re *regexp.Regexp
+	// rule lists the characters, for error messages.
+	rule string
+}
+
+// newWordClass returns the wordClass for letters, digits and the ASCII
+// punctuation characters in chars, listed in rule in that order.
+func newWordClass(chars string) wordClass {
+	var class strings.Builder
+	for _, c := range chars {
+		// In a character class, "\" before ASCII punctuation makes it literal.
+		class.WriteString(`\` + string(c))
+	}
+	return wordClass{
+		re:   regexp.MustCompile(`^[A-Za-z0-9` + class.String() + `]+$`),
+		rule: "letters, digits and " + strings.Join(strings.Split(chars, ""), " "),
+	}
+}
+
+func (c wordClass) match(w string) bool { return c.re.MatchString(w) }
+
+// argChars is what a destination, source, VRF or interface name may contain:
 // IPv4/IPv6 addresses (with zone), hostnames and interface names such as
 // Ethernet1/1, Gi0/0.100 or ae0.0. No whitespace, quotes, pipes or redirection.
-var argPattern = regexp.MustCompile(`^[A-Za-z0-9._:/@%-]+$`)
+var argChars = newWordClass("._:/@%-")
 
 const maxArgLen = 255
 
@@ -26,8 +51,8 @@ func checkCommandArg(name, value string) error {
 	if value == "" {
 		return nil
 	}
-	if len(value) > maxArgLen || !argPattern.MatchString(value) {
-		return fmt.Errorf("%s may only contain letters, digits and . _ : / @ %% -", name)
+	if len(value) > maxArgLen || !argChars.match(value) {
+		return fmt.Errorf("%s may only contain %s", name, argChars.rule)
 	}
 	return nil
 }
@@ -47,14 +72,14 @@ func checkCommandArgs(destination, source, vrf, outgoingInterface string) error 
 	return nil
 }
 
-// plainWordPattern is what a filter's argument (W in filterForms) may
+// plainWordChars is what a filter's argument (W in filterForms) may
 // contain. On a Linux system bash runs the command and several filters (grep,
 // egrep, head, last) are Linux programs, so a word holds no quotes,
 // backslashes, "$", globs, brackets, braces, "~" or regex syntax other than
 // "."; it also must not start with "-", so it cannot be an option.
-var plainWordPattern = regexp.MustCompile(`^[A-Za-z0-9._:/,@%+=-]+$`)
+var plainWordChars = newWordClass("._:/,@%+=-")
 
-const plainWordRule = "letters, digits and . _ : / , @ % + = -, not starting with '-'"
+var plainWordRule = plainWordChars.rule + ", not starting with '-'"
 
 // numberPattern is what an N in filterForms may be.
 var numberPattern = regexp.MustCompile(`^[0-9]{1,6}$`)
@@ -73,21 +98,22 @@ var filterForms = map[deviceType][]string{
 	deviceTypeFortiOS: {"grep W"},
 }
 
-// commandWordPattern is what every word of a run_show_command command may
-// contain, on every platform: the plainWordPattern characters plus "^" and
+// commandWordChars is what every word of a run_show_command command may
+// contain, on every platform: the plainWordChars characters plus "^" and
 // "$", so that anchored regexes such as "show ip bgp regexp ^65000_" work.
 // On a Linux system bash runs the command, so everything else bash gives a
 // meaning to is excluded: quotes, backslashes, "`", "&", parentheses,
 // brackets, braces (brace expansion; "{1..99999999}" exhausts memory), globs
 // ("*", "?") and "~", "!" and "#". A "$" can then only expand a variable,
 // which reaches nothing but the argument list of a program that does not
-// exist. Filter arguments are limited further, to plainWordPattern.
-var commandWordPattern = regexp.MustCompile(`^[A-Za-z0-9._:/,@%+=^$-]+$`)
+// exist. Filter arguments are limited further, to plainWordChars.
+var commandWordChars = newWordClass("._:/,@%+=^$-")
 
-const commandWordRule = "letters, digits and . _ : / , @ % + = ^ $ -"
+// isOption reports whether w would be read as an option.
+func isOption(w string) bool { return strings.HasPrefix(w, "-") }
 
 func isPlainWord(w string) bool {
-	return plainWordPattern.MatchString(w) && !strings.HasPrefix(w, "-")
+	return plainWordChars.match(w) && !isOption(w)
 }
 
 // spaceSeparated splits s into words on spaces; runs of spaces are allowed.
@@ -123,7 +149,7 @@ func matchesForm(words []string, form string) bool {
 }
 
 // checkOperationalCommand verifies that command is a single line holding a
-// single command (no ";"), uses no redirection, has only commandWordPattern
+// single command (no ";"), uses no redirection, has only commandWordChars
 // characters in its words, starts with
 // verb exactly (lower case) as a whole word, and pipes only into the
 // platform's filterForms. The command is split on "|" first, so "|" need not
@@ -149,8 +175,8 @@ func checkOperationalCommand(command, verb string, dt deviceType) error {
 	// wrong device_type must not let any shell syntax through.
 	for _, seg := range segments {
 		for _, w := range spaceSeparated(seg) {
-			if !commandWordPattern.MatchString(w) {
-				return fmt.Errorf("command words may only contain %s; quotes, brackets, braces, globs and other shell syntax are not allowed", commandWordRule)
+			if !commandWordChars.match(w) {
+				return fmt.Errorf("command words may only contain %s; quotes, brackets, braces, globs and other shell syntax are not allowed", commandWordChars.rule)
 			}
 		}
 	}

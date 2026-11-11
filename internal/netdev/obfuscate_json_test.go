@@ -5,6 +5,13 @@ import (
 	"testing"
 )
 
+// jsonPass hashes only what the JSON pass finds. obfuscate merges these spans
+// with the line pass's; TestObfuscateRunsJSONAndLinePasses covers the two
+// together.
+func jsonPass(text string) (string, bool) {
+	return hashSpans(text, jsonSpans(text))
+}
+
 // Every secret below contains FAKE, and no non-secret text does, so any FAKE
 // left in the output is a leak. Numbers are the exception: they are written
 // as numbers in the input and as quoted tokens in want.
@@ -66,6 +73,21 @@ func TestObfuscateJSONHidesSecrets(t *testing.T) {
 			`"communities": [true, false, null, "FAKEa"]`,
 			`"communities": [true, false, null, "<<FAKEa>>"]`,
 		},
+		// A secret value is hashed whatever its form.
+		{"bare word", `"password": FAKEbare`, `"password": <<FAKEbare>>`},
+		{"bare word with digits", `"secret": 7FAKE`, `"secret": <<7FAKE>>`},
+		{"bare word in pretty json", "{\n  \"password\": FAKEbare,\n  \"x\": 1\n}", "{\n  \"password\": <<FAKEbare>>,\n  \"x\": 1\n}"},
+		// Python's repr, which some NCLU commands print, quotes with '.
+		{"single-quoted value", `"password": 'FAKEsq'`, `"password": '<<FAKEsq>>'`},
+		{"single-quoted array", `"communities": ['FAKEpublic', 'FAKEprivate']`, `"communities": ['<<FAKEpublic>>', '<<FAKEprivate>>']`},
+		{"python dict", `{'password': 'FAKEp', 'keepalive': 60}`, `{'password': '<<FAKEp>>', 'keepalive': 60}`},
+		{"escaped single quote", `'password': 'FAKE\'q'`, `'password': '<<FAKE\'q>>'`},
+		{
+			"python literals inside list",
+			`'communities': [True, False, None, 'FAKEa']`,
+			`'communities': [True, False, None, '<<FAKEa>>']`,
+		},
+		{"apostrophe before key", `it's "password": "FAKEp" isn't`, `it's "password": "<<FAKEp>>" isn't`},
 		{
 			"nested containers",
 			`{"communities": [{"name": "FAKEa", "ports": [161, 1161]}, "FAKEb"], "keepalive": 60}`,
@@ -74,12 +96,12 @@ func TestObfuscateJSONHidesSecrets(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, hashed := obfuscateJSON(tt.input)
+			got, hashed := jsonPass(tt.input)
 			if want := expand(tt.want); got != want {
-				t.Errorf("obfuscateJSON(%q)\n got: %s\nwant: %s", tt.input, got, want)
+				t.Errorf("jsonPass(%q)\n got: %s\nwant: %s", tt.input, got, want)
 			}
 			if !hashed {
-				t.Errorf("obfuscateJSON(%q) hashed = false, want true", tt.input)
+				t.Errorf("jsonPass(%q) hashed = false, want true", tt.input)
 			}
 		})
 	}
@@ -94,19 +116,33 @@ func TestObfuscateJSONLeavesNonSecretsAlone(t *testing.T) {
 		`{"password": null}`,
 		`{"password": false}`,
 		`{"password": ""}`,
+		`{'password': None}`,
+		`{'passwordSet': True}`,
 		`snmp-server community public ro`,
 		`description "not JSON": still not a key`,
-		// A container walk stops at the first bare word that is not JSON, and
-		// digits inside a word are not numbers.
-		"description \"secret\": [\nvlan 10 name core 2\n]",
-		`description "psk": {abc1, 2}`,
-		`"secret": [1a, 2]`,
-		`"secret": 7abc`,
+		`it's the "user's" choice: don't`,
 	}
 	for _, input := range inputs {
-		got, hashed := obfuscateJSON(input)
+		got, hashed := jsonPass(input)
 		if got != input || hashed {
-			t.Errorf("obfuscateJSON(%q) = %q, %v; want input unchanged, false", input, got, hashed)
+			t.Errorf("jsonPass(%q) = %q, %v; want input unchanged, false", input, got, hashed)
+		}
+	}
+}
+
+// A container walk hashes the first bare word that is not JSON and stops
+// there, so a stray bracket after a secret key in plain text costs one word,
+// not the rest of the output. Digits inside a word are not a number.
+func TestObfuscateJSONStopsAtFirstNonJSONWord(t *testing.T) {
+	tests := []struct{ input, want string }{
+		{"description \"secret\": [\nvlan 10 name core 2\n]", "description \"secret\": [\n<<vlan>> 10 name core 2\n]"},
+		{`description "psk": {abc1, 2}`, `description "psk": {<<abc1>>, 2}`},
+		{`"secret": [1a, 2]`, `"secret": [<<1a>>, 2]`},
+	}
+	for _, tt := range tests {
+		got, hashed := jsonPass(tt.input)
+		if want := expand(tt.want); got != want || !hashed {
+			t.Errorf("jsonPass(%q) = %q, %v; want %q, true", tt.input, got, hashed, want)
 		}
 	}
 }
@@ -118,9 +154,9 @@ func TestObfuscateJSONHashesTokenShapedSecrets(t *testing.T) {
 		`"password": "[h:0123456789ab]"`,
 		`{"communities": ["[h:0123456789ab]", "[h:987654321098]"]}`,
 	} {
-		got, hashed := obfuscateJSON(input)
+		got, hashed := jsonPass(input)
 		if !hashed || strings.Contains(got, "0123456789ab") || strings.Contains(got, "987654321098") {
-			t.Errorf("obfuscateJSON(%q) = %q, %v; want every token-shaped value hashed", input, got, hashed)
+			t.Errorf("jsonPass(%q) = %q, %v; want every token-shaped value hashed", input, got, hashed)
 		}
 	}
 }
@@ -145,11 +181,16 @@ func TestObfuscateJSONMalformedInput(t *testing.T) {
 		// A string ends at the end of its line.
 		"\"password\": \"FAKEa\nnext line\"",
 		"\"password\": [\"FAKEa\nnext line\"]",
+		`"password": 'FAKEunterminated`,
+		`'password': ['FAKEa', FAKEb`,
+		`"password": [FAKEa, 2]`,
+		`'`,
+		`'password'`,
 	}
 	for _, input := range inputs {
-		got, _ := obfuscateJSON(input)
+		got, _ := jsonPass(input)
 		if strings.Contains(got, "FAKE") {
-			t.Errorf("obfuscateJSON(%q) = %q, leaks FAKE", input, got)
+			t.Errorf("jsonPass(%q) = %q, leaks FAKE", input, got)
 		}
 	}
 }

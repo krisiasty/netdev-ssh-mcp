@@ -154,15 +154,16 @@ func normalizeOperationalCommand(command string, dt deviceType) (string, error) 
 		return "", err
 	}
 	// The second word is checked on its own, so runs of spaces do not hide
-	// it; the command itself is sent as written. "star" is the shortest
-	// abbreviation of startup-config that does not also abbreviate show
-	// standby, stacks or statistics.
+	// it; the command itself is sent as written. "sta" means startup-config
+	// on EOS and NX-OS; on IOS it is ambiguous and the device rejects it anyway, so it
+	// is refused everywhere. Longer words that are not abbreviations of
+	// startup-config, such as standby, stacks or statistics, are allowed.
 	words := spaceSeparated(strings.Split(lower, "|")[0])
 	second := ""
 	if len(words) > 1 {
 		second = words[1]
 	}
-	if strings.HasPrefix(second, "ru") || strings.HasPrefix(second, "star") {
+	if strings.HasPrefix(second, "ru") || second == "sta" || strings.HasPrefix(second, "star") {
 		return "", fmt.Errorf("use the get_config tool for running-config and startup-config")
 	}
 	// The JunOS CLI accepts any unambiguous abbreviation of "configuration"

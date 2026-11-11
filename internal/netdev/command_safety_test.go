@@ -301,7 +301,7 @@ func TestNormalizeOperationalCommandRefusesFilters(t *testing.T) {
 
 // The verb's own arguments, before the first "|", may hold "^" and "$" for
 // regexes, which filter arguments may not, but every other character outside
-// commandWordPattern is refused there with its own message.
+// commandWordChars is refused there with its own message.
 func TestNormalizeOperationalCommandVerbArguments(t *testing.T) {
 	accepted := []struct {
 		dt      deviceType
@@ -641,5 +641,33 @@ func TestCheckCommandOnAnyPlatformCumulus(t *testing.T) {
 	err := checkCommandOnAnyPlatform("net show interface; reboot")
 	if err == nil || !strings.Contains(err.Error(), "may only contain") {
 		t.Fatalf("got %v, want Cumulus allowlist error", err)
+	}
+}
+
+// Each word class accepts exactly letters, digits and its listed punctuation,
+// and states those characters in its rule.
+func TestWordClasses(t *testing.T) {
+	classes := []struct {
+		name  string
+		class wordClass
+		chars string
+		rule  string
+	}{
+		{"arg", argChars, "._:/@%-", "letters, digits and . _ : / @ % -"},
+		{"plain word", plainWordChars, "._:/,@%+=-", "letters, digits and . _ : / , @ % + = -"},
+		{"command word", commandWordChars, "._:/,@%+=^$-", "letters, digits and . _ : / , @ % + = ^ $ -"},
+		{"cumulus word", cumulusWordChars, "._:/,@%-", "letters, digits and . _ : / , @ % -"},
+	}
+	for _, tt := range classes {
+		if tt.class.rule != tt.rule {
+			t.Errorf("%s: rule = %q, want %q", tt.name, tt.class.rule, tt.rule)
+		}
+		for c := byte(0x20); c < 0x7f; c++ {
+			alnum := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+			want := alnum || strings.IndexByte(tt.chars, c) >= 0
+			if got := tt.class.match("a" + string(c) + "b"); got != want {
+				t.Errorf("%s: match(%q) = %v, want %v", tt.name, "a"+string(c)+"b", got, want)
+			}
+		}
 	}
 }

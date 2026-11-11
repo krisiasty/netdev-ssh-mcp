@@ -427,8 +427,10 @@ func logFailure(ctx context.Context, tool string, err error, attrs ...any) {
 	}
 	if errors.Is(err, errUnsupportedPlatform) {
 		// The device was identified as one the device type does not
-		// support (refuseLinuxServer): an answer, not a failure.
-		slog.Info(tool+": unsupported platform", attrs...)
+		// support (refuseLinuxServer): an answer, not a failure. The
+		// error holds the reason and the server identification, already
+		// passed through displayValue.
+		slog.Info(tool+": unsupported platform", append(attrs, "err", err)...)
 		return
 	}
 	slog.Error(tool+" failed", append(attrs, "err", err)...)
