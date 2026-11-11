@@ -53,7 +53,7 @@ homebrew_casks:
     ids:
       - archives
     homepage: "https://github.com/krisiasty/netdev-ssh-mcp"
-    description: "MCP server for SSH-based network device operations (Arista EOS, Cisco NX-OS, IOS/IOS-XE)"
+    description: "Read-only MCP server for Arista, Cisco, Juniper, FortiGate and Cumulus over SSH"
     license: "Apache-2.0"
     repository:
       owner: krisiasty
@@ -63,8 +63,8 @@ homebrew_casks:
       - netdev-ssh-mcp
     hooks:
       post:
-        install: |
-          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", staged_path]
+        install_steps: |
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}"]
 
 checksum:
   name_template: "checksums.txt"
