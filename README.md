@@ -1,14 +1,15 @@
 # netdev-ssh-mcp
 
 MCP server for interacting with network devices (switches, routers, firewalls) over SSH.
-Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, and Cumulus Linux 4.x.
+Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, and Cumulus Linux 4.x and 5.x
+(5.x support is preliminary: see [`run_show_command`](#run_show_command)).
 Exposes network device operations as tools for use with Claude Code / Claude Desktop / Codex
 (and other MCP clients)
 
 ## Platform detection
 
 Every tool that talks to a device takes an optional `device_type`: `eos`, `ios`, `nxos`, `junos`, `fortios` or
-`cumulus4x` (`fortigate` is accepted as an alias for `fortios`; `cumulus4x` has no alias).
+`cumulus4x` or `cumulus5x` (`fortigate` is accepted as an alias for `fortios`; the Cumulus types have no alias).
 Pass it when you know the platform, for example from an inventory system.
 
 When `device_type` is omitted, the server detects the platform over SSH before running the command:
@@ -16,16 +17,19 @@ When `device_type` is omitted, the server detects the platform over SSH before r
 1. It reads the SSH server identification string, which narrows the candidates and picks one probe command that the
    likely platform accepts.
 2. It runs that read-only probe on the same connection: `show version`, `get system status` when the server looks
-   like a FortiGate, or `cat /etc/os-release` when the server identifies as Debian or Ubuntu (Cumulus Linux 4.x is
+   like a FortiGate, or `cat /etc/os-release` when the server identifies as Debian or Ubuntu (Cumulus Linux is
    Debian based).
 3. It matches platform-specific lines at the start of the probe output: the `Arista <model>` line (EOS), `Junos:` (JunOS),
    `Cisco Nexus Operating System` (NX-OS), `Cisco IOS Software` / `Cisco IOS XE Software` (IOS), and
-   `Version: FortiGate` (FortiOS). For the os-release probe, `cumulus4x` needs both `ID=cumulus-linux` and a
-   `VERSION_ID` starting with `4.`, each as a whole line (quotes around the value are accepted).
+   `Version: FortiGate` (FortiOS). For the os-release probe, `cumulus4x` and `cumulus5x` need both
+   `ID=cumulus-linux` and a `VERSION_ID` starting with `4.` or `5.` respectively, each as a whole line (quotes around
+   the value are accepted).
+   Any other Cumulus Linux release is refused as unsupported.
    Exactly one platform must match; otherwise the call fails and asks for
    `device_type` instead of guessing.
 
-A Cumulus Linux switch whose SSH banner does not mention Debian cannot be detected; pass `device_type=cumulus4x`.
+A Cumulus Linux switch whose SSH banner does not mention Debian cannot be detected; pass `device_type=cumulus4x` or
+`device_type=cumulus5x`.
 
 The result is cached per host and port for an hour, so only the first call to a host pays for the extra connection.
 A command that fails with a syntax error drops the cached entry, so the next call probes again. Only the start of a
@@ -43,7 +47,7 @@ or a command joined with `;`) before detection logs in to the device.
 
 When a command fails, the error names the command and its exit status and, if the device rejected the syntax, says so.
 It never includes what the device printed: that output is untrusted, can contain secrets, and would bypass the
-obfuscation applied to successful output. The one exception is `run_ping` and `run_traceroute` on Cumulus Linux 4.x,
+obfuscation applied to successful output. The one exception is `run_ping` and `run_traceroute` on Cumulus Linux,
 where Linux states the reason only in the output and the output holds no secrets; there it follows the exit status.
 
 Some platforms are recognised and refused. The Cisco Business switch OS is recognised from the SSH identification
@@ -52,8 +56,8 @@ not cached:
 
 | Platform | Reason |
 | --- | --- |
-| Cumulus Linux 5.x | Not supported; 5.x is configured through NVUE rather than NCLU |
-| Other Debian or Ubuntu based systems | Not supported; only Cumulus Linux 4.x is |
+| Cumulus Linux releases other than 4.x and 5.x | Not supported |
+| Other Debian or Ubuntu based systems | Not supported; only Cumulus Linux 4.x and 5.x are |
 | Cisco Business switch OS (Catalyst 1200/1300, CBS) | Does not answer SSH exec requests |
 
 ## Tools
@@ -61,7 +65,7 @@ not cached:
 ### `get_config`
 
 Retrieves the running or startup configuration from an Arista, Cisco Nexus,
-Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x device.
+Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x or 5.x device.
 Sensitive values (passwords, secrets, SNMP community names, BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically
 replaced with keyed hash tokens:
 
@@ -81,7 +85,7 @@ identical secrets. See [Obfuscation](#obfuscation) for how the key is chosen.
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
 | `config_type` | string | no | `running` | `running` or `startup` (not on JunOS, FortiOS or Cumulus Linux) |
-| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, or `cumulus4x`; see [Platform detection](#platform-detection) |
+| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`, or `cumulus5x`; see [Platform detection](#platform-detection) |
 
 Cisco IOS notes:
 
@@ -98,15 +102,19 @@ FortiOS notes:
 Cumulus Linux notes:
 
 - `device_type=cumulus4x` retrieves the configuration with `net show configuration commands`, the NCLU command list.
+- `device_type=cumulus5x` retrieves the configuration with `nv config show -o commands`, the NVUE `nv set` command
+  list of the applied configuration.
 - Cumulus Linux has no separate startup configuration, so `config_type=startup` is refused.
+- The output can include configuration snippet text (raw file contents) whose secrets have no name next to them, which
+  obfuscation cannot recognise; see [Obfuscation](#obfuscation).
 
 ### `run_show_command`
 
 Runs operational read commands on a network device and returns the output.
 For Arista/Cisco/JunOS, the command must start with `show`. For FortiOS, the
-command must start with `get`. For Cumulus Linux 4.x, the command must start with `net show`. Append
-`| json` for structured output where
-supported, or `| no-more` to disable pagination for text output.
+command must start with `get`. For Cumulus Linux 4.x, the command must start with `net show`; for Cumulus Linux 5.x,
+with `nv show`. Append `| json` for structured output where supported, or `| no-more` to disable pagination for text
+output.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -114,7 +122,7 @@ supported, or `| no-more` to disable pagination for text output.
 | `command` | string | yes | — | The operational read command to run |
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
-| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, or `cumulus4x`; see [Platform detection](#platform-detection) |
+| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`, or `cumulus5x`; see [Platform detection](#platform-detection) |
 
 Example commands:
 
@@ -139,10 +147,31 @@ net show interface json
 >
 > On Cumulus Linux 4.x, `net show configuration`, `net show commit` and `net show rollback` (and their
 > abbreviations) are refused here. Use `get_config` instead.
+>
+> On Cumulus Linux 5.x, `nv show system config` (and its abbreviations) and any path that shows a secret are refused
+> here; see the Cumulus Linux 5.x rules below.
 
 On Cumulus Linux 4.x, the command may end with `json` for structured output. It takes no pipes or redirection:
 every word must contain only letters, digits and `. _ : / , @ %` and `-`, no word may start with `-`, and words are
 separated by spaces. The server appends `2>&1` itself so that error messages are returned.
+
+On Cumulus Linux 5.x (`cumulus5x`), the command must be `nv show` followed by an NVUE path, optionally ending with
+`-o json` for structured output. It takes no other option, pipes or redirection: every word must contain only letters,
+digits and `. _ : / , @ %` and `-`, no word may start with `-` (except the final `-o json`), and words are separated
+by spaces. The server appends `2>&1` itself. `nv set`, `nv config` (other than the server's own
+`nv config show -o commands` in `get_config`) and `nv action` cannot be run. Further rules:
+
+- A path that would show a secret is refused, with a pointer to `get_config` or to the parent path with `-o json`,
+  where the secret is replaced. The refused path words are `readonly-community`, `readwrite-community`,
+  `community-password`, `auth-md5`, `auth-sha`, `encrypt-aes`, `encrypt-des`, `password`, `hashed-password`, `secret`
+  and `md5-key`, and any word containing `password` or `secret`. NVUE accepts an unambiguous abbreviation of a path
+  word, so an abbreviation (any prefix) of one of those words is refused too.
+- `nv show system config` and its abbreviations, such as `nv show sys conf`, are refused: use `get_config`.
+- When `nv` fails, the result is the error message NVUE prints, after obfuscation, instead of only the exit status.
+  Terminal escape sequences (colour, bold) are removed from `nv` output.
+
+> **Preliminary.** The Cumulus Linux 5.x support is built from NVIDIA's documentation and has not been tested on a 5.x
+> switch.
 
 On the other platforms, the command must be a single line holding a single command (no `;`), must start with the
 verb in lower case (`show`, or `get` on FortiOS), and may not use `<` or `>` redirection. Words are separated by
@@ -188,7 +217,7 @@ management target.
 
 The command syntax follows the platform (`device_type`, or detected). On FortiOS,
 the tool uses `execute ping-options ...`, runs `execute ping`, then resets the
-options within the same SSH session. On Cumulus Linux 4.x it runs Linux `ping`:
+options within the same SSH session. On Cumulus Linux (4.x and 5.x) it runs Linux `ping`:
 `ping -c <count> [-s size] [-W timeout] [-I source | -I vrf] destination`, with 5 probes unless `count` is set.
 `vrf=default` adds no `-I`.
 
@@ -204,19 +233,21 @@ options within the same SSH session. On Cumulus Linux 4.x it runs Linux `ping`:
 | `vrf` | string | no | — | VRF name |
 | `size` | int | no | — | Packet size in bytes |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
-| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`; sets ping syntax |
+| `device_type` | string | no | detected | Device type, as for `get_config`; sets ping syntax |
 
 `destination`, `source`, `vrf` and `outgoing_interface` may only contain
 letters, digits and `. _ : / @ % -`, which covers addresses, hostnames and
 interface names. Anything else is refused before the device is contacted.
 
-Cumulus Linux 4.x notes:
+Cumulus Linux notes (4.x and 5.x; `cumulus5x` behaves as `cumulus4x`):
 
 - `source` is an address or an interface, and `vrf` is the VRF device; both map to `-I`. `vrf` cannot be combined
   with `source`, `outgoing_interface` is not supported, and `destination`, `source` and `vrf` may not start with `-`.
 - Without `vrf` or `source`, ping runs in the default VRF: Cumulus wraps `ping` in `vrf-wrapper.sh`, which moves it
   out of the management VRF the SSH login runs in, and prints a line saying so. Use `vrf=mgmt` to ping from the
   management VRF.
+- An interface `source`, and any other `vrf`, bind to the device and need a root login on Cumulus Linux 4.x and on
+  5.0 and 5.1 (kernel 4.19), but not on 5.2 and later.
 - Linux `ping` exits with status 1 when nothing answered. That is a normal result here: the output, with its
   statistics, is returned instead of an error. Any other failure is still an error, and carries the device output.
 
@@ -233,8 +264,8 @@ expected path, and identifying which hop introduces latency.
 
 The command syntax follows the platform (`device_type`, or detected). On IOS,
 `vrf` is placed before the destination in the command. On FortiOS, the tool uses `execute traceroute-options ...`,
-runs `execute traceroute`, then resets the options within the same SSH session. On Cumulus Linux 4.x it runs Linux
-`traceroute [--no-vrf-switch] [-m max_hops] [-w timeout] [-q probe] [-s source-ip | -i source-iface | -i vrf] destination`.
+runs `execute traceroute`, then resets the options within the same SSH session. On Cumulus Linux (4.x and 5.x) it runs
+Linux `traceroute [--no-vrf-switch] [-m max_hops] [-w timeout] [-q probe] [-s source-ip | -i source-iface | -i vrf] destination`.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -248,21 +279,21 @@ runs `execute traceroute`, then resets the options within the same SSH session. 
 | `source` | string | no | — | Source IP address or interface name |
 | `vrf` | string | no | — | VRF name |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
-| `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`; sets syntax |
+| `device_type` | string | no | detected | Device type, as for `get_config`; sets syntax |
 
 The same character restrictions as `run_ping` apply to `destination`, `source`,
 `vrf` and `outgoing_interface`.
 
-Cumulus Linux 4.x notes:
+Cumulus Linux notes (4.x and 5.x; `cumulus5x` behaves as `cumulus4x`):
 
 - `source` with `vrf` is refused and `outgoing_interface` is not supported, as for `run_ping`.
 - Without `vrf`, or with `vrf=default`, the trace runs in the default VRF: `vrf-wrapper.sh` moves it out of the
   management VRF the SSH login runs in, and prints a line saying so.
 - `vrf=mgmt` becomes `--no-vrf-switch`, which keeps the trace in the login's VRF. This relies on management VRF
   being enabled, the Cumulus default; without it, the trace runs in the default VRF.
-- An interface `source`, and any other `vrf`, become `-i`, which binds to the device. On Cumulus 4.x that needs a root
-  login; other users get `setsockopt SO_BINDTODEVICE: Operation not permitted`. An address `source` (`-s`) works for
-  any user.
+- An interface `source`, and any other `vrf`, become `-i`, which binds to the device. On Cumulus 4.x, and on
+  5.0 and 5.1 (kernel 4.19), that needs a root login, but not on 5.2 and later; other users get
+  `setsockopt SO_BINDTODEVICE: Operation not permitted`. An address `source` (`-s`) works for any user.
 - A completed trace exits with status 0 even when the destination is unreachable, so any non-zero exit status is
   reported as an error, with the device output that states the reason.
 
@@ -595,14 +626,19 @@ Restart Claude Desktop after editing the config.
 
 Sensitive values are obfuscated by default in `get_config` and `run_show_command` output. Besides each platform's
 configuration syntax, which includes the Cumulus Linux 4.x NCLU commands (BGP neighbor passwords, OSPF keys, SNMP
-communities and SNMPv3 keys, 802.1X RADIUS secrets) and the `snmpd.conf` and `/etc/tacplus_servers` syntax, JSON output
-is covered on every platform: the value under a key that names a secret (for example `password`, `secret`, `community`
+communities and SNMPv3 keys, 802.1X RADIUS secrets), the Cumulus Linux 5.x NVUE `nv set` commands, and the
+`snmpd.conf` and `/etc/tacplus_servers` syntax, JSON output is covered on every platform: the value under a key that
+names a secret (for example `password`, `secret`, `community`
 or `psk`, or any key containing `key` or `md5`, such as `tacacsKey` or `keyMaterial`) is replaced, including every key
 and value nested under such a key. The value is replaced whatever its form: a JSON string or number, a bare word that is
 not JSON, or a single-quoted string as in Python output; only `true`, `false` and `null` (and Python's `True`, `False`
 and `None`) are kept. Only `keyId`, `keychain`, `keyChainName`, `keyType` and `keyAlgorithm` are kept, since they name a
 key rather than hold it. BGP community values in JSON output (for example `show ip bgp … | json` or `net show bgp …
-json`) are therefore hashed, because `community` is a secret key name; text output keeps them. The `run_ping` and
+json`) are therefore hashed, because `community` is a secret key name; text output keeps them. The NVUE secrets on
+Cumulus Linux 5.x are covered by name: a row, `nv set` line or YAML subtree labelled with a secret name (including SNMP
+communities, which NVUE keeps in path names such as `readonly-community`) has its values replaced. NVUE masks secrets
+itself as `*` (before 5.15) or `$nvsec$…` (5.15 and later); both are hashed anyway. A secret in configuration snippet
+text (raw file contents in `get_config` output) has no name next to it and can appear in clear text. The `run_ping` and
 `run_traceroute` tools are not affected — their output contains no sensitive values.
 
 Each secret is replaced with a token of the form `[h:<12 hex digits>]`: a
