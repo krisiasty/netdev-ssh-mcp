@@ -1,12 +1,19 @@
 name: ci
 
 on:
+  # Pull requests are checked by the pull_request event; checking their
+  # branch pushes as well would run every check twice.
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
-    branches: ["**"]
   schedule:
     - cron: "0 8 * * 1"  # weekly on monday — catches new vulnerabilities
+  workflow_dispatch:  # run by hand on a branch without a pull request
+
+# A new commit on a pull request cancels the run for the previous one.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
