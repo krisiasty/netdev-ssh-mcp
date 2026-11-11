@@ -119,7 +119,7 @@ func TestNormalizeOperationalCommand(t *testing.T) {
 		// JunOS accepts abbreviations of "configuration".
 		{name: "junos conf", command: "show conf", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
 		{name: "junos config", command: "show config | display set", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
-		{name: "junos configurat", command: "show configurat", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
+		{name: "junos configurati", command: "show configurati", deviceType: deviceTypeJunos, wantErr: "use the get_config tool"},
 		{name: "junos connections", command: "show connections", deviceType: deviceTypeJunos, want: "show connections"},
 		{name: "eos show configuration sessions", command: "show configuration sessions", deviceType: deviceTypeEOS, want: "show configuration sessions"},
 	}
