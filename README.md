@@ -167,7 +167,8 @@ by spaces. The server appends `2>&1` itself. `nv set`, `nv config` (other than t
   where the secret is replaced. The refused path words are `readonly-community`, `readwrite-community`,
   `community-password`, `auth-md5`, `auth-sha`, `encrypt-aes`, `encrypt-des`, `password`, `hashed-password`, `secret`
   and `md5-key`, and any word containing `password` or `secret`. NVUE accepts an unambiguous abbreviation of a path
-  word, so an abbreviation (any prefix) of one of those words is refused too.
+  word, so an abbreviation (any prefix) of one of those words is refused too, and so is any word that starts with one
+  of them, such as `readonly-community-v6`.
 - `nv show system config` and its abbreviations, such as `nv show sys conf`, are refused: use `get_config`.
 - When `nv` fails (here or in `get_config`), the result is the error message NVUE prints, after obfuscation, instead
   of only the exit status.
@@ -637,8 +638,9 @@ and value nested under such a key. The value is replaced whatever its form: a JS
 not JSON, or a single-quoted string as in Python output; only `true`, `false` and `null` (and Python's `True`, `False`
 and `None`) are kept. Only `keyId`, `keychain`, `keyChainName`, `keyType` and `keyAlgorithm` are kept, since they name a
 key rather than hold it. BGP community values in JSON output (for example `show ip bgp … | json` or `net show bgp …
-json`) are therefore hashed, because `community` is a secret key name; text output keeps them. The NVUE secrets on
-Cumulus Linux 5.x are covered by name: a row, `nv set` line or YAML subtree labelled with a secret name (including SNMP
+json`) are therefore hashed, because `community` is a secret key name; text rows labelled with a community name (such as
+`Community: 65000:100 no-export`) are hashed too. The NVUE secrets on Cumulus Linux 5.x are covered by name: a row,
+`nv set` line or YAML subtree labelled with a secret name (including SNMP
 communities, which NVUE keeps in path names such as `readonly-community`) has its values replaced. NVUE masks secrets
 itself as `*` (before 5.15) or `$nvsec$…` (5.15 and later); both are hashed anyway. A secret in configuration snippet
 text (raw file contents in `get_config` output) has no name next to it and can appear in clear text. The `run_ping` and

@@ -950,6 +950,17 @@ func TestRunShowCommandCumulus5StripsEscapes(t *testing.T) {
 	}
 }
 
+func TestCumulus5FailedCommandStripsEscapesAndObfuscates(t *testing.T) {
+	stubRunCommand(t, "", &sshclient.CommandError{Command: "c", ExitStatus: 1, Output: []byte("\x1b[1mpassword\x1b[0m   FAKEz\n")})
+	_, _, err := RunShowCommand(context.Background(), nil, RunShowCommandInput{Host: "sw1", Username: "u", Command: "nv show system aaa", DeviceType: "cumulus5x"})
+	if err == nil {
+		t.Fatal("want error")
+	}
+	if strings.Contains(err.Error(), "\x1b") || strings.Contains(err.Error(), "FAKEz") {
+		t.Errorf("err = %q, want no escape and no secret", err)
+	}
+}
+
 func TestCumulus5FailedCommandReturnsObfuscatedOutput(t *testing.T) {
 	cmdErr := &sshclient.CommandError{Command: "c", ExitStatus: 1, Output: []byte("Error: The requested item does not exist\npassword   FAKEy\n")}
 	calls := map[string]func(dt string) error{

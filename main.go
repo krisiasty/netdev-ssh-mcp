@@ -122,7 +122,7 @@ func main() {
 			"On Cumulus Linux 5.x the command must start with 'nv show', may end with '-o json' for structured output (no other option is accepted), " +
 			"takes no pipes or redirection, and its words may contain only the same characters. " +
 			"'nv show system config' is blocked and redirected to get_config, and so are paths that point into a secret " +
-			"(SNMP communities, SNMPv3 passwords, and password, secret or md5-key leaves); use get_config or show the parent path with -o json instead. " +
+			"(SNMP communities, SNMPv3 passwords, and password, secret or md5-key leaves, including abbreviations and words that start with these, such as readonly-community-v6); use get_config or show the parent path with -o json instead. " +
 			"On the other platforms the command must be a single line holding one command, start with the verb in lower case ('show', or 'get' on FortiOS), " +
 			"and have no ';' or '<'/'>' redirection; its words may contain only letters, digits and . _ : / , @ % + = ^ $ -. " +
 			"It may pipe only into these filters, written exactly in lower case, where N is a number of up to 6 digits and W is one plain word: " +

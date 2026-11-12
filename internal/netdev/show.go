@@ -16,7 +16,7 @@ type RunShowCommandInput struct {
 	Command    string `json:"command"    jsonschema:"command to execute: use 'show ...' on Arista/Cisco/JunOS, 'get ...' on FortiOS or 'net show ...' on Cumulus Linux 4.x or 'nv show ...' on Cumulus Linux 5.x"`
 	Username   string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port       int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
-	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), or cumulus4x (Cumulus Linux 4.x), or cumulus5x (Cumulus Linux 5.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
+	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), cumulus4x (Cumulus Linux 4.x) or cumulus5x (Cumulus Linux 5.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
 }
 
 // RunShowCommand executes an arbitrary show command on a network device.

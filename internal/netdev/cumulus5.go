@@ -39,7 +39,11 @@ func isCumulus5RefusedPathWord(w string) bool {
 		return false
 	}
 	return isCumulus5SecretWord(lower) ||
-		slices.ContainsFunc(cumulus5RefusedPathWords, func(r string) bool { return strings.HasPrefix(r, lower) })
+		slices.ContainsFunc(cumulus5RefusedPathWords, func(r string) bool {
+			// An abbreviation of a refused word, or a longer word that starts with
+			// one, such as "readonly-community-v6".
+			return strings.HasPrefix(r, lower) || strings.HasPrefix(lower, r)
+		})
 }
 
 // normalizeCumulus5Command verifies that command (already trimmed) is a single
@@ -90,6 +94,43 @@ func isNVUESecretName(w string) bool {
 	return isSecretJSONKey(w) || isCumulus5SecretWord(w)
 }
 
+// shellWordEnd returns the end of the shell word that starts at line[start]:
+// concatenated single-quoted (no escapes), double-quoted (backslash escapes)
+// and unquoted (backslash escapes) segments up to unquoted whitespace. An
+// unterminated quote runs to the end of the line.
+func shellWordEnd(line string, start int) int {
+	i := start
+	for i < len(line) {
+		switch c := line[i]; c {
+		case ' ', '\t':
+			return i
+		case '\'':
+			n := strings.IndexByte(line[i+1:], '\'')
+			if n < 0 {
+				return len(line)
+			}
+			i += n + 2
+		case '"':
+			i++
+			for i < len(line) && line[i] != '"' {
+				if line[i] == '\\' {
+					i++
+				}
+				i++
+			}
+			if i >= len(line) {
+				return len(line)
+			}
+			i++
+		case '\\':
+			i += 2
+		default:
+			i++
+		}
+	}
+	return len(line)
+}
+
 // nvueCommandSpans returns a span for the word after every secret-named word
 // of an "nv set" line, such as "nv set system aaa radius server 10.0.0.9
 // secret <value>". Spans are offset by the line's position in the text.
@@ -105,11 +146,9 @@ func nvueCommandSpans(line string, offset int) []span {
 		}
 		start, end := words[i+1][0], words[i+1][1]
 		if q := line[start]; q == '\'' || q == '"' {
-			// A quoted value runs to its closing quote, or to the end of the line.
-			end = len(line)
-			if n := strings.IndexByte(line[start+1:], q); n >= 0 {
-				end = start + 1 + n + 1
-			}
+			// A quoted value is a whole shell word: it runs to the next unquoted
+			// whitespace, or to the end of the line.
+			end = shellWordEnd(line, start)
 			for i+1 < len(words) && words[i+1][0] < end {
 				i++
 			}
@@ -209,13 +248,14 @@ func cumulus5CommandError(dt deviceType, err error) error {
 	if dt != deviceTypeCumulus5x || !errors.As(err, &cmdErr) {
 		return err
 	}
-	out := strings.TrimSpace(stripANSI(string(cmdErr.Output)))
-	if out == "" {
+	out := stripANSI(string(cmdErr.Output))
+	if strings.TrimSpace(out) == "" {
 		return err
 	}
 	safe, _, oerr := obfuscate(out)
 	if oerr != nil {
 		return err
 	}
+	safe = strings.TrimSpace(safe)
 	return fmt.Errorf("%w; device output:\n%s", err, safe)
 }
