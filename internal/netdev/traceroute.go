@@ -70,7 +70,7 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 	if rt.dt == deviceTypeFortiOS {
 		out, err = runCommands(ctx, cfg, commands)
 	} else {
-		out, err = runCommand(ctx, cfg, commands[0])
+		out, err = runDeviceCommand(ctx, cfg, rt.dt, commands[0])
 	}
 	if err != nil {
 		logFailure(ctx, "run_traceroute", err, "host", args.Host, "destination", args.Destination)

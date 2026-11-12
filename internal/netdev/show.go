@@ -54,15 +54,12 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 
 	slog.Info("run_show_command", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "command", sanitizeLog(command)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
-	out, err := runCommand(ctx, cfg, command)
+	out, err := runDeviceCommand(ctx, cfg, rt.dt, command)
 	if err != nil {
 		logFailure(ctx, "run_show_command", err, "host", args.Host, "command", command)
 		return nil, nil, runError(ctx, "run_show_command", cfg, rt, cumulus5CommandError(rt.dt, err))
 	}
 
-	if rt.dt == deviceTypeCumulus5x {
-		out = stripANSI(out)
-	}
 	res, err := obfuscatedResult(rt.dt, out)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run_show_command: %w", err)

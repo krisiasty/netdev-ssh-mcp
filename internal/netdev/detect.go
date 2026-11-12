@@ -378,7 +378,7 @@ const supportedDeviceTypes = "eos, ios, nxos, junos, fortios, cumulus4x or cumul
 
 // syntaxErrorRe matches the messages platforms print for a command they do
 // not understand, which is what running another platform's syntax produces.
-var syntaxErrorRe = regexp.MustCompile(`(?mi)^\s*(?:ERROR: Command not found|(?:-?bash: (?:line \d+: )?)?[\w.-]+: command not found|% ?Invalid (?:input|command)|% ?Incomplete command|% ?Ambiguous command|syntax error|unknown command|Unknown action|Command fail\.|command parse error|(?:Error: )?Ambiguous Command:)`)
+var syntaxErrorRe = regexp.MustCompile(`(?mi)^\s*(?:ERROR: Command not found|(?:-?bash: (?:line \d+: )?)?[\w.-]+: command not found|% ?Invalid (?:input|command)|% ?Incomplete command|% ?Ambiguous command|syntax error|unknown command|Unknown action|Command fail\.|command parse error)`)
 
 func looksLikeSyntaxError(text string) bool {
 	return syntaxErrorRe.MatchString(text)
@@ -394,20 +394,13 @@ const syntaxCheckLines = 10
 // from the start of a successful command's output, or from the output kept
 // in a failed command's error. That output is only classified here; it is
 // never shown to the caller, because it is untrusted and can hold secrets.
-// On cumulus5x, where nv may colour its messages, ANSI escapes are stripped
-// before classifying.
-func rejectedSyntax(dt deviceType, output string, runErr error) bool {
-	clean := func(s string) string {
-		if dt == deviceTypeCumulus5x {
-			return stripANSI(s)
-		}
-		return s
-	}
-	if looksLikeSyntaxError(firstLines(clean(output), syntaxCheckLines)) {
+// On cumulus5x, runDeviceCommand has already stripped ANSI escapes from both.
+func rejectedSyntax(output string, runErr error) bool {
+	if looksLikeSyntaxError(firstLines(output, syntaxCheckLines)) {
 		return true
 	}
 	var cmdErr *sshclient.CommandError
-	return errors.As(runErr, &cmdErr) && looksLikeSyntaxError(clean(string(cmdErr.Output)))
+	return errors.As(runErr, &cmdErr) && looksLikeSyntaxError(string(cmdErr.Output))
 }
 
 // firstLines returns the first n lines of s.
@@ -484,7 +477,7 @@ const detectedMismatchNotice = "The detected device_type does not match this SSH
 // unsupported platform (refuseLinuxServer) is dropped too, and is not
 // suggested for later calls. It returns the notices to append to the result.
 func afterRun(cfg sshclient.ConnConfig, r resolvedType, output string, runErr error) []mcp.Content {
-	syntaxErr := rejectedSyntax(r.dt, output, runErr)
+	syntaxErr := rejectedSyntax(output, runErr)
 
 	var notices []mcp.Content
 	switch r.source {

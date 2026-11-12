@@ -1,6 +1,7 @@
 package netdev
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -68,30 +69,40 @@ func TestNormalizeCumulus5Command(t *testing.T) {
 		{command: "nv show system snmp-server readonly-community-v", wantErr: "secret"},
 		{command: "nv show service snmp-server readonly-community", wantErr: "secret"},
 		{command: "nv show interface swp1 link", want: "nv show interface swp1 link 2>&1"},
-		{command: "nv show sys conf", wantErr: "use the get_config tool"},
-		{command: "nv show s c", wantErr: "use the get_config tool"},
-		{command: "nv show system  config", wantErr: "use the get_config tool"},
-		{command: "nv show System Config", wantErr: "use the get_config tool"},
+		{command: "nv show sys conf", wantErr: "to retrieve device configuration"},
+		{command: "nv show sy con", wantErr: "to retrieve device configuration"},
+		{command: "nv show system  config", wantErr: "to retrieve device configuration"},
+		{command: "nv show System Config", wantErr: "to retrieve device configuration"},
+		// "s" abbreviates "secret", so the secret check refuses it first.
+		{command: "nv show s c", wantErr: `path word "s" may show a secret`},
+		{command: "nv show system aaa user secretary", wantErr: `path word "secretary" may show a secret`},
 		{command: "nv show interface\nnv set x", wantErr: "may only contain"},
 		{command: "nv show interface\tx", wantErr: "may only contain"},
 		{command: "nv show x -o json", want: "nv show x -o json 2>&1"},
 
-		{command: "nv show system config", wantErr: "use the get_config tool"},
-		{command: "nv show system config snippet", wantErr: "use the get_config tool"},
+		{command: "nv show system config", wantErr: "to retrieve device configuration"},
+		{command: "nv show system config snippet", wantErr: "to retrieve device configuration"},
+		// The JSON of the whole tree and of "system" holds the snippets too.
+		{command: "nv show -o json", wantErr: "to retrieve device configuration"},
+		{command: "nv show system -o json", wantErr: "to retrieve device configuration"},
+		{command: "nv show sys -o json", wantErr: "to retrieve device configuration"},
+		{command: "nv show", want: "nv show 2>&1"},
+		{command: "nv show system", want: "nv show system 2>&1"},
+		{command: "nv show system snmp-server -o json", want: "nv show system snmp-server -o json 2>&1"},
 
 		// Words joined with '/' or ',' are checked part by part.
 		{command: "nv show system snmp-server/readonly-community", wantErr: "secret"},
 		{command: "nv show system/snmp-server/readwrite-comm", wantErr: "secret"},
 		{command: "nv show interface swp1,password", wantErr: "secret"},
-		{command: "nv show system/config", wantErr: "use the get_config tool"},
+		{command: "nv show system/config", wantErr: "to retrieve device configuration"},
 		{command: "nv show interface swp1,swp2", want: "nv show interface swp1,swp2 2>&1"},
 		{command: "nv show vrf default router rib ipv4 route 10.0.0.0/8", want: "nv show vrf default router rib ipv4 route 10.0.0.0/8 2>&1"},
 
 		// NTP authentication keys hold their secret in a "value" row.
-		{command: "nv show service ntp mgmt key", wantErr: "secret"},
-		{command: "nv show service ntp mgmt key 1", wantErr: "secret"},
-		{command: "nv show serv nt default k 1", wantErr: "secret"},
-		{command: "nv show service/ntp/default/key/1", wantErr: "secret"},
+		{command: "nv show service ntp mgmt key", wantErr: "NTP authentication keys"},
+		{command: "nv show service ntp mgmt key 1", wantErr: "NTP authentication keys"},
+		{command: "nv show serv nt default k 1", wantErr: "NTP authentication keys"},
+		{command: "nv show service/ntp/default/key/1", wantErr: "NTP authentication keys"},
 		{command: "nv show service ntp mgmt server", want: "nv show service ntp mgmt server 2>&1"},
 		{command: "nv show service ntp mgmt -o json", want: "nv show service ntp mgmt -o json 2>&1"},
 	}
@@ -146,14 +157,25 @@ func TestStripANSI(t *testing.T) {
 	}
 }
 
-func TestRejectedSyntaxStripsANSIOnCumulus5x(t *testing.T) {
-	coloured := "\x1b[31mError: Ambiguous Command: nv show i\x1b[0m\n"
-	runErr := &sshclient.CommandError{Command: "c", ExitStatus: 1, Output: []byte(coloured)}
-	if !rejectedSyntax(deviceTypeCumulus5x, "", runErr) {
-		t.Error("coloured nv error in a failed command: rejectedSyntax = false, want true")
-	}
-	if !rejectedSyntax(deviceTypeCumulus5x, coloured, nil) {
-		t.Error("coloured nv error in output: rejectedSyntax = false, want true")
+func TestRunDeviceCommandStripsANSIOnCumulus5x(t *testing.T) {
+	const coloured = "\x1b[1mpassword\x1b[0m  FAKE"
+	for _, tt := range []struct {
+		dt   deviceType
+		want string
+	}{
+		{deviceTypeCumulus5x, "password  FAKE"},
+		{deviceTypeCumulus4x, coloured},
+		{deviceTypeEOS, coloured},
+	} {
+		stubRunCommand(t, coloured, &sshclient.CommandError{Command: "c", ExitStatus: 1, Output: []byte(coloured)})
+		out, err := runDeviceCommand(context.Background(), sshclient.ConnConfig{}, tt.dt, "c")
+		var cmdErr *sshclient.CommandError
+		if !errors.As(err, &cmdErr) {
+			t.Fatalf("%s: error = %v, want a CommandError", tt.dt, err)
+		}
+		if out != tt.want || string(cmdErr.Output) != tt.want {
+			t.Errorf("%s: output %q, error output %q, want %q", tt.dt, out, cmdErr.Output, tt.want)
+		}
 	}
 }
 

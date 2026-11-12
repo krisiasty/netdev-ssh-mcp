@@ -1,6 +1,7 @@
 package netdev
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
@@ -20,11 +21,10 @@ var cumulus5RefusedPathWords = []string{
 	"password", "hashed-password", "secret", "md5-key",
 }
 
-// isCumulus5SecretWord reports whether the word w, taken from NVUE output or
-// from an "nv set" line, names a secret: it is one of cumulus5RefusedPathWords
-// or contains "password" or "secret", compared lower-cased. Unlike
-// isCumulus5RefusedPathWord it does not match a prefix of those words, so
-// ordinary output that starts with "s" or "c" is not taken for a secret.
+// isCumulus5SecretWord reports whether the word w of an "nv set" line names a
+// secret: it is one of cumulus5RefusedPathWords or contains "password" or
+// "secret", compared lower-cased. Unlike isCumulus5RefusedPathWord it does not
+// match a prefix of those words.
 func isCumulus5SecretWord(w string) bool {
 	lower := strings.ToLower(w)
 	return slices.Contains(cumulus5RefusedPathWords, lower) ||
@@ -32,16 +32,16 @@ func isCumulus5SecretWord(w string) bool {
 }
 
 // isCumulus5RefusedPathWord reports whether the NVUE path word w points into a
-// secret, or abbreviates a word that does.
+// secret: it contains "password" or "secret", abbreviates one of
+// cumulus5RefusedPathWords (NVUE expands an unambiguous prefix), or starts with
+// one, such as "readonly-community-v6". It is deliberately broad: a user's
+// object name such as "secretary", or a non-secret word such as "community"
+// that abbreviates "community-password", is refused too, since the path alone
+// cannot tell them apart from a secret (fail closed).
 func isCumulus5RefusedPathWord(w string) bool {
 	lower := strings.ToLower(w)
-	if lower == "" {
-		return false
-	}
-	return isCumulus5SecretWord(lower) ||
+	return strings.Contains(lower, "password") || strings.Contains(lower, "secret") ||
 		slices.ContainsFunc(cumulus5RefusedPathWords, func(r string) bool {
-			// An abbreviation of a refused word, or a longer word that starts with
-			// one, such as "readonly-community-v6".
 			return strings.HasPrefix(r, lower) || strings.HasPrefix(lower, r)
 		})
 }
@@ -56,8 +56,9 @@ func normalizeCumulus5Command(command string) (string, error) {
 		return "", err
 	}
 	path := words[2:]
+	jsonOut := false
 	if n := len(path); n >= 2 && path[n-2] == "-o" && path[n-1] == "json" {
-		path = path[:n-2]
+		path, jsonOut = path[:n-2], true
 	}
 	for _, w := range path {
 		if isOption(w) {
@@ -65,11 +66,18 @@ func normalizeCumulus5Command(command string) (string, error) {
 		}
 	}
 	segs := cumulus5PathSegments(path)
-	if slices.ContainsFunc(segs, isCumulus5RefusedPathWord) || isCumulus5NTPKeyPath(segs) {
-		return "", fmt.Errorf("this path shows a secret; use the get_config tool, or show the parent path with -o json")
+	if i := slices.IndexFunc(segs, isCumulus5RefusedPathWord); i >= 0 {
+		return "", fmt.Errorf("the path word %q may show a secret (a word containing 'password' or 'secret', or a secret NVUE word or an abbreviation of one); "+
+			"use the get_config tool, or show the parent path with -o json", segs[i])
 	}
-	// NVUE accepts abbreviations, so "sys conf" is "system config".
-	if len(segs) >= 2 && isPrefixFold("system", segs[0]) && isPrefixFold("config", segs[1]) {
+	if isCumulus5NTPKeyPath(segs) {
+		return "", fmt.Errorf("this path shows the NTP authentication keys; use the get_config tool, or show the parent path with -o json")
+	}
+	// NVUE accepts abbreviations, so "sys conf" is "system config". The JSON of
+	// the whole tree and of "system" holds "system config" too, configuration
+	// snippets included.
+	if (len(segs) >= 2 && isPrefixFold("system", segs[0]) && isPrefixFold("config", segs[1])) ||
+		(jsonOut && (len(segs) == 0 || len(segs) == 1 && isPrefixFold("system", segs[0]))) {
 		return "", fmt.Errorf("use the get_config tool to retrieve device configuration")
 	}
 	return command + cumulusMergeStderr, nil
@@ -104,18 +112,61 @@ func isPrefixFold(word, w string) bool {
 // nvueWordPattern finds the words of a line and their offsets.
 var nvueWordPattern = regexp.MustCompile(`\S+`)
 
-// isNVUESecretName reports whether w names a secret in NVUE output.
+// isNVUESecretName reports whether w labels a secret in NVUE output: a row
+// label, YAML key, section header or table column. It is the JSON pass's
+// secret key test, which also matches every cumulus5RefusedPathWords entry and
+// any name containing "password" or "secret" (see
+// TestNVUESecretNameCoversSecretWords). It matches "key", "community" and
+// "md5" anywhere in a name, which is safe for labels but too broad for the
+// object names of an "nv set" line; see isNVUESetSecretName.
 func isNVUESecretName(w string) bool {
-	return isSecretJSONKey(w) || isCumulus5SecretWord(w)
+	return isSecretJSONKey(w)
+}
+
+// nvueSetIDKeys are "nv set" attribute names that end in "-key" but take a key
+// ID or a public key name rather than a secret.
+var nvueSetIDKeys = []string{"message-digest-key", "authorized-key"}
+
+// isNVUESetSecretName reports whether words[i] of an "nv set" line is an
+// attribute whose value is a secret: a secret word (isCumulus5SecretWord), a
+// word ending in "-key" other than nvueSetIDKeys, "psk" or "-psk", a word
+// containing "passphrase", or "value" after a word naming a key, as in the NTP
+// authentication key "key <id> [type md5] value <secret>". User-chosen object
+// names (a peer group "keystone", a server "radius-key.example.com") are
+// matched only when they contain "password" or "secret", or end in "-key".
+func isNVUESetSecretName(line string, words [][]int, i int) bool {
+	word := func(i int) string { return strings.ToLower(line[words[i][0]:words[i][1]]) }
+	w := word(i)
+	switch {
+	case isCumulus5SecretWord(w), strings.Contains(w, "passphrase"), w == "psk", strings.HasSuffix(w, "-psk"):
+		return true
+	case strings.HasSuffix(w, "-key"):
+		return !slices.Contains(nvueSetIDKeys, w)
+	case w == "value":
+		for j := 2; j < i; j++ {
+			if k := word(j); k == "key" || strings.HasSuffix(k, "-key") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // nvueScanner finds the secrets that NVUE output and "nv set" lines hold
 // beyond what the platform patterns cover. It is fed every line of one text in
-// order, since a YAML subtree spans lines. Run it on cumulus5x output only: its
-// secret names ("key", "community", "md5" ...) are too broad for other
-// platforms' output.
+// order, since a YAML subtree, a section or a table spans lines. Run it on
+// cumulus5x output only: its secret names ("key", "community", "md5" ...) are
+// too broad for other platforms' output.
 type nvueScanner struct {
-	secretIndent int // indentation of the open YAML secret key, or -1
+	secretIndent int // indentation of the open YAML key or section, or -1
+	// The last non-blank line and its words, for a table's header.
+	prevLine  string
+	prevWords [][]int
+	// colStarts are the offsets where a table's columns start, and secretCol
+	// whether each is secret, from the header above the table's rule of
+	// dashes; both are nil outside a table with a secret column.
+	colStarts []int
+	secretCol []bool
 }
 
 func newNVUEScanner() *nvueScanner {
@@ -127,8 +178,13 @@ func newNVUEScanner() *nvueScanner {
 func (s *nvueScanner) lineSpans(line string, offset int) []span {
 	words := nvueWordPattern.FindAllStringIndex(line, -1)
 	spans := s.yamlSpans(line, words, offset)
+	spans = append(spans, s.tableSpans(line, words, offset)...)
 	spans = append(spans, nvueCommandSpans(line, words, offset)...)
-	return append(spans, nvueRowSpans(line, words, offset)...)
+	spans = append(spans, nvueRowSpans(line, words, offset)...)
+	if len(words) > 0 {
+		s.prevLine, s.prevWords = line, words
+	}
+	return spans
 }
 
 // shellWordEnd returns the end of the shell word that starts at line[start]:
@@ -168,28 +224,17 @@ func shellWordEnd(line string, start int) int {
 	return len(line)
 }
 
-// isNVUECommandSecretName reports whether words[i] of an "nv set" line names
-// a secret: a secret name, or "value" two words after one, as in the NTP
-// authentication key "key <id> value <secret>".
-func isNVUECommandSecretName(line string, words [][]int, i int) bool {
-	word := func(i int) string { return line[words[i][0]:words[i][1]] }
-	if isNVUESecretName(word(i)) {
-		return true
-	}
-	return strings.EqualFold(word(i), "value") && i >= 4 && isNVUESecretName(word(i-2))
-}
-
-// nvueCommandSpans returns a span for the value after every secret-named word
-// of an "nv set" line, such as "nv set system aaa radius server 10.0.0.9
-// secret <value>". words are the line's word offsets (nvueWordPattern), and
-// spans are offset by the line's position in the text.
+// nvueCommandSpans returns a span for the value after every secret attribute
+// (isNVUESetSecretName) of an "nv set" line, such as "nv set system aaa radius
+// server 10.0.0.9 secret <value>". words are the line's word offsets
+// (nvueWordPattern), and spans are offset by the line's position in the text.
 func nvueCommandSpans(line string, words [][]int, offset int) []span {
 	if len(words) < 3 || line[words[0][0]:words[0][1]] != "nv" || line[words[1][0]:words[1][1]] != "set" {
 		return nil
 	}
 	var spans []span
 	for i := 2; i+1 < len(words); i++ {
-		if !isNVUECommandSecretName(line, words, i) {
+		if !isNVUESetSecretName(line, words, i) {
 			continue
 		}
 		// The value is a whole shell word, which quotes or backslashes can
@@ -200,24 +245,65 @@ func nvueCommandSpans(line string, words [][]int, offset int) []span {
 		if end == len(line) && end > start+1 && line[end-1] == '\r' {
 			end--
 		}
-		// Skip the words inside the value; the loop moves on to the word
-		// after it.
-		i++
-		for i+1 < len(words) && words[i+1][0] < end {
+		spans = append(spans, shellValueSpan(line, start, end, offset))
+		// A one-word value may be an attribute instead, after an object name
+		// taken for one ("user secretary password <value>"), so the loop looks
+		// at it as a name too. The words inside a longer value are skipped.
+		if end > words[i+1][1] {
 			i++
+			for i+1 < len(words) && words[i+1][0] < end {
+				i++
+			}
 		}
-		spans = append(spans, span{start: offset + start, end: offset + end})
 	}
 	return spans
 }
 
-// yamlSpans returns a span for every word under a secret-named map key that
-// stands alone on its line in YAML-like NVUE output ("readonly-community:"
-// followed by its indented subtree), keys included, as the JSON pass does.
-// The subtree ends at the first non-blank line indented no more than the key,
-// except that a list item ("- value") at the key's indent still belongs to
-// it, as YAML may write a key's list there. The key may itself be a list item
-// ("- readonly-community:"); its indent is then that of the key, not the dash.
+// shellValueSpan returns the span of the shell word line[start:end]. A word
+// that is one plain quoted string ('v' or "v" with no quote or backslash
+// inside) loses its quotes, so the secret hashes to the same token as where
+// it is shown unquoted (a row, JSON). Anything else is hashed whole.
+func shellValueSpan(line string, start, end, offset int) span {
+	if end-start > 2 {
+		q, inner := line[start], line[start+1:end-1]
+		if (q == '\'' || q == '"') && line[end-1] == q && !strings.ContainsAny(inner, `'"\`) {
+			return span{start: offset + start + 1, end: offset + end - 1}
+		}
+	}
+	return span{start: offset + start, end: offset + end}
+}
+
+// isRule reports whether w is a run of '-' or '=', as under an NVUE table
+// header or section title, longer than a YAML list marker.
+func isRule(w string) bool {
+	return len(w) >= 2 && (strings.Trim(w, "-") == "" || strings.Trim(w, "=") == "")
+}
+
+// wordSpans returns a span for every word, without a trailing colon, except
+// list markers and rules.
+func wordSpans(line string, words [][]int, offset int) []span {
+	spans := make([]span, 0, len(words))
+	for _, w := range words {
+		if word := line[w[0]:w[1]]; word == "-" || isRule(word) {
+			continue
+		}
+		end := w[1]
+		if line[end-1] == ':' && end-1 > w[0] {
+			end--
+		}
+		spans = append(spans, span{start: offset + w[0], end: offset + end})
+	}
+	return spans
+}
+
+// yamlSpans returns a span for every word under a secret name that starts a
+// YAML key ("readonly-community:", with or without a value on the line, which
+// may be a block scalar indicator such as "|") or stands alone on its line as
+// a section title (above a "===" rule), and for the rest of that line. The
+// key may itself be a list item ("- password: <value>"). Everything indented
+// deeper than the key belongs to it, as do list items, rules and "---" at the
+// key's own indent, which is where YAML may write a key's list; the first
+// other non-blank line indented no deeper ends it.
 func (s *nvueScanner) yamlSpans(line string, words [][]int, offset int) []span {
 	if len(words) == 0 {
 		return nil
@@ -225,19 +311,8 @@ func (s *nvueScanner) yamlSpans(line string, words [][]int, offset int) []span {
 	indent := words[0][0]
 	first := line[words[0][0]:words[0][1]]
 	if s.secretIndent >= 0 {
-		if indent > s.secretIndent || (indent == s.secretIndent && strings.HasPrefix(first, "-")) {
-			spans := make([]span, 0, len(words))
-			for _, w := range words {
-				if line[w[0]:w[1]] == "-" {
-					continue // a list item marker
-				}
-				end := w[1]
-				if line[end-1] == ':' && end-1 > w[0] {
-					end--
-				}
-				spans = append(spans, span{start: offset + w[0], end: offset + end})
-			}
-			return spans
+		if indent > s.secretIndent || (indent == s.secretIndent && (strings.HasPrefix(first, "-") || isRule(first))) {
+			return wordSpans(line, words, offset)
 		}
 		s.secretIndent = -1
 	}
@@ -245,14 +320,76 @@ func (s *nvueScanner) yamlSpans(line string, words [][]int, offset int) []span {
 	if first == "-" {
 		key = words[1:]
 	}
-	if len(key) != 1 {
+	if len(key) == 0 {
 		return nil
 	}
-	name, ok := strings.CutSuffix(line[key[0][0]:key[0][1]], ":")
-	if ok && isNVUESecretName(name) && !strings.ContainsAny(name, `"'{}`) {
-		s.secretIndent = key[0][0]
+	name, colon := strings.CutSuffix(line[key[0][0]:key[0][1]], ":")
+	if (!colon && len(key) > 1) || name == "" || !isNVUESecretName(name) || strings.ContainsAny(name, `"'{}`) {
+		return nil
 	}
-	return nil
+	s.secretIndent = key[0][0]
+	return wordSpans(line, key[1:], offset)
+}
+
+// tableSpans returns a span for every word of a table row that falls in a
+// secret column: one whose header, on the line above the table's rule of
+// dashes ("Hostname  Port  Secret" over "--------  ----  ------"), holds a
+// secret name. Columns start where the rule's dash runs start; a word belongs
+// to the column it starts in. The table ends at the first blank line.
+func (s *nvueScanner) tableSpans(line string, words [][]int, offset int) []span {
+	if len(words) == 0 {
+		s.colStarts, s.secretCol = nil, nil
+		return nil
+	}
+	if s.isTableRule(line, words) {
+		s.colStarts, s.secretCol = make([]int, len(words)), make([]bool, len(words))
+		for k, w := range words {
+			s.colStarts[k] = w[0]
+		}
+		for _, h := range s.prevWords {
+			if isNVUESecretName(strings.TrimSuffix(s.prevLine[h[0]:h[1]], ":")) {
+				s.secretCol[s.column(h[0])] = true
+			}
+		}
+		if !slices.Contains(s.secretCol, true) {
+			s.colStarts, s.secretCol = nil, nil
+		}
+		return nil
+	}
+	var spans []span
+	for _, w := range words {
+		if s.colStarts != nil && s.secretCol[s.column(w[0])] {
+			spans = append(spans, span{start: offset + w[0], end: offset + w[1]})
+		}
+	}
+	return spans
+}
+
+// isTableRule reports whether line, with its words, is the rule under a table
+// header: only runs of dashes, at least one of them three long, below a
+// non-blank line.
+func (s *nvueScanner) isTableRule(line string, words [][]int) bool {
+	if s.prevWords == nil {
+		return false
+	}
+	long := false
+	for _, w := range words {
+		word := line[w[0]:w[1]]
+		if strings.Trim(word, "-") != "" {
+			return false
+		}
+		long = long || len(word) >= 3
+	}
+	return long
+}
+
+// column returns the index of the table column that offset pos falls in.
+func (s *nvueScanner) column(pos int) int {
+	k := 0
+	for k+1 < len(s.colStarts) && pos >= s.colStarts[k+1] {
+		k++
+	}
+	return k
 }
 
 // nvueRowSpans returns a span for every word after the first when the first
@@ -297,26 +434,37 @@ func stripANSI(s string) string {
 
 // cumulus5CommandError adds the device output to the error of a failed
 // cumulus5x command, since nv states the reason only there. The output may
-// hold secrets, so it is obfuscated; if that fails the error is returned
-// unchanged. When a secret was hashed under the random per-run key,
-// EphemeralKeyNotice follows the output, as obfuscatedResult adds it to a
-// result. Call it after logging, so the output stays out of the log.
+// hold secrets, so it is obfuscated, and followed by the notice
+// obfuscateForCaller returns; if obfuscation fails the error is returned
+// unchanged. Call it after logging, so the output stays out of the log.
 func cumulus5CommandError(dt deviceType, err error) error {
 	var cmdErr *sshclient.CommandError
-	if dt != deviceTypeCumulus5x || !errors.As(err, &cmdErr) {
+	if dt != deviceTypeCumulus5x || !errors.As(err, &cmdErr) || strings.TrimSpace(string(cmdErr.Output)) == "" {
 		return err
 	}
-	out := stripANSI(string(cmdErr.Output))
-	if strings.TrimSpace(out) == "" {
-		return err
-	}
-	safe, hashed, oerr := obfuscate(dt, out)
+	safe, notice, oerr := obfuscateForCaller(dt, string(cmdErr.Output))
 	if oerr != nil {
 		return err
 	}
-	safe = strings.TrimSpace(safe)
-	if hashed && EphemeralObfuscationKey() {
-		return fmt.Errorf("%w; device output:\n%s\n%s", err, safe, EphemeralKeyNotice)
+	msg := strings.TrimSpace(safe)
+	if notice != "" {
+		msg += "\n" + notice
 	}
-	return fmt.Errorf("%w; device output:\n%s", err, safe)
+	return fmt.Errorf("%w; device output:\n%s", err, msg)
+}
+
+// runDeviceCommand runs command on the device. On cumulus5x it strips the
+// ANSI escapes nv prints for bold or colour from the output, and from the
+// output kept in a CommandError, so that obfuscation, syntax classification
+// and error output all see plain text.
+func runDeviceCommand(ctx context.Context, cfg sshclient.ConnConfig, dt deviceType, command string) (string, error) {
+	out, err := runCommand(ctx, cfg, command)
+	if dt != deviceTypeCumulus5x {
+		return out, err
+	}
+	var cmdErr *sshclient.CommandError
+	if errors.As(err, &cmdErr) {
+		cmdErr.Output = []byte(stripANSI(string(cmdErr.Output)))
+	}
+	return stripANSI(out), err
 }

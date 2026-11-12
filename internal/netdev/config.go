@@ -49,15 +49,12 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 
 	slog.Info("get_config", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "config_type", configType) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
-	out, err := runCommand(ctx, cfg, cmd)
+	out, err := runDeviceCommand(ctx, cfg, rt.dt, cmd)
 	if err != nil {
 		logFailure(ctx, "get_config", err, "host", args.Host)
 		return nil, nil, runError(ctx, "get_config", cfg, rt, cumulus5CommandError(rt.dt, err))
 	}
 
-	if rt.dt == deviceTypeCumulus5x {
-		out = stripANSI(out)
-	}
 	res, err := obfuscatedResult(rt.dt, out)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get_config: %w", err)

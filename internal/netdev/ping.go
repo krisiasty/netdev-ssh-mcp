@@ -18,8 +18,8 @@ type RunPingInput struct {
 	Port        int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
 	Count       int    `json:"count,omitempty" jsonschema:"number of echo requests to send"`
 	Timeout     int    `json:"timeout,omitempty" jsonschema:"per-probe timeout in seconds; supported on FortiOS, cumulus4x and cumulus5x"`
-	Source      string `json:"source,omitempty" jsonschema:"source IP address or interface name; on cumulus4x and cumulus5x an address or interface, not combinable with vrf; on cumulus5x an interface needs a root login only on 5.0 and 5.1"`
-	VRF         string `json:"vrf,omitempty" jsonschema:"VRF name; on cumulus4x and cumulus5x the VRF device, not combinable with source; on cumulus5x another VRF than mgmt needs a root login only on 5.0 and 5.1"`
+	Source      string `json:"source,omitempty" jsonschema:"source IP address or interface name; on cumulus4x and cumulus5x an address or interface, not combinable with vrf"`
+	VRF         string `json:"vrf,omitempty" jsonschema:"VRF name; on cumulus4x and cumulus5x the VRF device, not combinable with source"`
 	Size        int    `json:"size,omitempty" jsonschema:"packet size in bytes"`
 	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface; FortiOS only"`
 	DeviceType  string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), cumulus4x (Cumulus Linux 4.x) or cumulus5x (Cumulus Linux 5.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
@@ -70,7 +70,7 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 	if rt.dt == deviceTypeFortiOS {
 		out, err = runCommands(ctx, cfg, commands)
 	} else {
-		out, err = runCommand(ctx, cfg, commands[0])
+		out, err = runDeviceCommand(ctx, cfg, rt.dt, commands[0])
 	}
 	if err != nil {
 		// Linux ping exits 1 when nothing answered; on Cumulus that output

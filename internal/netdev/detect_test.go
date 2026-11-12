@@ -569,8 +569,10 @@ func TestLooksLikeSyntaxErrorCumulus(t *testing.T) {
 		{"-bash: show: command not found", true},
 		{"  ERROR: Command not found", true},
 		{"Description: ERROR: Command not found", false},
-		{"Error: Ambiguous Command:", true},
-		{"Ambiguous Command:", true},
+		// Only NVUE prints this, for an ambiguous abbreviation: the caller's
+		// mistake on the right platform, not another platform's syntax.
+		{"Error: Ambiguous Command:", false},
+		{"Ambiguous Command:", false},
 		{"Error: The requested item does not exist", false},
 	}
 	for _, tt := range tests {

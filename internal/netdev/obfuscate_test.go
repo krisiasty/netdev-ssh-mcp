@@ -243,13 +243,13 @@ func TestObfuscateNVUEHidesSecrets(t *testing.T) {
 		{"nvue table md5-key row", `md5-key  <<$nvsec$FAKE01ab>>`},
 		{"nvue table psk row", `pre-shared-key      <<FAKEpsk>>`},
 		{"nvue table bracket key row", `[key]  <<FAKEkey>>`},
-		{"nvue quoted single", `nv set system aaa radius server 10.0.0.9 secret <<'FAKE one two'>>`},
-		{"nvue quoted double", `nv set system aaa radius server 10.0.0.9 secret <<"FAKE one two">> vrf mgmt`},
+		{"nvue quoted single", `nv set system aaa radius server 10.0.0.9 secret '<<FAKE one two>>'`},
+		{"nvue quoted double", `nv set system aaa radius server 10.0.0.9 secret "<<FAKE one two>>" vrf mgmt`},
 		{"nvue unterminated quote", `nv set system aaa radius server 10.0.0.9 secret <<'FAKE one two three>>`},
 		{"nvue shlex concat", `nv set system aaa radius server 10.0.0.9 secret <<'FAKEa'"'"'FAKEb'>> vrf mgmt`},
 		{"nvue escaped dquote", `nv set system aaa radius server 10.0.0.9 secret <<"FAKE\" x">> vrf mgmt`},
 		{"nvue quote then bare", `nv set system aaa radius server 10.0.0.9 secret <<'FAKE a'FAKEb>> vrf mgmt`},
-		{"nvue quoted secret word inside", `nv set system aaa radius server 10.0.0.9 secret <<'FAKEx secret y'>> vrf mgmt`},
+		{"nvue quoted secret word inside", `nv set system aaa radius server 10.0.0.9 secret '<<FAKEx secret y>>' vrf mgmt`},
 		{"nvue yaml community subtree", "readonly-community:\n  <<FAKEpublic>>:\n    <<access>>:\n      <<any>>: <<{}>>"},
 		{"nvue yaml snmpv3 subtree", "auth-sha:\n  <<FAKEauth>>:\n    <<encrypt-aes>>:\n      <<FAKEpriv>>: <<{}>>\nlistening-address:\n  localhost: {}"},
 		{"nvue yaml password", `    password: <<FAKEyaml>>`},
@@ -258,15 +258,33 @@ func TestObfuscateNVUEHidesSecrets(t *testing.T) {
 		{"nvue escaped space", `nv set system aaa radius server 10.0.0.9 secret <<FAKEa\ FAKEb>> vrf mgmt`},
 		{"nvue mid-word quote", `nv set system aaa radius server 10.0.0.9 secret <<FAKEa"FAKEb FAKEc">> vrf mgmt`},
 		{"nvue mid-word single quote", `nv set system aaa radius server 10.0.0.9 secret <<FAKEa'FAKEb FAKEc'>>`},
-		{"nvue value is a secret word", `nv set vrf default router bgp neighbor swp51 password <<secret>> remote-as external`},
+		// A one-word value that is itself a secret word is read as a name too,
+		// so the word after it is hashed as well (fail closed).
+		{"nvue value is a secret word", `nv set vrf default router bgp neighbor swp51 password <<secret>> <<remote-as>> external`},
+		// Object names that contain a secret-like word do not hide the attribute after them.
+		{"nvue object name keystone", `nv set vrf default router bgp peer-group keystone password <<FAKE1>>`},
+		{"nvue object name radius-key", `nv set system aaa radius server radius-key.example.com secret <<FAKE3>>`},
+		{"nvue object name secretary", `nv set system aaa user secretary <<password>> <<FAKE2>>`},
+		{"nvue object name ending in -key", `nv set system aaa radius server my-key <<secret>> <<FAKE4>> vrf mgmt`},
+		// Quoting does not change the token: the same secret as in a row or JSON.
+		{"nvue quoted nvsec", `nv set system aaa radius server 10.0.0.9 secret '<<$nvsec$FAKE04>>'`},
+		{"nvsec single-quoted elsewhere", `set community '<<$nvsec$FAKE05>>'`},
 		{"nvue crlf", "nv set system aaa radius server 10.0.0.9 secret <<FAKErad>>\r"},
 		// NTP authentication keys: "key <id> value <secret>".
-		{"nvue ntp key value", `nv set service ntp mgmt key <<1>> value <<FAKEntp>>`},
-		{"nvue ntp key value type", `nv set service ntp default key <<1>> value <<FAKEntp>> type md5`},
+		{"nvue ntp key value", `nv set service ntp mgmt key 1 value <<FAKEntp>>`},
+		{"nvue ntp key value type", `nv set service ntp default key 1 value <<FAKEntp>> type md5`},
+		{"nvue ntp type md5 before value", `nv set service ntp default key 1 type md5 value <<FAKE18>>`},
+		{"nvue ntp trusted before value", `nv set service ntp default key 1 trusted yes value <<FAKE19>>`},
 		// YAML lists at the key's indent, as PyYAML writes them.
 		{"nvue yaml list same indent", "readonly-community:\n- <<FAKEpublic>>\n- <<FAKEprivate>>\nlistening-address:\n- localhost"},
 		{"nvue yaml list nested", "snmp-server:\n  readwrite-community:\n  - <<FAKErw>>\n  - <<FAKErw2>>\n  listening-address: localhost"},
 		{"nvue yaml list item key", "- readonly-community:\n  - <<FAKEpublic>>\n- listening-address: localhost"},
+		// Block scalars, inline list-item keys, sections and table columns.
+		{"nvue yaml block scalar", "private-key: <<|>>\n  <<FAKEline1>>\n  <<FAKEline2>>\nhostname: sw1"},
+		{"nvue yaml folded scalar", "secret: <<>->>\n  <<FAKEfold>>\nvrf: mgmt"},
+		{"nvue yaml inline list item", "- password: <<FAKE1>>\n- name: admin\nusers:\n  - secret: <<FAKE2>>\n  - name: bob"},
+		{"nvue section", "readonly-community\n====\n    <<Community>>  <<Access>>\n    ---------  ------\n    <<FAKEpub>>    <<any>>\n\nlistening-address\n====\n    localhost"},
+		{"nvue table secret column", "Hostname   Port  Secret\n---------  ----  ------\n10.0.0.9   1812  <<FAKE6>>\n10.0.0.10  1812  <<FAKE7>> <<x>>\n\nAddress  Port\n-------  ----\n10.0.0.1 161"},
 		{"nvue yaml ntp key", "key:\n  <<1>>:\n    <<value>>: <<FAKEntp>>\nserver:\n  pool.ntp.org: {}"},
 	}
 	checkHidden(t, deviceTypeCumulus5x, tests)
@@ -283,6 +301,16 @@ func TestObfuscateNVUEOnlyOnCumulus5x(t *testing.T) {
 	})
 	checkHidden(t, deviceTypeIOS, []hiddenCase{
 		{"bgp community", `Community: <<65000:100>> no-export`},
+	})
+	// "nv set" values after object or attribute names that hold "key",
+	// "community" or "md5" stay readable.
+	checkHidden(t, deviceTypeCumulus5x, []hiddenCase{
+		{"community list", `nv set router policy community-list CL1 rule 10 community 65000:100`},
+		{"community advertise", `nv set vrf default router bgp neighbor swp51 address-family ipv4-unicast community-advertise extended on`},
+		{"ospf key id", `nv set interface swp1 router ospf authentication message-digest-key 1`},
+		{"ntp server key id", `nv set service ntp default server 192.0.2.1 key 1`},
+		{"ssh public key", `nv set system aaa user admin ssh authorized-key k1 key AAAAC3Nza`},
+		{"ntp key type", `nv set service ntp default key 1 type md5`},
 	})
 	checkHidden(t, deviceTypeCumulus5x, []hiddenCase{
 		{"nvue communities row", `Communities: <<65000:100>> <<65000:200>>`},
@@ -558,6 +586,20 @@ func TestIsCumulus5SecretWord(t *testing.T) {
 	for _, w := range []string{"s", "c", "pass", "readonly-comm", "", "interface"} {
 		if isCumulus5SecretWord(w) {
 			t.Errorf("isCumulus5SecretWord(%q) = true, want false", w)
+		}
+	}
+}
+
+// TestNVUESecretNameCoversSecretWords checks that the output passes, which
+// test names with isSecretJSONKey alone, recognise every NVUE secret word.
+func TestNVUESecretNameCoversSecretWords(t *testing.T) {
+	words := append([]string{"bind-password", "shared-secret", "client-secret", "enable-password"}, cumulus5RefusedPathWords...)
+	for _, w := range words {
+		if !isCumulus5SecretWord(w) {
+			t.Fatalf("isCumulus5SecretWord(%q) = false; the test word list is wrong", w)
+		}
+		if !isNVUESecretName(w) {
+			t.Errorf("isNVUESecretName(%q) = false, want true", w)
 		}
 	}
 }

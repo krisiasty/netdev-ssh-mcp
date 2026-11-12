@@ -48,7 +48,7 @@ func pattern(expr string, skip ...string) sensitivePattern {
 // order does not matter and a line can hold several secrets.
 var sensitivePatterns = []sensitivePattern{
 	// $nvsec$... anywhere: an NVUE encrypted secret
-	pattern(`(\$nvsec\$[^\s";,]+)`),
+	pattern(`(\$nvsec\$[^\s"';,]+)`),
 	// enable secret|password [level N] [type] <value>  (Arista, Cisco)
 	pattern(`^\s*enable\s+(?:secret|password)(?:\s+level\s+\d+)?` + typeTokens + `\s+` + value),
 	// username NAME [privilege N] [role R] secret|password [type] <value>  (Arista, Cisco)
@@ -240,15 +240,29 @@ func obfuscate(dt deviceType, text string) (out string, hashed bool, err error) 
 // and can encourage the user to configure a key. dt is the device type that
 // produced the output.
 func obfuscatedResult(dt deviceType, output string) (*mcp.CallToolResult, error) {
-	out, hashed, err := obfuscate(dt, output)
+	out, notice, err := obfuscateForCaller(dt, output)
 	if err != nil {
 		return nil, err
 	}
 	content := []mcp.Content{&mcp.TextContent{Text: out}}
-	if hashed && EphemeralObfuscationKey() {
-		content = append(content, &mcp.TextContent{Text: EphemeralKeyNotice})
+	if notice != "" {
+		content = append(content, &mcp.TextContent{Text: notice})
 	}
 	return &mcp.CallToolResult{Content: content}, nil
+}
+
+// obfuscateForCaller obfuscates output from device type dt and returns the
+// notice to show the caller with it: EphemeralKeyNotice when a secret was
+// hashed under the random per-run key, otherwise "".
+func obfuscateForCaller(dt deviceType, output string) (out, notice string, err error) {
+	out, hashed, err := obfuscate(dt, output)
+	if err != nil {
+		return "", "", err
+	}
+	if hashed && EphemeralObfuscationKey() {
+		notice = EphemeralKeyNotice
+	}
+	return out, notice, nil
 }
 
 // span marks text[start:end] as a secret. A JSON number span is replaced with
