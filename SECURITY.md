@@ -93,9 +93,10 @@ So a report need not re-cover this ground:
   cannot run. A path that shows a secret (the NVUE words `readonly-community`, `readwrite-community`,
   `community-password`, `auth-md5`, `auth-sha`, `encrypt-aes`, `encrypt-des`, `password`, `hashed-password`, `secret`,
   `md5-key`, any word containing `password` or `secret`, any abbreviation of them, since NVUE accepts unambiguous
-  abbreviations, and any word that starts with one of them, such as `readonly-community-v6`) is refused, as is `nv
-  show system config` and its abbreviations. Failed `nv` commands return NVUE's
-  message after obfuscation.
+  abbreviations, and any word that starts with one of them, such as `readonly-community-v6`) is refused, as is
+  `nv show system config` and its abbreviations. Each part of a word joined with `/` or `,` is checked on its own, and
+  the NTP authentication keys (`service ntp <vrf> key`, abbreviations included) are refused too. Failed `nv` commands
+  return NVUE's message after obfuscation.
 - Any `device_type` other than `cumulus4x` or `cumulus5x` is refused, before a session is
   opened, when the SSH server identifies itself as a Linux system (Debian or
   Ubuntu). This is the main defence on Linux SSH servers; the filter list

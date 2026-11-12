@@ -1,8 +1,11 @@
 package netdev
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/krisiasty/netdev-ssh-mcp/internal/sshclient"
 )
 
 func TestNormalizeCumulus5Command(t *testing.T) {
@@ -75,6 +78,22 @@ func TestNormalizeCumulus5Command(t *testing.T) {
 
 		{command: "nv show system config", wantErr: "use the get_config tool"},
 		{command: "nv show system config snippet", wantErr: "use the get_config tool"},
+
+		// Words joined with '/' or ',' are checked part by part.
+		{command: "nv show system snmp-server/readonly-community", wantErr: "secret"},
+		{command: "nv show system/snmp-server/readwrite-comm", wantErr: "secret"},
+		{command: "nv show interface swp1,password", wantErr: "secret"},
+		{command: "nv show system/config", wantErr: "use the get_config tool"},
+		{command: "nv show interface swp1,swp2", want: "nv show interface swp1,swp2 2>&1"},
+		{command: "nv show vrf default router rib ipv4 route 10.0.0.0/8", want: "nv show vrf default router rib ipv4 route 10.0.0.0/8 2>&1"},
+
+		// NTP authentication keys hold their secret in a "value" row.
+		{command: "nv show service ntp mgmt key", wantErr: "secret"},
+		{command: "nv show service ntp mgmt key 1", wantErr: "secret"},
+		{command: "nv show serv nt default k 1", wantErr: "secret"},
+		{command: "nv show service/ntp/default/key/1", wantErr: "secret"},
+		{command: "nv show service ntp mgmt server", want: "nv show service ntp mgmt server 2>&1"},
+		{command: "nv show service ntp mgmt -o json", want: "nv show service ntp mgmt -o json 2>&1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {
@@ -124,5 +143,46 @@ func TestStripANSI(t *testing.T) {
 	}
 	if got := stripANSI("a\x1bb"); got != "ab" {
 		t.Errorf("lone ESC: stripANSI = %q", got)
+	}
+}
+
+func TestRejectedSyntaxStripsANSIOnCumulus5x(t *testing.T) {
+	coloured := "\x1b[31mError: Ambiguous Command: nv show i\x1b[0m\n"
+	runErr := &sshclient.CommandError{Command: "c", ExitStatus: 1, Output: []byte(coloured)}
+	if !rejectedSyntax(deviceTypeCumulus5x, "", runErr) {
+		t.Error("coloured nv error in a failed command: rejectedSyntax = false, want true")
+	}
+	if !rejectedSyntax(deviceTypeCumulus5x, coloured, nil) {
+		t.Error("coloured nv error in output: rejectedSyntax = false, want true")
+	}
+}
+
+func TestCumulus5CommandErrorEphemeralKeyNotice(t *testing.T) {
+	savedKey, savedSource := obfuscationKey, obfuscationKeySource
+	defer func() { obfuscationKey, obfuscationKeySource = savedKey, savedSource }()
+
+	base := errors.New("exit status 1")
+	tests := []struct {
+		name       string
+		source     string
+		output     string
+		wantNotice bool
+	}{
+		{name: "ephemeral key with token", source: KeySourceEphemeral, output: "Error: x\nmd5-key  $nvsec$FAKE01ab\n", wantNotice: true},
+		{name: "ephemeral key without token", source: KeySourceEphemeral, output: "Error: Invalid path\n"},
+		{name: "env key with token", source: KeySourceEnv, output: "Error: x\nmd5-key  $nvsec$FAKE01ab\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			SetObfuscationKey([]byte(testObfuscationKey), tt.source)
+			err := cumulus5CommandError(deviceTypeCumulus5x, &sshclient.CommandError{Command: "c", Err: base, ExitStatus: 1, Output: []byte(tt.output)})
+			msg := err.Error()
+			if strings.Contains(msg, "FAKE") {
+				t.Fatalf("secret leaked in error: %s", msg)
+			}
+			if got := strings.Contains(msg, EphemeralKeyNotice); got != tt.wantNotice {
+				t.Errorf("error %q contains EphemeralKeyNotice = %v, want %v", msg, got, tt.wantNotice)
+			}
+		})
 	}
 }

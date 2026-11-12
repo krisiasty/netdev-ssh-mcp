@@ -18,9 +18,15 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// obfuscateConfig is obfuscate without the hashed flag.
+// obfuscateConfig is obfuscate without the hashed flag, for any platform but
+// cumulus5x, which alone runs the NVUE passes.
 func obfuscateConfig(config string) (string, error) {
-	out, _, err := obfuscate(config)
+	return obfuscateFor("", config)
+}
+
+// obfuscateFor is obfuscate for device type dt without the hashed flag.
+func obfuscateFor(dt deviceType, config string) (string, error) {
+	out, _, err := obfuscate(dt, config)
 	return out, err
 }
 
@@ -41,10 +47,7 @@ func unmark(want string) string {
 // Every secret below contains FAKE, and no non-secret text does, so any FAKE
 // left in the output is a leak.
 func TestObfuscateConfigHidesSecrets(t *testing.T) {
-	tests := []struct {
-		name string
-		want string // input line with each secret wrapped in <<...>>
-	}{
+	tests := []hiddenCase{
 		// Arista EOS
 		{"eos enable secret sha512", `enable password sha512 <<$6$FAKEsalt$FAKEhash>>`},
 		{"eos username role secret sha512", `username admin role network-admin secret sha512 <<$6$FAKEsalt$FAKEhash>>`},
@@ -186,7 +189,44 @@ func TestObfuscateConfigHidesSecrets(t *testing.T) {
 		{"cumulus fix 13", `trapsess -v 3 -u alice -l authPriv -a SHA -A <<FAKEauth>> -x AES -X <<FAKEpriv>> 192.0.2.30`},
 		{"cumulus fix 14", `rocommunity -Cn ctx <<FAKEcomm>> default`},
 		{"cumulus fix 15", `rwcommunity6 -Cn ctx <<FAKEcomm>> default`},
-		// Cumulus Linux 5.x (NVUE)
+		{"nvsec anywhere", `bgp neighbor key <<$nvsec$FAKE03ef>>`},
+	}
+
+	// The platform patterns apply on cumulus5x too, and its NVUE passes must
+	// not change what they hash.
+	for _, dt := range []deviceType{"", deviceTypeCumulus5x} {
+		checkHidden(t, dt, tests)
+	}
+}
+
+type hiddenCase struct {
+	name string
+	want string // input with each secret wrapped in <<...>>
+}
+
+// checkHidden obfuscates each case's unmarked want for device type dt and
+// compares the result with its expanded want.
+func checkHidden(t *testing.T, dt deviceType, tests []hiddenCase) {
+	t.Helper()
+	for _, tt := range tests {
+		t.Run(string(dt)+"/"+tt.name, func(t *testing.T) {
+			input := unmark(tt.want)
+			got, err := obfuscateFor(dt, input)
+			if err != nil {
+				t.Fatalf("obfuscate() error = %v", err)
+			}
+			if strings.Contains(got, "FAKE") {
+				t.Errorf("secret leaked:\n in: %s\nout: %s", input, got)
+			}
+			if want := expand(tt.want); got != want {
+				t.Errorf("obfuscate(%q, %q)\n got: %s\nwant: %s", dt, input, got, want)
+			}
+		})
+	}
+}
+
+func TestObfuscateNVUEHidesSecrets(t *testing.T) {
+	tests := []hiddenCase{
 		{"nvue bgp neighbor password", `nv set vrf default router bgp neighbor swp51 password <<FAKEbgp>>`},
 		{"nvue bgp peer-group password", `nv set vrf default router bgp peer-group spine password <<FAKEpg>>`},
 		{"nvue ospf md5-key", `nv set interface swp1 router ospf authentication md5-key <<FAKEospf>>`},
@@ -214,24 +254,39 @@ func TestObfuscateConfigHidesSecrets(t *testing.T) {
 		{"nvue yaml snmpv3 subtree", "auth-sha:\n  <<FAKEauth>>:\n    <<encrypt-aes>>:\n      <<FAKEpriv>>: <<{}>>\nlistening-address:\n  localhost: {}"},
 		{"nvue yaml password", `    password: <<FAKEyaml>>`},
 		{"nvue yaml secret", `  secret: <<$nvsec$FAKE02cd>>`},
-		{"nvsec anywhere", `bgp neighbor key <<$nvsec$FAKE03ef>>`},
+		// Unquoted values that quotes or backslashes carry across spaces.
+		{"nvue escaped space", `nv set system aaa radius server 10.0.0.9 secret <<FAKEa\ FAKEb>> vrf mgmt`},
+		{"nvue mid-word quote", `nv set system aaa radius server 10.0.0.9 secret <<FAKEa"FAKEb FAKEc">> vrf mgmt`},
+		{"nvue mid-word single quote", `nv set system aaa radius server 10.0.0.9 secret <<FAKEa'FAKEb FAKEc'>>`},
+		{"nvue value is a secret word", `nv set vrf default router bgp neighbor swp51 password <<secret>> remote-as external`},
+		{"nvue crlf", "nv set system aaa radius server 10.0.0.9 secret <<FAKErad>>\r"},
+		// NTP authentication keys: "key <id> value <secret>".
+		{"nvue ntp key value", `nv set service ntp mgmt key <<1>> value <<FAKEntp>>`},
+		{"nvue ntp key value type", `nv set service ntp default key <<1>> value <<FAKEntp>> type md5`},
+		// YAML lists at the key's indent, as PyYAML writes them.
+		{"nvue yaml list same indent", "readonly-community:\n- <<FAKEpublic>>\n- <<FAKEprivate>>\nlistening-address:\n- localhost"},
+		{"nvue yaml list nested", "snmp-server:\n  readwrite-community:\n  - <<FAKErw>>\n  - <<FAKErw2>>\n  listening-address: localhost"},
+		{"nvue yaml list item key", "- readonly-community:\n  - <<FAKEpublic>>\n- listening-address: localhost"},
+		{"nvue yaml ntp key", "key:\n  <<1>>:\n    <<value>>: <<FAKEntp>>\nserver:\n  pool.ntp.org: {}"},
 	}
+	checkHidden(t, deviceTypeCumulus5x, tests)
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			input := unmark(tt.want)
-			got, err := obfuscateConfig(input)
-			if err != nil {
-				t.Fatalf("obfuscateConfig() error = %v", err)
-			}
-			if strings.Contains(got, "FAKE") {
-				t.Errorf("secret leaked:\n in: %s\nout: %s", input, got)
-			}
-			if want := expand(tt.want); got != want {
-				t.Errorf("obfuscateConfig(%q)\n got: %s\nwant: %s", input, got, want)
-			}
-		})
-	}
+// TestObfuscateNVUEOnlyOnCumulus5x checks that the NVUE passes, whose secret
+// names are broad, leave other platforms' output alone.
+func TestObfuscateNVUEOnlyOnCumulus5x(t *testing.T) {
+	checkHidden(t, deviceTypeJunos, []hiddenCase{
+		{"junos communities", `Communities: 65000:100 65000:200`},
+		{"table header", `Community  Value`},
+		{"yaml-like key", "community:\n  65000:100"},
+		{"nv set line", `nv set system aaa radius server 10.0.0.9 secret 'one two'`},
+	})
+	checkHidden(t, deviceTypeIOS, []hiddenCase{
+		{"bgp community", `Community: <<65000:100>> no-export`},
+	})
+	checkHidden(t, deviceTypeCumulus5x, []hiddenCase{
+		{"nvue communities row", `Communities: <<65000:100>> <<65000:200>>`},
+	})
 }
 
 func TestObfuscateConfigLeavesNonSecretsAlone(t *testing.T) {
@@ -266,12 +321,14 @@ func TestObfuscateConfigLeavesNonSecretsAlone(t *testing.T) {
 		`C        192.0.2.0/24 is directly connected, GigabitEthernet0/0`,
 	}
 	input := strings.Join(lines, "\n")
-	got, err := obfuscateConfig(input)
-	if err != nil {
-		t.Fatalf("obfuscateConfig() error = %v", err)
-	}
-	if got != input {
-		t.Fatalf("obfuscateConfig() changed non-secret lines:\n got: %s\nwant: %s", got, input)
+	for _, dt := range []deviceType{"", deviceTypeCumulus5x} {
+		got, err := obfuscateFor(dt, input)
+		if err != nil {
+			t.Fatalf("obfuscate(%q) error = %v", dt, err)
+		}
+		if got != input {
+			t.Fatalf("obfuscate(%q) changed non-secret lines:\n got: %s\nwant: %s", dt, got, input)
+		}
 	}
 }
 
@@ -447,7 +504,7 @@ func TestObfuscatedResultEphemeralKeyNotice(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			SetObfuscationKey([]byte(testObfuscationKey), tt.source)
-			res, err := obfuscatedResult(tt.output)
+			res, err := obfuscatedResult("", tt.output)
 			if err != nil {
 				t.Fatalf("obfuscatedResult() error = %v", err)
 			}

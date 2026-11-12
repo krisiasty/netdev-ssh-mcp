@@ -205,33 +205,42 @@ func SetObfuscationKey(raw []byte, source string) {
 // revealing the secret, and tokens cannot be checked against guesses without
 // the key.
 // Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, FortiOS, Cumulus Linux 4.x (NCLU) and
-// Cumulus Linux 5.x (NVUE) syntax, and JSON output on every platform. Besides
-// the JSON and line passes it runs a YAML pass for NVUE's indented map output.
-func obfuscate(config string) (out string, hashed bool, err error) {
+// Cumulus Linux 5.x (NVUE) syntax, and JSON output on every platform. On
+// cumulus5x (dt) it also runs the NVUE passes for "nv set" lines, rows and
+// YAML-like map output, which are too broad for other platforms' output.
+func obfuscate(dt deviceType, text string) (out string, hashed bool, err error) {
 	if !Obfuscate {
-		return config, false, nil
+		return text, false, nil
 	}
 	if obfuscationKey == nil {
 		return "", false, errObfuscationKeyNotSet
 	}
-	// Both passes read the original text and only report spans, so neither can
-	// hide a secret from the other by rewriting what it sees.
-	spans := append(jsonSpans(config), nvueYAMLSpans(config)...)
+	var nvue *nvueScanner
+	if dt == deviceTypeCumulus5x {
+		nvue = newNVUEScanner()
+	}
+	// Every pass reads the original text and only reports spans, so none can
+	// hide a secret from another by rewriting what it sees.
+	spans := jsonSpans(text)
 	offset := 0
-	for line := range strings.SplitSeq(config, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		spans = append(spans, lineSpans(line, offset)...)
+		if nvue != nil {
+			spans = append(spans, nvue.lineSpans(line, offset)...)
+		}
 		offset += len(line) + 1
 	}
-	out, hashed = hashSpans(config, spans)
+	out, hashed = hashSpans(text, spans)
 	return out, hashed, nil
 }
 
 // obfuscatedResult obfuscates device output and wraps it in a tool result.
 // When a secret was hashed under the random per-run key, it appends
 // EphemeralKeyNotice as a second content block so the calling agent sees it
-// and can encourage the user to configure a key.
-func obfuscatedResult(output string) (*mcp.CallToolResult, error) {
-	out, hashed, err := obfuscate(output)
+// and can encourage the user to configure a key. dt is the device type that
+// produced the output.
+func obfuscatedResult(dt deviceType, output string) (*mcp.CallToolResult, error) {
+	out, hashed, err := obfuscate(dt, output)
 	if err != nil {
 		return nil, err
 	}
@@ -264,8 +273,7 @@ func lineSpans(line string, offset int) []span {
 			}
 		}
 	}
-	spans = append(spans, nvueCommandSpans(line, offset)...)
-	return append(spans, nvueRowSpans(line, offset)...)
+	return spans
 }
 
 // hashSpans replaces every secret span in text with its token and reports

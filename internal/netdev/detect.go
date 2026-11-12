@@ -162,19 +162,20 @@ var probeMarkers = map[string][]platformMarker{
 // versionPatterns extract a short version string for detect_platform. The
 // capture is limited to characters that appear in version numbers.
 var versionPatterns = map[deviceType]*regexp.Regexp{
-	deviceTypeEOS:     regexp.MustCompile(`(?m)^Software image version:\s+([\w.()-]+)`),
-	deviceTypeJunos:   regexp.MustCompile(`(?m)^(?:Junos:\s+|JUNOS Software Release \[)([\w.()-]+)`),
-	deviceTypeNXOS:    regexp.MustCompile(`(?m)^\s*(?:NXOS|system):\s+version\s+([\w.()-]+)`),
-	deviceTypeIOS:     regexp.MustCompile(`(?m)^\s*(?:Cisco IOS(?: XE)? Software|IOS \(tm\)).*?Version\s+([\w.()-]+)`),
-	deviceTypeFortiOS: regexp.MustCompile(`(?m)^Version:\s+Forti\S+\s+(v[\w.()-]+)`),
-	// The value may be quoted and the line may end in \r.
-	deviceTypeCumulus4x: regexp.MustCompile(`(?m)^VERSION_ID="?([\w.+~-]+)"?\r?$`),
-	deviceTypeCumulus5x: regexp.MustCompile(`(?m)^VERSION_ID="?([\w.+~-]+)"?\r?$`),
+	deviceTypeEOS:       regexp.MustCompile(`(?m)^Software image version:\s+([\w.()-]+)`),
+	deviceTypeJunos:     regexp.MustCompile(`(?m)^(?:Junos:\s+|JUNOS Software Release \[)([\w.()-]+)`),
+	deviceTypeNXOS:      regexp.MustCompile(`(?m)^\s*(?:NXOS|system):\s+version\s+([\w.()-]+)`),
+	deviceTypeIOS:       regexp.MustCompile(`(?m)^\s*(?:Cisco IOS(?: XE)? Software|IOS \(tm\)).*?Version\s+([\w.()-]+)`),
+	deviceTypeFortiOS:   regexp.MustCompile(`(?m)^Version:\s+Forti\S+\s+(v[\w.()-]+)`),
+	deviceTypeCumulus4x: osReleaseVersionRe,
+	deviceTypeCumulus5x: osReleaseVersionRe,
 }
 
 var (
-	osReleaseCumulusRe   = regexp.MustCompile(`(?m)^ID="?cumulus-linux"?\r?$`)
-	osReleaseVersionRe   = versionPatterns[deviceTypeCumulus4x]
+	osReleaseCumulusRe = regexp.MustCompile(`(?m)^ID="?cumulus-linux"?\r?$`)
+	// osReleaseVersionRe extracts VERSION_ID from /etc/os-release. The value may
+	// be quoted and the line may end in \r.
+	osReleaseVersionRe   = regexp.MustCompile(`(?m)^VERSION_ID="?([\w.+~-]+)"?\r?$`)
 	osReleaseVersion4xRe = regexp.MustCompile(`(?m)^VERSION_ID="?4\.[\w.+~-]*"?\r?$`)
 	osReleaseVersion5xRe = regexp.MustCompile(`(?m)^VERSION_ID="?5\.[\w.+~-]*"?\r?$`)
 )
@@ -393,12 +394,20 @@ const syntaxCheckLines = 10
 // from the start of a successful command's output, or from the output kept
 // in a failed command's error. That output is only classified here; it is
 // never shown to the caller, because it is untrusted and can hold secrets.
-func rejectedSyntax(output string, runErr error) bool {
-	if looksLikeSyntaxError(firstLines(output, syntaxCheckLines)) {
+// On cumulus5x, where nv may colour its messages, ANSI escapes are stripped
+// before classifying.
+func rejectedSyntax(dt deviceType, output string, runErr error) bool {
+	clean := func(s string) string {
+		if dt == deviceTypeCumulus5x {
+			return stripANSI(s)
+		}
+		return s
+	}
+	if looksLikeSyntaxError(firstLines(clean(output), syntaxCheckLines)) {
 		return true
 	}
 	var cmdErr *sshclient.CommandError
-	return errors.As(runErr, &cmdErr) && looksLikeSyntaxError(string(cmdErr.Output))
+	return errors.As(runErr, &cmdErr) && looksLikeSyntaxError(clean(string(cmdErr.Output)))
 }
 
 // firstLines returns the first n lines of s.
@@ -475,7 +484,7 @@ const detectedMismatchNotice = "The detected device_type does not match this SSH
 // unsupported platform (refuseLinuxServer) is dropped too, and is not
 // suggested for later calls. It returns the notices to append to the result.
 func afterRun(cfg sshclient.ConnConfig, r resolvedType, output string, runErr error) []mcp.Content {
-	syntaxErr := rejectedSyntax(output, runErr)
+	syntaxErr := rejectedSyntax(r.dt, output, runErr)
 
 	var notices []mcp.Content
 	switch r.source {

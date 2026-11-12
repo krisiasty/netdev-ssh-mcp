@@ -273,7 +273,7 @@ func TestObfuscateRunsJSONAndLinePasses(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, hashed, err := obfuscate(unmark(tt.want))
+			got, hashed, err := obfuscate("", unmark(tt.want))
 			if err != nil {
 				t.Fatalf("obfuscate() error = %v", err)
 			}
@@ -349,7 +349,7 @@ func TestObfuscateJSONEdgeCasesThroughObfuscate(t *testing.T) {
 		`{"communities": [-Infinity, "FAKEneginf"]}`,
 	}
 	for _, input := range inputs {
-		got, hashed, err := obfuscate(input)
+		got, hashed, err := obfuscate("", input)
 		if err != nil {
 			t.Fatalf("obfuscate() error = %v", err)
 		}
@@ -386,7 +386,7 @@ func TestObfuscateOverlappingLineAndJSONSpans(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, hashed, err := obfuscate(tt.input)
+			got, hashed, err := obfuscate("", tt.input)
 			if err != nil {
 				t.Fatalf("obfuscate() error = %v", err)
 			}

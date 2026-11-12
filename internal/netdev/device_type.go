@@ -83,6 +83,9 @@ func normalizeConfigType(raw string) (string, error) {
 }
 
 func buildConfigCommand(configType string, dt deviceType) (string, error) {
+	if isCumulus(dt) && configType == "startup" {
+		return "", fmt.Errorf("config_type startup: Cumulus Linux does not have a separate startup-config; use config_type 'running' or omit it")
+	}
 	switch dt {
 	case deviceTypeJunos:
 		if configType == "startup" {
@@ -95,14 +98,8 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 		}
 		return "show full-configuration", nil
 	case deviceTypeCumulus4x:
-		if configType == "startup" {
-			return "", fmt.Errorf("config_type startup: Cumulus Linux does not have a separate startup-config; use config_type 'running' or omit it")
-		}
 		return "net show configuration commands" + cumulusMergeStderr, nil
 	case deviceTypeCumulus5x:
-		if configType == "startup" {
-			return "", fmt.Errorf("config_type startup: Cumulus Linux does not have a separate startup-config; use config_type 'running' or omit it")
-		}
 		return "nv config show -o commands" + cumulusMergeStderr, nil
 	case deviceTypeIOS:
 		return fmt.Sprintf("show %s-config", configType), nil

@@ -58,7 +58,7 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 	if rt.dt == deviceTypeCumulus5x {
 		out = stripANSI(out)
 	}
-	res, err := obfuscatedResult(out)
+	res, err := obfuscatedResult(rt.dt, out)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get_config: %w", err)
 	}

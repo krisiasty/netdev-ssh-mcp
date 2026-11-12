@@ -168,7 +168,9 @@ by spaces. The server appends `2>&1` itself. `nv set`, `nv config` (other than t
   `community-password`, `auth-md5`, `auth-sha`, `encrypt-aes`, `encrypt-des`, `password`, `hashed-password`, `secret`
   and `md5-key`, and any word containing `password` or `secret`. NVUE accepts an unambiguous abbreviation of a path
   word, so an abbreviation (any prefix) of one of those words is refused too, and so is any word that starts with one
-  of them, such as `readonly-community-v6`.
+  of them, such as `readonly-community-v6`. A word joined with `/` or `,` is checked part by part, so
+  `snmp-server/readonly-community` is refused too. The NTP authentication keys (`service ntp <vrf> key`, abbreviations
+  included), whose secret is in a `value` row, are refused as well.
 - `nv show system config` and its abbreviations, such as `nv show sys conf`, are refused: use `get_config`.
 - When `nv` fails (here or in `get_config`), the result is the error message NVUE prints, after obfuscation, instead
   of only the exit status.
@@ -638,10 +640,14 @@ and value nested under such a key. The value is replaced whatever its form: a JS
 not JSON, or a single-quoted string as in Python output; only `true`, `false` and `null` (and Python's `True`, `False`
 and `None`) are kept. Only `keyId`, `keychain`, `keyChainName`, `keyType` and `keyAlgorithm` are kept, since they name a
 key rather than hold it. BGP community values in JSON output (for example `show ip bgp … | json` or `net show bgp …
-json`) are therefore hashed, because `community` is a secret key name; text rows labelled with a community name (such as
-`Community: 65000:100 no-export`) are hashed too. The NVUE secrets on Cumulus Linux 5.x are covered by name: a row,
-`nv set` line or YAML subtree labelled with a secret name (including SNMP
-communities, which NVUE keeps in path names such as `readonly-community`) has its values replaced. NVUE masks secrets
+json`) are therefore hashed, because `community` is a secret key name. On Cumulus Linux 5.x, text rows labelled with a
+community name (such as `Communities: 65000:100 65000:200`) are hashed too; on other platforms text output keeps them,
+apart from the first value of a `Community:` row, which has the shape of `show snmp community` output. The NVUE secrets
+on Cumulus Linux 5.x are covered by name: a row, `nv set` line or YAML subtree (a list at the key's indent included)
+labelled with a secret name (including SNMP communities, which NVUE keeps in path names such as `readonly-community`)
+has its values replaced, as is the `value` of an NTP authentication key (`key <id> value <secret>`). An `nv set` value
+is hashed as the whole shell word, quotes and escaped spaces included. These NVUE rules apply to `cumulus5x` output
+only, since their secret names are too broad for other platforms' output. NVUE masks secrets
 itself as `*` (before 5.15) or `$nvsec$…` (5.15 and later); both are hashed anyway. A secret in configuration snippet
 text (raw file contents in `get_config` output) has no name next to it and can appear in clear text. The `run_ping` and
 `run_traceroute` tools are not affected — their output contains no sensitive values.

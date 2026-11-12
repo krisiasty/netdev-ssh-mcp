@@ -63,7 +63,7 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 	if rt.dt == deviceTypeCumulus5x {
 		out = stripANSI(out)
 	}
-	res, err := obfuscatedResult(out)
+	res, err := obfuscatedResult(rt.dt, out)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run_show_command: %w", err)
 	}

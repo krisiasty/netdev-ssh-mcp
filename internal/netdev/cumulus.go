@@ -35,18 +35,29 @@ var cumulusWordChars = newWordClass("._:/,@%-")
 // configuration or pending-change data; NCLU accepts any unambiguous prefix.
 var cumulusBlockedFamilies = []string{"configuration", "commit", "rollback"}
 
+// cumulusShowWords splits command (already trimmed) into its words and
+// verifies that bash cannot split it into anything else and that it starts
+// with "<tool> show". It is the check shared by NCLU (net) and NVUE (nv).
+func cumulusShowWords(command, tool string) ([]string, error) {
+	words := spaceSeparated(command)
+	for _, w := range words {
+		if !cumulusWordChars.match(w) {
+			return nil, fmt.Errorf("command may only contain %s in words separated by spaces", cumulusWordChars.rule)
+		}
+	}
+	if len(words) < 2 || words[0] != tool || words[1] != "show" {
+		return nil, fmt.Errorf("command must start with '%s show'", tool)
+	}
+	return words, nil
+}
+
 // normalizeCumulusCommand verifies that command (already trimmed) is a single
 // "net show" command that bash cannot split into anything else, and appends
 // cumulusMergeStderr. The returned command is otherwise exactly as written.
 func normalizeCumulusCommand(command string) (string, error) {
-	words := spaceSeparated(command)
-	for _, w := range words {
-		if !cumulusWordChars.match(w) {
-			return "", fmt.Errorf("command may only contain %s in words separated by spaces", cumulusWordChars.rule)
-		}
-	}
-	if len(words) < 2 || words[0] != "net" || words[1] != "show" {
-		return "", fmt.Errorf("command must start with 'net show'")
+	words, err := cumulusShowWords(command, "net")
+	if err != nil {
+		return "", err
 	}
 	for _, w := range words[2:] {
 		if isOption(w) {
