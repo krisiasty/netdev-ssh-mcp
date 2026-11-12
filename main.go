@@ -98,20 +98,20 @@ func main() {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "get_config",
-		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x device via SSH and retrieve its " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x or 5.x device via SSH and retrieve its " +
 			"running or startup configuration. Sensitive values (passwords, secrets, SNMP community names, " +
 			"BGP/OSPF/TACACS/RADIUS/IKE keys) are automatically replaced with keyed hash tokens; " +
 			"identical tokens mean identical secrets, so configs from different devices can be compared. " +
 			deviceTypeGuidance +
 			"The command depends on the platform: 'show configuration' on JunOS, 'show full-configuration' on FortiOS, " +
-			"'show running-config' on IOS, 'show running-config | no-more' on EOS and NX-OS and 'net show configuration commands' on Cumulus Linux 4.x. " +
-			"JunOS, FortiOS and Cumulus Linux do not support config_type='startup'.",
+			"'show running-config' on IOS, 'show running-config | no-more' on EOS and NX-OS and 'net show configuration commands' on Cumulus Linux 4.x and 'nv config show -o commands' on Cumulus Linux 5.x. " +
+			"JunOS, FortiOS and Cumulus Linux (4.x and 5.x) do not support config_type='startup'.",
 	}, netdev.GetConfig)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_show_command",
-		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x device via SSH and run an operational read command. " +
-			"Arista/Cisco/JunOS commands must start with 'show'. FortiOS commands must start with 'get'. Cumulus Linux 4.x commands must start with 'net show'. " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x or 5.x device via SSH and run an operational read command. " +
+			"Arista/Cisco/JunOS commands must start with 'show'. FortiOS commands must start with 'get'. Cumulus Linux 4.x commands must start with 'net show', Cumulus Linux 5.x commands with 'nv show'. " +
 			deviceTypeGuidance +
 			"Running-config and startup-config are not allowed here — use the get_config tool instead. " +
 			"On JunOS, 'show configuration' is also blocked and redirected to get_config. " +
@@ -119,6 +119,10 @@ func main() {
 			"On Cumulus Linux 4.x, 'net show configuration', 'net show commit' and 'net show rollback' (or any abbreviation of them) are blocked and redirected to get_config, " +
 			"the command may end with 'json' for structured output, takes no pipes or redirection, and its words may contain only " +
 			"letters, digits and . _ : / , @ % -. " +
+			"On Cumulus Linux 5.x the command must start with 'nv show', may end with '-o json' for structured output (no other option is accepted), " +
+			"takes no pipes or redirection, and its words may contain only the same characters. " +
+			"'nv show system config' is blocked and redirected to get_config, and so are paths that point into a secret " +
+			"(SNMP communities, SNMPv3 passwords, and password, secret or md5-key leaves, including abbreviations and words that start with these, such as readonly-community-v6); use get_config or show the parent path with -o json instead. " +
 			"On the other platforms the command must be a single line holding one command, start with the verb in lower case ('show', or 'get' on FortiOS), " +
 			"and have no ';' or '<'/'>' redirection; its words may contain only letters, digits and . _ : / , @ % + = ^ $ -. " +
 			"It may pipe only into these filters, written exactly in lower case, where N is a number of up to 6 digits and W is one plain word: " +
@@ -132,26 +136,26 @@ func main() {
 			"when no filter fits, run the command without one and extract what you need from the full output. " +
 			"Examples: 'show bgp summary | json', 'show interfaces status | json', " +
 			"'show lldp neighbors detail | json', 'show inventory | json', 'show version | json', " +
-			"'get system status', 'get router info routing-table all', 'net show interface json'.",
+			"'get system status', 'get router info routing-table all', 'net show interface json', 'nv show interface -o json'.",
 	}, netdev.RunShowCommand)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_ping",
-		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x device via SSH and run a ping command. " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x or 5.x device via SSH and run a ping command. " +
 			"Useful for verifying reachability from the device's perspective — for example, testing connectivity " +
 			"to a BGP peer, next-hop, or management target. " +
 			deviceTypeGuidance +
 			"Optional parameters: count (number of probes), source (source IP or interface), " +
-			"vrf (VRF or routing-instance name on JunOS), size (packet size in bytes), timeout (FortiOS and Cumulus Linux 4.x only), " +
+			"vrf (VRF or routing-instance name on JunOS), size (packet size in bytes), timeout (FortiOS and Cumulus Linux 4.x and 5.x only), " +
 			"outgoing_interface (FortiOS only). FortiOS 7.4+ does not support vrf for ping via this tool. " +
 			"On Cumulus Linux 4.x the tool runs 'ping -c <count> [-s size] [-W timeout] [-I source|vrf] destination' with 5 probes unless count is set; " +
 			"vrf cannot be combined with source, outgoing_interface is not supported, and when nothing answers the output with its statistics " +
-			"is returned instead of an error.",
+			"is returned instead of an error. Cumulus Linux 5.x behaves the same as 4.x.",
 	}, netdev.RunPing)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_traceroute",
-		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x device via SSH and run a traceroute. " +
+		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x or 5.x device via SSH and run a traceroute. " +
 			"Shows the hop-by-hop path to a destination and per-hop latency. " +
 			"Useful for locating where connectivity breaks, verifying traffic follows the expected path, " +
 			"and identifying which hop introduces latency. " +
@@ -162,7 +166,7 @@ func main() {
 			"On FortiOS 7.4+, probe maps to execute traceroute-options queries, source maps to source, " +
 			"and outgoing_interface maps to device; max_hops, timeout, and vrf are not supported. " +
 			"On Cumulus Linux 4.x the tool runs 'traceroute [-m max_hops] [-w timeout] [-q probe] [-s source-ip | -i source-iface | -i vrf] destination'; " +
-			"vrf cannot be combined with source, and outgoing_interface is not supported. " +
+			"vrf cannot be combined with source, and outgoing_interface is not supported. Cumulus Linux 5.x behaves the same as 4.x. " +
 			"Optional parameters: max_hops, timeout (per-probe seconds), probe (probes per hop, not used on JunOS), " +
 			"source (source IP or interface), vrf (routing-instance on JunOS), outgoing_interface (FortiOS only).",
 	}, netdev.RunTraceroute)
@@ -170,10 +174,10 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "detect_platform",
 		Description: "Connect to a network device via SSH and identify its platform, returning the device_type to pass to the other tools " +
-			"(eos, ios, nxos, junos, fortios or cumulus4x) and a short software version. Detection reads the SSH server identification and runs " +
+			"(eos, ios, nxos, junos, fortios, cumulus4x or cumulus5x) and a short software version. Detection reads the SSH server identification and runs " +
 			"one read-only command ('show version', 'get system status' on FortiOS, or 'cat /etc/os-release' on Debian or Ubuntu based systems). Results are cached by this server per host; " +
 			"set refresh=true to probe again. Use it to resolve a list of hosts before working through them. " +
-			"Cumulus Linux 5.x, other Linux systems and the Cisco Business switch OS (e.g. Catalyst 1200) are recognised and reported as unsupported.",
+			"Other Linux systems and the Cisco Business switch OS (e.g. Catalyst 1200) are recognised and reported as unsupported.",
 	}, netdev.DetectPlatform)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -191,7 +195,7 @@ func main() {
 
 // deviceTypeGuidance is shared by the tools that take device_type.
 const deviceTypeGuidance = "device_type selects the platform syntax: 'eos' (Arista), 'ios' (Cisco IOS/IOS-XE), 'nxos' (Cisco NX-OS), " +
-	"'junos' (Juniper JunOS), 'fortios' (FortiGate/FortiOS) or 'cumulus4x' (Cumulus Linux 4.x; 5.x is not supported). Pass it when you know the platform, for example from an inventory " +
+	"'junos' (Juniper JunOS), 'fortios' (FortiGate/FortiOS), 'cumulus4x' (Cumulus Linux 4.x) or 'cumulus5x' (Cumulus Linux 5.x). Pass it when you know the platform, for example from an inventory " +
 	"system. If it is omitted, the platform is auto-detected over SSH, cached for the host, and reported in a note after the output; " +
 	"pass that value on later calls. To work through many hosts, call detect_platform for each one first. "
 

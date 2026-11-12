@@ -15,7 +15,7 @@ import (
 // secret unless it is one of nonSecretJSONKeys.
 var secretJSONKeyWords = []string{
 	"password", "passwd", "passphrase", "secret", "community", "communities", "psk", "preshared",
-	"privacy", "key", "md5",
+	"privacy", "key", "md5", "authsha", "encryptaes", "encryptdes",
 }
 
 // nonSecretJSONKeys are whole key names, after the same normalisation, that

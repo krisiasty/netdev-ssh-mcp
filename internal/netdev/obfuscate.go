@@ -44,9 +44,11 @@ func pattern(expr string, skip ...string) sensitivePattern {
 }
 
 // sensitivePatterns covers Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper
-// JunOS, FortiOS and Cumulus Linux 4.x syntax. Every pattern is applied to every line, so their
+// JunOS, FortiOS and Cumulus Linux 4.x and 5.x syntax. Every pattern is applied to every line, so their
 // order does not matter and a line can hold several secrets.
 var sensitivePatterns = []sensitivePattern{
+	// $nvsec$... anywhere: an NVUE encrypted secret
+	pattern(`(\$nvsec\$[^\s"';,]+)`),
 	// enable secret|password [level N] [type] <value>  (Arista, Cisco)
 	pattern(`^\s*enable\s+(?:secret|password)(?:\s+level\s+\d+)?` + typeTokens + `\s+` + value),
 	// username NAME [privilege N] [role R] secret|password [type] <value>  (Arista, Cisco)
@@ -202,41 +204,65 @@ func SetObfuscationKey(raw []byte, source string) {
 // always produces the same token, so outputs remain comparable without
 // revealing the secret, and tokens cannot be checked against guesses without
 // the key.
-// Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, FortiOS and Cumulus Linux 4.x syntax,
-// and JSON output on every platform.
-func obfuscate(config string) (out string, hashed bool, err error) {
+// Supports Arista EOS, Cisco NX-OS, Cisco IOS/IOS-XE, Juniper JunOS, FortiOS, Cumulus Linux 4.x (NCLU) and
+// Cumulus Linux 5.x (NVUE) syntax, and JSON output on every platform. On
+// cumulus5x (dt) it also runs the NVUE passes for "nv set" lines, rows and
+// YAML-like map output, which are too broad for other platforms' output.
+func obfuscate(dt deviceType, text string) (out string, hashed bool, err error) {
 	if !Obfuscate {
-		return config, false, nil
+		return text, false, nil
 	}
 	if obfuscationKey == nil {
 		return "", false, errObfuscationKeyNotSet
 	}
-	// Both passes read the original text and only report spans, so neither can
-	// hide a secret from the other by rewriting what it sees.
-	spans := jsonSpans(config)
+	var nvue *nvueScanner
+	if dt == deviceTypeCumulus5x {
+		nvue = newNVUEScanner()
+	}
+	// Every pass reads the original text and only reports spans, so none can
+	// hide a secret from another by rewriting what it sees.
+	spans := jsonSpans(text)
 	offset := 0
-	for line := range strings.SplitSeq(config, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		spans = append(spans, lineSpans(line, offset)...)
+		if nvue != nil {
+			spans = append(spans, nvue.lineSpans(line, offset)...)
+		}
 		offset += len(line) + 1
 	}
-	out, hashed = hashSpans(config, spans)
+	out, hashed = hashSpans(text, spans)
 	return out, hashed, nil
 }
 
 // obfuscatedResult obfuscates device output and wraps it in a tool result.
 // When a secret was hashed under the random per-run key, it appends
 // EphemeralKeyNotice as a second content block so the calling agent sees it
-// and can encourage the user to configure a key.
-func obfuscatedResult(output string) (*mcp.CallToolResult, error) {
-	out, hashed, err := obfuscate(output)
+// and can encourage the user to configure a key. dt is the device type that
+// produced the output.
+func obfuscatedResult(dt deviceType, output string) (*mcp.CallToolResult, error) {
+	out, notice, err := obfuscateForCaller(dt, output)
 	if err != nil {
 		return nil, err
 	}
 	content := []mcp.Content{&mcp.TextContent{Text: out}}
-	if hashed && EphemeralObfuscationKey() {
-		content = append(content, &mcp.TextContent{Text: EphemeralKeyNotice})
+	if notice != "" {
+		content = append(content, &mcp.TextContent{Text: notice})
 	}
 	return &mcp.CallToolResult{Content: content}, nil
+}
+
+// obfuscateForCaller obfuscates output from device type dt and returns the
+// notice to show the caller with it: EphemeralKeyNotice when a secret was
+// hashed under the random per-run key, otherwise "".
+func obfuscateForCaller(dt deviceType, output string) (out, notice string, err error) {
+	out, hashed, err := obfuscate(dt, output)
+	if err != nil {
+		return "", "", err
+	}
+	if hashed && EphemeralObfuscationKey() {
+		notice = EphemeralKeyNotice
+	}
+	return out, notice, nil
 }
 
 // span marks text[start:end] as a secret. A JSON number span is replaced with

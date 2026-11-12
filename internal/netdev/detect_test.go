@@ -315,9 +315,25 @@ func TestResolveDeviceType(t *testing.T) {
 		}
 	})
 
-	t.Run("cumulus 5.x is unsupported and not cached", func(t *testing.T) {
+	t.Run("cumulus 5.x is detected and cached", func(t *testing.T) {
 		resetDetection(t)
 		f := &fakeProbe{ident: identCumulus, outputs: map[string]string{probeOSRelease: readFixture(t, "cumulus54_os_release.txt")}}
+		runProbe = f.probe
+		r, err := resolveDeviceType(t.Context(), cfg, "", false)
+		if err != nil || r.dt != deviceTypeCumulus5x || r.source != sourceProbe || r.version != "5.4.0" {
+			t.Fatalf("resolveDeviceType() = %+v, %v; want probed cumulus5x 5.4.0", r, err)
+		}
+		if len(f.ran) != 1 || f.ran[0] != probeOSRelease {
+			t.Fatalf("ran %v, want only %q", f.ran, probeOSRelease)
+		}
+		if r, err = resolveDeviceType(t.Context(), cfg, "", false); err != nil || r.source != sourceCache || f.calls != 1 {
+			t.Fatalf("second resolveDeviceType() = %+v, %v, probes=%d; want cached", r, err, f.calls)
+		}
+	})
+
+	t.Run("unsupported Cumulus release is not cached", func(t *testing.T) {
+		resetDetection(t)
+		f := &fakeProbe{ident: identCumulus, outputs: map[string]string{probeOSRelease: readFixture(t, "cumulus60_os_release.txt")}}
 		runProbe = f.probe
 		for range 2 {
 			_, err := resolveDeviceType(t.Context(), cfg, "", false)
@@ -505,15 +521,17 @@ func TestMatchOSRelease(t *testing.T) {
 		{name: "4.3", output: c43, want: deviceTypeCumulus4x, wantVersion: "4.3.0"},
 		{name: "CRLF", output: strings.ReplaceAll(c43, "\n", "\r\n"), want: deviceTypeCumulus4x, wantVersion: "4.3.0"},
 		{name: "quoted", output: "ID=\"cumulus-linux\"\nVERSION_ID=\"4.3.0\"\n", want: deviceTypeCumulus4x, wantVersion: "4.3.0"},
-		{name: "5.4", output: readFixture(t, "cumulus54_os_release.txt"), wantErr: "Cumulus Linux 5.4.0 is not supported"},
-		{name: "debian", output: readFixture(t, "debian10_os_release.txt"), wantErr: "not Cumulus Linux 4.x"},
-		{name: "ubuntu", output: readFixture(t, "ubuntu2204_os_release.txt"), wantErr: "not Cumulus Linux 4.x"},
-		{name: "empty", output: "", wantErr: "not Cumulus Linux 4.x"},
-		{name: "id without version", output: "ID=cumulus-linux\n", wantErr: "not Cumulus Linux 4.x"},
-		{name: "markers inside other lines", output: "NAME=\"ID=cumulus-linux\"\nPRETTY_NAME=VERSION_ID=4.3\n", wantErr: "not Cumulus Linux 4.x"},
-		{name: "version marker inside another line", output: "ID=cumulus-linux\nVERSION_ID=5.4.0\nHOME_URL_VERSION_ID=4.3\n", wantErr: "Cumulus Linux 5.4.0 is not supported"},
-		{name: "id prefix only", output: "ID=cumulus-linux-x\nVERSION_ID=4.3.0\n", wantErr: "not Cumulus Linux 4.x"},
-		{name: "version not a whole line", output: "ID=cumulus-linux\nVERSION_ID=4.junk extra text\n", wantErr: "not Cumulus Linux 4.x"},
+		{name: "5.4", output: readFixture(t, "cumulus54_os_release.txt"), want: deviceTypeCumulus5x, wantVersion: "5.4.0"},
+		{name: "5.12", output: readFixture(t, "cumulus512_os_release.txt"), want: deviceTypeCumulus5x, wantVersion: "5.12.1"},
+		{name: "6.0", output: readFixture(t, "cumulus60_os_release.txt"), wantErr: "Cumulus Linux 6.0.0 is not supported"},
+		{name: "debian", output: readFixture(t, "debian10_os_release.txt"), wantErr: "not Cumulus Linux 4.x or 5.x"},
+		{name: "ubuntu", output: readFixture(t, "ubuntu2204_os_release.txt"), wantErr: "not Cumulus Linux 4.x or 5.x"},
+		{name: "empty", output: "", wantErr: "not Cumulus Linux 4.x or 5.x"},
+		{name: "id without version", output: "ID=cumulus-linux\n", wantErr: "not Cumulus Linux 4.x or 5.x"},
+		{name: "markers inside other lines", output: "NAME=\"ID=cumulus-linux\"\nPRETTY_NAME=VERSION_ID=4.3\n", wantErr: "not Cumulus Linux 4.x or 5.x"},
+		{name: "version marker inside another line", output: "ID=cumulus-linux\nVERSION_ID=6.0.0\nHOME_URL_VERSION_ID=4.3\n", wantErr: "Cumulus Linux 6.0.0 is not supported"},
+		{name: "id prefix only", output: "ID=cumulus-linux-x\nVERSION_ID=4.3.0\n", wantErr: "not Cumulus Linux 4.x or 5.x"},
+		{name: "version not a whole line", output: "ID=cumulus-linux\nVERSION_ID=4.junk extra text\n", wantErr: "not Cumulus Linux 4.x or 5.x"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -533,8 +551,8 @@ func TestMatchOSRelease(t *testing.T) {
 			if strings.Contains(err.Error(), "pass device_type") {
 				t.Fatalf("error %q suggests device_type, which cannot help here", err)
 			}
-			if tt.name == "5.4" && !strings.Contains(err.Error(), "cumulus4x") {
-				t.Fatalf("error %q does not name cumulus4x", err)
+			if tt.name == "6.0" && (!strings.Contains(err.Error(), "cumulus4x") || !strings.Contains(err.Error(), "cumulus5x")) {
+				t.Fatalf("error %q does not name cumulus4x and cumulus5x", err)
 			}
 		})
 	}
@@ -551,6 +569,11 @@ func TestLooksLikeSyntaxErrorCumulus(t *testing.T) {
 		{"-bash: show: command not found", true},
 		{"  ERROR: Command not found", true},
 		{"Description: ERROR: Command not found", false},
+		// Only NVUE prints this, for an ambiguous abbreviation: the caller's
+		// mistake on the right platform, not another platform's syntax.
+		{"Error: Ambiguous Command:", false},
+		{"Ambiguous Command:", false},
+		{"Error: The requested item does not exist", false},
 	}
 	for _, tt := range tests {
 		if got := looksLikeSyntaxError(tt.text); got != tt.want {

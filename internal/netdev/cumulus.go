@@ -35,18 +35,29 @@ var cumulusWordChars = newWordClass("._:/,@%-")
 // configuration or pending-change data; NCLU accepts any unambiguous prefix.
 var cumulusBlockedFamilies = []string{"configuration", "commit", "rollback"}
 
+// cumulusShowWords splits command (already trimmed) into its words and
+// verifies that bash cannot split it into anything else and that it starts
+// with "<tool> show". It is the check shared by NCLU (net) and NVUE (nv).
+func cumulusShowWords(command, tool string) ([]string, error) {
+	words := spaceSeparated(command)
+	for _, w := range words {
+		if !cumulusWordChars.match(w) {
+			return nil, fmt.Errorf("command may only contain %s in words separated by spaces", cumulusWordChars.rule)
+		}
+	}
+	if len(words) < 2 || words[0] != tool || words[1] != "show" {
+		return nil, fmt.Errorf("command must start with '%s show'", tool)
+	}
+	return words, nil
+}
+
 // normalizeCumulusCommand verifies that command (already trimmed) is a single
 // "net show" command that bash cannot split into anything else, and appends
 // cumulusMergeStderr. The returned command is otherwise exactly as written.
 func normalizeCumulusCommand(command string) (string, error) {
-	words := spaceSeparated(command)
-	for _, w := range words {
-		if !cumulusWordChars.match(w) {
-			return "", fmt.Errorf("command may only contain %s in words separated by spaces", cumulusWordChars.rule)
-		}
-	}
-	if len(words) < 2 || words[0] != "net" || words[1] != "show" {
-		return "", fmt.Errorf("command must start with 'net show'")
+	words, err := cumulusShowWords(command, "net")
+	if err != nil {
+		return "", err
 	}
 	for _, w := range words[2:] {
 		if isOption(w) {
@@ -155,7 +166,12 @@ func buildCumulusTraceroute(destination string, maxHops, timeout, probe int, sou
 	return []string{strings.Join(parts, " ") + cumulusMergeStderr}, nil
 }
 
-// cumulusPingNoReplyOutput returns the command output when a cumulus4x ping
+// isCumulus reports whether dt is a Cumulus Linux platform.
+func isCumulus(dt deviceType) bool {
+	return dt == deviceTypeCumulus4x || dt == deviceTypeCumulus5x
+}
+
+// cumulusPingNoReplyOutput returns the command output when a Cumulus ping
 // exited with status 1, which Linux ping uses for "no reply received". That
 // is a result, not a failure; any other status stays an error. It is not used
 // for traceroute: Linux traceroute exits 0 for a completed trace, reachable or
@@ -163,20 +179,20 @@ func buildCumulusTraceroute(destination string, maxHops, timeout, probe int, sou
 // interface it cannot bind.
 func cumulusPingNoReplyOutput(dt deviceType, err error) (string, bool) {
 	var cmdErr *sshclient.CommandError
-	if dt != deviceTypeCumulus4x || !errors.As(err, &cmdErr) || cmdErr.ExitStatus != 1 {
+	if !isCumulus(dt) || !errors.As(err, &cmdErr) || cmdErr.ExitStatus != 1 {
 		return "", false
 	}
 	return string(cmdErr.Output), true
 }
 
-// cumulusNetError adds the device output to the error of a failed cumulus4x
+// cumulusNetError adds the device output to the error of a failed Cumulus
 // ping or traceroute. Linux states the reason only there ("connect: Network
 // is unreachable", "setsockopt SO_BINDTODEVICE: Operation not permitted"),
 // and that output holds no secrets: it is returned unobfuscated on success.
 // Call it after logging, so the output stays out of the log.
 func cumulusNetError(dt deviceType, err error) error {
 	var cmdErr *sshclient.CommandError
-	if dt != deviceTypeCumulus4x || !errors.As(err, &cmdErr) {
+	if !isCumulus(dt) || !errors.As(err, &cmdErr) {
 		return err
 	}
 	out := strings.TrimSpace(string(cmdErr.Output))

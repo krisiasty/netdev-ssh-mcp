@@ -19,7 +19,9 @@ func TestNormalizeDeviceType(t *testing.T) {
 		{name: "junos", input: "junos", want: deviceTypeJunos},
 		{name: "cumulus4x", input: "cumulus4x", want: deviceTypeCumulus4x},
 		{name: "cumulus4x mixed case", input: " CUMULUS4X ", want: deviceTypeCumulus4x},
-		{name: "cumulus without version", input: "cumulus", wantErr: "'cumulus4x'"},
+		{name: "cumulus5x", input: "cumulus5x", want: deviceTypeCumulus5x},
+		{name: "cumulus5x mixed case", input: " CUMULUS5X ", want: deviceTypeCumulus5x},
+		{name: "cumulus without version", input: "cumulus", wantErr: "'cumulus5x'"},
 		{name: "invalid", input: "asa", wantErr: "device_type must be"},
 	}
 
@@ -61,6 +63,8 @@ func TestBuildConfigCommand(t *testing.T) {
 		{name: "fortios running", configType: "running", deviceType: deviceTypeFortiOS, want: "show full-configuration"},
 		{name: "cumulus4x running", configType: "running", deviceType: deviceTypeCumulus4x, want: "net show configuration commands 2>&1"},
 		{name: "cumulus4x startup rejected", configType: "startup", deviceType: deviceTypeCumulus4x, wantErr: "Cumulus Linux does not have a separate startup-config"},
+		{name: "cumulus5x running", configType: "running", deviceType: deviceTypeCumulus5x, want: "nv config show -o commands 2>&1"},
+		{name: "cumulus5x startup rejected", configType: "startup", deviceType: deviceTypeCumulus5x, wantErr: "does not have a separate startup-config"},
 		{name: "junos startup rejected", configType: "startup", deviceType: deviceTypeJunos, wantErr: "JunOS does not have a startup-config"},
 		{name: "fortios startup rejected", configType: "startup", deviceType: deviceTypeFortiOS, wantErr: "FortiOS does not have a startup-config"},
 	}
@@ -277,18 +281,20 @@ func TestBuildCumulusPing(t *testing.T) {
 		{name: "metacharacter", dest: "a;b", wantErr: "destination may only contain"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := buildPingCommands(tt.dest, deviceTypeCumulus4x, tt.count, tt.size, tt.timeout, tt.source, tt.vrf, tt.outgoing)
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("error = %v, want substring %q", err, tt.wantErr)
+		for _, dt := range []deviceType{deviceTypeCumulus4x, deviceTypeCumulus5x} {
+			t.Run(string(dt)+" "+tt.name, func(t *testing.T) {
+				got, err := buildPingCommands(tt.dest, dt, tt.count, tt.size, tt.timeout, tt.source, tt.vrf, tt.outgoing)
+				if tt.wantErr != "" {
+					if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+						t.Fatalf("error = %v, want substring %q", err, tt.wantErr)
+					}
+					return
 				}
-				return
-			}
-			if err != nil || len(got) != 1 || got[0] != tt.want {
-				t.Fatalf("got %q, %v; want %q", got, err, tt.want)
-			}
-		})
+				if err != nil || len(got) != 1 || got[0] != tt.want {
+					t.Fatalf("got %q, %v; want %q", got, err, tt.want)
+				}
+			})
+		}
 	}
 }
 
@@ -316,24 +322,26 @@ func TestBuildCumulusTraceroute(t *testing.T) {
 		{name: "metacharacter", dest: "a;b", wantErr: "destination may only contain"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := buildTracerouteCommands(tt.dest, deviceTypeCumulus4x, tt.maxHops, tt.timeout, tt.probe, tt.source, tt.vrf, tt.outgoing)
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("error = %v, want substring %q", err, tt.wantErr)
+		for _, dt := range []deviceType{deviceTypeCumulus4x, deviceTypeCumulus5x} {
+			t.Run(string(dt)+" "+tt.name, func(t *testing.T) {
+				got, err := buildTracerouteCommands(tt.dest, dt, tt.maxHops, tt.timeout, tt.probe, tt.source, tt.vrf, tt.outgoing)
+				if tt.wantErr != "" {
+					if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+						t.Fatalf("error = %v, want substring %q", err, tt.wantErr)
+					}
+					return
 				}
-				return
-			}
-			if err != nil || len(got) != 1 || got[0] != tt.want {
-				t.Fatalf("got %q, %v; want %q", got, err, tt.want)
-			}
-		})
+				if err != nil || len(got) != 1 || got[0] != tt.want {
+					t.Fatalf("got %q, %v; want %q", got, err, tt.want)
+				}
+			})
+		}
 	}
 }
 
 func TestPingTimeoutMessageNamesCumulus(t *testing.T) {
 	_, err := buildPingCommands("192.0.2.1", deviceTypeEOS, 0, 0, 2, "", "", "")
-	if err == nil || !strings.Contains(err.Error(), "timeout is only supported for device_type 'fortios' or 'cumulus4x'") {
+	if err == nil || !strings.Contains(err.Error(), "timeout is only supported for device_type 'fortios', 'cumulus4x' or 'cumulus5x'") {
 		t.Fatalf("error = %v", err)
 	}
 }

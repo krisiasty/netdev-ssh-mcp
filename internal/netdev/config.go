@@ -16,7 +16,7 @@ type GetConfigInput struct {
 	Username   string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port       int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
 	ConfigType string `json:"config_type,omitempty" jsonschema:"configuration type: running (default) or startup; startup is not supported for JunOS, FortiOS or Cumulus Linux"`
-	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), or cumulus4x (Cumulus Linux 4.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
+	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), cumulus4x (Cumulus Linux 4.x) or cumulus5x (Cumulus Linux 5.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
 }
 
 // GetConfig retrieves the running or startup configuration from a network device.
@@ -49,13 +49,13 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 
 	slog.Info("get_config", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "config_type", configType) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
-	out, err := runCommand(ctx, cfg, cmd)
+	out, err := runDeviceCommand(ctx, cfg, rt.dt, cmd)
 	if err != nil {
 		logFailure(ctx, "get_config", err, "host", args.Host)
-		return nil, nil, runError(ctx, "get_config", cfg, rt, err)
+		return nil, nil, runError(ctx, "get_config", cfg, rt, cumulus5CommandError(rt.dt, err))
 	}
 
-	res, err := obfuscatedResult(out)
+	res, err := obfuscatedResult(rt.dt, out)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get_config: %w", err)
 	}

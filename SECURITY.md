@@ -87,7 +87,18 @@ So a report need not re-cover this ground:
   match a character allowlist and do not start with `-`; ping and traceroute
   arguments may not start with `-`; and the only thing the server adds to the
   commands it builds is a trailing `2>&1`, which callers cannot supply.
-- Any `device_type` other than `cumulus4x` is refused, before a session is
+- On Cumulus Linux 5.x (`cumulus5x`) the same applies to `nv`: `run_show_command` accepts only `nv show` commands whose
+  words match the same character allowlist, with no word starting with `-` except an optional final `-o json`. `nv set`,
+  `nv config` (other than the server's own `nv config show -o commands`, which only `get_config` runs) and `nv action`
+  cannot run. A path that shows a secret (the NVUE words `readonly-community`, `readwrite-community`,
+  `community-password`, `auth-md5`, `auth-sha`, `encrypt-aes`, `encrypt-des`, `password`, `hashed-password`, `secret`,
+  `md5-key`, any word containing `password` or `secret`, any abbreviation of them, since NVUE accepts unambiguous
+  abbreviations, and any word that starts with one of them, such as `readonly-community-v6`) is refused, as is
+  `nv show system config` and its abbreviations. Each part of a word joined with `/` or `,` is checked on its own, and
+  the NTP authentication keys (`service ntp <vrf> key`, abbreviations included) are refused too, as are
+  `nv show -o json` and `nv show system -o json`, whose JSON holds the configuration snippets. Failed `nv` commands
+  return NVUE's message after obfuscation.
+- Any `device_type` other than `cumulus4x` or `cumulus5x` is refused, before a session is
   opened, when the SSH server identifies itself as a Linux system (Debian or
   Ubuntu). This is the main defence on Linux SSH servers; the filter list
   above limits what a switch that hides its banner can be made to do.
@@ -104,7 +115,7 @@ So a report need not re-cover this ground:
 Known limits of the Cumulus Linux support:
 
 - A Cumulus switch that announces Debian in its SSH banner is refused outright
-  for every `device_type` other than `cumulus4x`. A switch whose banner hides
+  for every `device_type` other than `cumulus4x` and `cumulus5x`. A switch whose banner hides
   "Debian" (for example with `DebianBanner no`) is not recognised as Linux. If a
   caller then passes a wrong explicit `device_type`, bash runs a command that
   passed only that platform's checks. It cannot start another command, and
@@ -122,6 +133,10 @@ Known limits of the Cumulus Linux support:
 - Only the `ping` and `traceroute` VRF handling has been checked on a real
   Cumulus Linux 4.3 switch; the rest of the support is built from vendor
   documentation and sample output.
+- The Cumulus Linux 5.x support is preliminary: it is built from NVIDIA's documentation only and has not been tested on
+  a 5.x switch.
+- On Cumulus Linux 5.x, `get_config` output can include configuration snippet text (raw file contents) whose secrets
+  have no name next to them, so obfuscation cannot recognise them and they can appear in clear text.
 
 ## Scope
 

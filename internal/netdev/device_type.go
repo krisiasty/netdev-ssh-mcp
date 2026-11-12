@@ -19,6 +19,7 @@ const (
 	deviceTypeFortiOS deviceType = "fortios"
 
 	deviceTypeCumulus4x deviceType = "cumulus4x"
+	deviceTypeCumulus5x deviceType = "cumulus5x"
 )
 
 var (
@@ -63,8 +64,10 @@ func normalizeDeviceType(raw string) (deviceType, error) {
 		return deviceTypeFortiOS, nil
 	case string(deviceTypeCumulus4x):
 		return deviceTypeCumulus4x, nil
+	case string(deviceTypeCumulus5x):
+		return deviceTypeCumulus5x, nil
 	default:
-		return "", fmt.Errorf("device_type must be 'eos', 'ios', 'nxos', 'junos', 'fortios', or 'cumulus4x', got %q", raw)
+		return "", fmt.Errorf("device_type must be 'eos', 'ios', 'nxos', 'junos', 'fortios', 'cumulus4x', or 'cumulus5x', got %q", raw)
 	}
 }
 
@@ -80,6 +83,9 @@ func normalizeConfigType(raw string) (string, error) {
 }
 
 func buildConfigCommand(configType string, dt deviceType) (string, error) {
+	if isCumulus(dt) && configType == "startup" {
+		return "", fmt.Errorf("config_type startup: Cumulus Linux does not have a separate startup-config; use config_type 'running' or omit it")
+	}
 	switch dt {
 	case deviceTypeJunos:
 		if configType == "startup" {
@@ -92,10 +98,9 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 		}
 		return "show full-configuration", nil
 	case deviceTypeCumulus4x:
-		if configType == "startup" {
-			return "", fmt.Errorf("config_type startup: Cumulus Linux does not have a separate startup-config; use config_type 'running' or omit it")
-		}
 		return "net show configuration commands" + cumulusMergeStderr, nil
+	case deviceTypeCumulus5x:
+		return "nv config show -o commands" + cumulusMergeStderr, nil
 	case deviceTypeIOS:
 		return fmt.Sprintf("show %s-config", configType), nil
 	case deviceTypeEOS, deviceTypeNXOS:
@@ -106,18 +111,21 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 }
 
 // allDeviceTypes lists every supported platform.
-var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos, deviceTypeFortiOS, deviceTypeCumulus4x}
+var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos, deviceTypeFortiOS, deviceTypeCumulus4x, deviceTypeCumulus5x}
 
 // checkCommandOnAnyPlatform rejects a run_show_command command that no
 // supported platform would accept, so it fails before detection logs in to
 // the device. The platform's own check still runs once the type is known.
 func checkCommandOnAnyPlatform(command string) error {
-	// Only Cumulus commands start with "net", and only FortiOS commands with
-	// "get"; that platform's error is the useful one.
+	// Only Cumulus commands start with "net" or "nv", and only FortiOS
+	// commands with "get"; that platform's error is the useful one.
 	first, _, _ := strings.Cut(strings.TrimSpace(command), " ")
 	switch {
 	case first == "net":
 		_, err := normalizeCumulusCommand(strings.TrimSpace(command))
+		return err
+	case first == "nv":
+		_, err := normalizeCumulus5Command(strings.TrimSpace(command))
 		return err
 	case strings.EqualFold(first, "get"):
 		_, err := normalizeOperationalCommand(command, deviceTypeFortiOS)
@@ -145,6 +153,9 @@ func normalizeOperationalCommand(command string, dt deviceType) (string, error) 
 
 	if dt == deviceTypeCumulus4x {
 		return normalizeCumulusCommand(trimmed)
+	}
+	if dt == deviceTypeCumulus5x {
+		return normalizeCumulus5Command(trimmed)
 	}
 	if dt == deviceTypeFortiOS {
 		return normalizeFortiOSOperationalCommand(trimmed, lower)
@@ -203,7 +214,7 @@ func buildPingCommands(destination string, dt deviceType, count, size, timeout i
 	if err := checkCommandArgs(destination, source, vrf, outgoingInterface); err != nil {
 		return nil, err
 	}
-	if dt == deviceTypeCumulus4x {
+	if isCumulus(dt) {
 		return buildCumulusPing(destination, count, size, timeout, source, vrf, outgoingInterface)
 	}
 	if dt == deviceTypeFortiOS {
@@ -235,7 +246,7 @@ func buildPingCommands(destination string, dt deviceType, count, size, timeout i
 	}
 
 	if timeout > 0 {
-		return nil, fmt.Errorf("timeout is only supported for device_type 'fortios' or 'cumulus4x'")
+		return nil, fmt.Errorf("timeout is only supported for device_type 'fortios', 'cumulus4x' or 'cumulus5x'")
 	}
 	if outgoingInterface != "" {
 		return nil, fmt.Errorf("outgoing_interface is only supported for device_type 'fortios'")
@@ -280,7 +291,7 @@ func buildTracerouteCommands(destination string, dt deviceType, maxHops, timeout
 	if err := checkCommandArgs(destination, source, vrf, outgoingInterface); err != nil {
 		return nil, err
 	}
-	if dt == deviceTypeCumulus4x {
+	if isCumulus(dt) {
 		return buildCumulusTraceroute(destination, maxHops, timeout, probe, source, vrf, outgoingInterface)
 	}
 	if dt == deviceTypeFortiOS {

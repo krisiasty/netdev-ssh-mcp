@@ -13,10 +13,10 @@ import (
 // RunShowCommandInput defines the input parameters for the run_show_command tool.
 type RunShowCommandInput struct {
 	Host       string `json:"host"       jsonschema:"hostname or IP address of the network device"`
-	Command    string `json:"command"    jsonschema:"command to execute: use 'show ...' on Arista/Cisco/JunOS, 'get ...' on FortiOS or 'net show ...' on Cumulus Linux 4.x"`
+	Command    string `json:"command"    jsonschema:"command to execute: use 'show ...' on Arista/Cisco/JunOS, 'get ...' on FortiOS or 'net show ...' on Cumulus Linux 4.x or 'nv show ...' on Cumulus Linux 5.x"`
 	Username   string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port       int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
-	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), or cumulus4x (Cumulus Linux 4.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
+	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), cumulus4x (Cumulus Linux 4.x) or cumulus5x (Cumulus Linux 5.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
 }
 
 // RunShowCommand executes an arbitrary show command on a network device.
@@ -54,13 +54,13 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 
 	slog.Info("run_show_command", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "command", sanitizeLog(command)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
-	out, err := runCommand(ctx, cfg, command)
+	out, err := runDeviceCommand(ctx, cfg, rt.dt, command)
 	if err != nil {
 		logFailure(ctx, "run_show_command", err, "host", args.Host, "command", command)
-		return nil, nil, runError(ctx, "run_show_command", cfg, rt, err)
+		return nil, nil, runError(ctx, "run_show_command", cfg, rt, cumulus5CommandError(rt.dt, err))
 	}
 
-	res, err := obfuscatedResult(out)
+	res, err := obfuscatedResult(rt.dt, out)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run_show_command: %w", err)
 	}

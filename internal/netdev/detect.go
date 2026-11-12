@@ -162,23 +162,26 @@ var probeMarkers = map[string][]platformMarker{
 // versionPatterns extract a short version string for detect_platform. The
 // capture is limited to characters that appear in version numbers.
 var versionPatterns = map[deviceType]*regexp.Regexp{
-	deviceTypeEOS:     regexp.MustCompile(`(?m)^Software image version:\s+([\w.()-]+)`),
-	deviceTypeJunos:   regexp.MustCompile(`(?m)^(?:Junos:\s+|JUNOS Software Release \[)([\w.()-]+)`),
-	deviceTypeNXOS:    regexp.MustCompile(`(?m)^\s*(?:NXOS|system):\s+version\s+([\w.()-]+)`),
-	deviceTypeIOS:     regexp.MustCompile(`(?m)^\s*(?:Cisco IOS(?: XE)? Software|IOS \(tm\)).*?Version\s+([\w.()-]+)`),
-	deviceTypeFortiOS: regexp.MustCompile(`(?m)^Version:\s+Forti\S+\s+(v[\w.()-]+)`),
-	// The value may be quoted and the line may end in \r.
-	deviceTypeCumulus4x: regexp.MustCompile(`(?m)^VERSION_ID="?([\w.+~-]+)"?\r?$`),
+	deviceTypeEOS:       regexp.MustCompile(`(?m)^Software image version:\s+([\w.()-]+)`),
+	deviceTypeJunos:     regexp.MustCompile(`(?m)^(?:Junos:\s+|JUNOS Software Release \[)([\w.()-]+)`),
+	deviceTypeNXOS:      regexp.MustCompile(`(?m)^\s*(?:NXOS|system):\s+version\s+([\w.()-]+)`),
+	deviceTypeIOS:       regexp.MustCompile(`(?m)^\s*(?:Cisco IOS(?: XE)? Software|IOS \(tm\)).*?Version\s+([\w.()-]+)`),
+	deviceTypeFortiOS:   regexp.MustCompile(`(?m)^Version:\s+Forti\S+\s+(v[\w.()-]+)`),
+	deviceTypeCumulus4x: osReleaseVersionRe,
+	deviceTypeCumulus5x: osReleaseVersionRe,
 }
 
 var (
-	osReleaseCumulusRe   = regexp.MustCompile(`(?m)^ID="?cumulus-linux"?\r?$`)
-	osReleaseVersionRe   = versionPatterns[deviceTypeCumulus4x]
+	osReleaseCumulusRe = regexp.MustCompile(`(?m)^ID="?cumulus-linux"?\r?$`)
+	// osReleaseVersionRe extracts VERSION_ID from /etc/os-release. The value may
+	// be quoted and the line may end in \r.
+	osReleaseVersionRe   = regexp.MustCompile(`(?m)^VERSION_ID="?([\w.+~-]+)"?\r?$`)
 	osReleaseVersion4xRe = regexp.MustCompile(`(?m)^VERSION_ID="?4\.[\w.+~-]*"?\r?$`)
+	osReleaseVersion5xRe = regexp.MustCompile(`(?m)^VERSION_ID="?5\.[\w.+~-]*"?\r?$`)
 )
 
 // matchOSRelease decides whether the output of probeOSRelease is Cumulus
-// Linux 4.x. Both ID and VERSION_ID must be whole lines, so a value echoed
+// Linux 4.x or 5.x. Both ID and VERSION_ID must be whole lines, so a value echoed
 // inside another line cannot satisfy them. Anything else is unsupported and
 // passing device_type would not help.
 func matchOSRelease(output string) (deviceType, error) {
@@ -186,12 +189,15 @@ func matchOSRelease(output string) (deviceType, error) {
 		if osReleaseVersion4xRe.MatchString(output) {
 			return deviceTypeCumulus4x, nil
 		}
+		if osReleaseVersion5xRe.MatchString(output) {
+			return deviceTypeCumulus5x, nil
+		}
 		if m := osReleaseVersionRe.FindStringSubmatch(output); m != nil {
-			return "", fmt.Errorf("%w: unsupported release: Cumulus Linux %s is not supported; only 4.x (cumulus4x) is",
+			return "", fmt.Errorf("%w: unsupported release: Cumulus Linux %s is not supported; only 4.x (cumulus4x) and 5.x (cumulus5x) are",
 				errUnsupportedPlatform, displayValue(m[1]))
 		}
 	}
-	return "", fmt.Errorf("%w: the SSH server is a Linux system that is not Cumulus Linux 4.x (cumulus4x is the only supported Linux platform)",
+	return "", fmt.Errorf("%w: the SSH server is a Linux system that is not Cumulus Linux 4.x or 5.x (cumulus4x and cumulus5x are the only supported Linux platforms)",
 		errUnsupportedPlatform)
 }
 
@@ -342,9 +348,9 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 
 // resolveTarget returns the connection config and device type for a tool
 // that runs a device command. Every such tool gets its config here, so none
-// can skip the Linux check: unless the type is cumulus4x, the config refuses
+// can skip the Linux check: unless the type is cumulus4x or cumulus5x, the config refuses
 // a Linux SSH server before a session is opened. On a Linux system bash runs
-// the command, and only the cumulus4x checks are written for that; an
+// the command, and only the Cumulus checks are written for that; an
 // explicit device_type is never checked against the device otherwise.
 func resolveTarget(ctx context.Context, host string, port int, username, rawType string) (sshclient.ConnConfig, resolvedType, error) {
 	cfg := connConfig(host, port, username)
@@ -352,23 +358,23 @@ func resolveTarget(ctx context.Context, host string, port int, username, rawType
 	if err != nil {
 		return cfg, rt, err
 	}
-	if rt.dt != deviceTypeCumulus4x {
+	if !isCumulus(rt.dt) {
 		cfg.CheckServerVersion = refuseLinuxServer
 	}
 	return cfg, rt, nil
 }
 
 // refuseLinuxServer is the CheckServerVersion for every device type other
-// than cumulus4x.
+// than cumulus4x and cumulus5x.
 func refuseLinuxServer(serverVersion string) error {
 	if classifyIdent(serverVersion) == identLinux {
-		return fmt.Errorf("%w: it identifies as %q, a Linux system; only device_type cumulus4x is supported on Linux",
+		return fmt.Errorf("%w: it identifies as %q, a Linux system; only device_type cumulus4x or cumulus5x is supported on Linux",
 			errUnsupportedPlatform, displayValue(serverVersion))
 	}
 	return nil
 }
 
-const supportedDeviceTypes = "eos, ios, nxos, junos, fortios or cumulus4x"
+const supportedDeviceTypes = "eos, ios, nxos, junos, fortios, cumulus4x or cumulus5x"
 
 // syntaxErrorRe matches the messages platforms print for a command they do
 // not understand, which is what running another platform's syntax produces.
@@ -388,6 +394,7 @@ const syntaxCheckLines = 10
 // from the start of a successful command's output, or from the output kept
 // in a failed command's error. That output is only classified here; it is
 // never shown to the caller, because it is untrusted and can hold secrets.
+// On cumulus5x, runDeviceCommand has already stripped ANSI escapes from both.
 func rejectedSyntax(output string, runErr error) bool {
 	if looksLikeSyntaxError(firstLines(output, syntaxCheckLines)) {
 		return true
