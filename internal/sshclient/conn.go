@@ -54,9 +54,11 @@ func (c *Conn) Run(ctx context.Context, cmd string) (string, error) {
 	return runOnClient(ctx, c.client, c.addr, cmd, c.cfg.Terminal, commandTimeoutFor(c.cfg))
 }
 
-// maxShellBuffer bounds what a Shell holds while it waits for a pattern, so a
-// device that keeps writing cannot exhaust memory before the time limit.
-const maxShellBuffer = 1 << 20
+// maxShellBuffer bounds what a Shell holds while it waits for a pattern. A
+// shell only reads short exchanges (a prompt, a list of names), so 64 KiB is
+// ample; the bound keeps a device that keeps writing from using up memory,
+// and keeps the rescans ReadUntil makes after each read small.
+const maxShellBuffer = 64 << 10
 
 // Shell is an interactive shell session on a Conn, for what a device's CLI
 // offers only to a person at a terminal, such as FortiOS listing the names

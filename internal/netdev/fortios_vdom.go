@@ -68,17 +68,20 @@ var (
 )
 
 // fortiOSBannerPattern matches FortiOS asking to accept a post-login banner
-// ("(Press 'a' to accept):"). The wording is matched loosely: it has not been
-// seen from a device here.
-const fortiOSBannerPattern = `(?i)press\b[^\n]*\baccept`
+// ("(Press 'a' to accept):"): a line about pressing a key to accept that
+// ends like a question, as the last thing the device wrote, since it then
+// waits for the key. A notice that merely mentions both words and goes on
+// to the prompt does not match, even if a read happens to end inside it.
+// The wording is matched loosely: it has not been seen from a device here.
+const fortiOSBannerPattern = `(?i)press\b[^\n]*\baccept[^\n]*[:?)] *\z`
 
 var (
-	errNoVDOMs           = errors.New("this FortiGate does not use VDOMs, or this account cannot reach them")
+	errNoVDOMs           = newAnswer("this FortiGate does not use VDOMs, or this account cannot reach them")
 	errUnexpectedVDOMs   = errors.New("FortiOS listed the VDOMs in an unexpected format")
 	errVDOMNotConfirmed  = errors.New("FortiOS did not confirm the switch to the VDOM, so the output was discarded")
-	errVDOMNotOnTheList  = errors.New("VDOM not found")
-	errVDOMNotApplicable = errors.New("vdom applies only to device_type fortios")
-	errBannerToAccept    = errors.New("FortiOS asks to accept a post-login banner before its CLI takes commands, and the tools do not accept it on the user's behalf")
+	errVDOMNotOnTheList  = newAnswer("VDOM not found")
+	errVDOMNotApplicable = newAnswer("vdom applies only to device_type fortios")
+	errBannerToAccept    = newAnswer("FortiOS asks to accept a post-login banner before its CLI takes commands, and the tools do not accept it on the user's behalf")
 )
 
 const listVDOMsCommandHint = "Call fortigate_list_vdoms to see the available VDOMs."
@@ -296,11 +299,12 @@ func fortiOSRunInVDOM(ctx context.Context, cfg sshclient.ConnConfig, vdom string
 }
 
 // vdomInfo is what fortigate_list_vdoms reports.
+// vdomInfo is what fortigate_list_vdoms reports. No names means the
+// FortiGate does not use VDOMs, or the account cannot reach any.
 type vdomInfo struct {
-	enabled     bool     // the FortiGate uses VDOMs and this account reaches them
 	names       []string // the VDOMs this account can reach
 	globalScope bool     // the account's sessions start in the global context
-	current     string   // the VDOM where the account's sessions start, if not global
+	current     string   // the VDOM where the account's sessions start; never set with globalScope
 }
 
 // listVDOMs fetches vdomInfo for the FortiGate cfg points at; rt is its
@@ -320,12 +324,13 @@ var (
 // ("Unknown action 3").
 const fortiOSScopeCommand = "config global\nend"
 
-// fortiOSListVDOMs finds out, on one connection, where the account's
-// sessions start and which VDOMs it can reach. An account with global scope
+// fortiOSListVDOMs finds out, on one connection, which VDOMs the account
+// can reach and where its sessions start. The list comes first: with no
+// VDOMs there is nothing more to find out. An account with global scope
 // starts in the global context, although "get system status" names a VDOM
-// there too ("Current virtual domain: root"); only for an account without
-// it is that VDOM where its sessions start. The VDOM the probe read is used
-// when this call detected the platform, so "get system status" does not run
+// there too ("Current virtual domain: root"); only for an account without it
+// is that VDOM where its sessions start. The VDOM the probe read is used when
+// this call detected the platform, so "get system status" does not run
 // twice.
 func fortiOSListVDOMs(ctx context.Context, cfg sshclient.ConnConfig, rt resolvedType) (vdomInfo, error) {
 	conn, err := sshclient.Connect(ctx, cfg)
@@ -334,35 +339,32 @@ func fortiOSListVDOMs(ctx context.Context, cfg sshclient.ConnConfig, rt resolved
 	}
 	defer func() { _ = conn.Close() }()
 
-	var info vdomInfo
+	names, err := listVDOMsOn(ctx, conn)
+	if errors.Is(err, errNoVDOMs) {
+		return vdomInfo{}, nil
+	}
+	if err != nil {
+		return vdomInfo{}, fmt.Errorf("list VDOMs: %w", err)
+	}
+	info := vdomInfo{names: names}
+
 	scope, err := conn.Run(ctx, fortiOSScopeCommand)
 	var cmdErr *sshclient.CommandError
 	if err != nil && !errors.As(err, &cmdErr) {
 		return vdomInfo{}, err
 	}
-	info.globalScope = fortiOSGlobalPromptRe.MatchString(scope)
-	if !info.globalScope {
-		info.current = rt.currentVDOM
-		if info.current == "" {
-			status, err := conn.Run(ctx, "get system status")
-			if err != nil {
-				return vdomInfo{}, err
-			}
-			if status, err = fortiOSOutput(status); err != nil {
-				return vdomInfo{}, err
-			}
-			if m := currentVDOMRe.FindStringSubmatch(status); m != nil {
-				info.current = m[1]
-			}
-		}
-	}
-	names, err := listVDOMsOn(ctx, conn)
-	if errors.Is(err, errNoVDOMs) {
+	if info.globalScope = fortiOSGlobalPromptRe.MatchString(scope); info.globalScope {
 		return info, nil
 	}
-	if err != nil {
-		return vdomInfo{}, fmt.Errorf("list VDOMs: %w", err)
+	if info.current = rt.currentVDOM; info.current == "" {
+		status, err := conn.Run(ctx, "get system status")
+		if err != nil {
+			return vdomInfo{}, err
+		}
+		if status, err = fortiOSOutput(status); err != nil {
+			return vdomInfo{}, err
+		}
+		info.current = fortiOSStatusField(deviceTypeFortiOS, currentVDOMRe, status)
 	}
-	info.enabled, info.names = true, names
 	return info, nil
 }

@@ -29,9 +29,9 @@ var fortiOSPromptRe = regexp.MustCompile(`^` + fortiOSPromptPattern)
 // that it paged the output and ended the command early (see terminalFor).
 var fortiOSPagedRe = regexp.MustCompile(`(?m)^--More-- *(?:\r|\x08|\x1b\[K)`)
 
-var errFortiOSPaged = fmt.Errorf("FortiOS paged the output and ended the command early, so it is incomplete: "+
+var errFortiOSPaged = newAnswer(fmt.Sprintf("FortiOS paged the output and ended the command early, so it is incomplete: "+
 	"this happens when the output is longer than %d lines or the device refused the terminal this tool requests; "+
-	`"set output standard" under "config system console" turns the pager off`, fortiOSTerminalRows)
+	`"set output standard" under "config system console" turns the pager off`, fortiOSTerminalRows))
 
 // deviceOutput returns a command's output as the tools report it. On FortiOS
 // that is fortiOSOutput; elsewhere the output is unchanged.

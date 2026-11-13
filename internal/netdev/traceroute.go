@@ -24,7 +24,7 @@ type RunTracerouteInput struct {
 	VRF         string `json:"vrf,omitempty" jsonschema:"VRF name; maps to routing-instance on JunOS; on cumulus4x mgmt or default, or another VRF device with a root login, not combinable with source"`
 	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface; FortiOS only"`
 	DeviceType  string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), or cumulus4x (Cumulus Linux 4.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
-	VDOM        string `json:"vdom,omitempty" jsonschema:"FortiOS only: the VDOM to run in, one of those fortigate_list_vdoms lists; if omitted, the command runs in the VDOM where the account's session starts"`
+	VDOM        string `json:"vdom,omitempty" jsonschema:"FortiOS only: the VDOM to run in, one of those fortigate_list_vdoms lists; if omitted, the command runs where the account's session starts: its VDOM for an account limited to VDOMs, the global context for an account with global scope (fortigate_list_vdoms tells which)"`
 }
 
 // RunTraceroute executes a traceroute command on a network device.

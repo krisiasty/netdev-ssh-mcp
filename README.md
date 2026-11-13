@@ -356,9 +356,10 @@ Pass one of these as vdom to get_config, run_show_command, run_ping or run_trace
 
 ### FortiGate VDOMs
 
-On a FortiGate with multiple VDOMs, each command runs in one of them. Without `vdom`, the tools run commands in the VDOM
-where the account's session starts. With `vdom`, `get_config`, `run_show_command`, `run_ping` and `run_traceroute` run
-the command in that VDOM.
+On a FortiGate with multiple VDOMs, each command runs in one of them, or in the global context. Without `vdom`, the
+tools run commands where the account's session starts: its VDOM for an account limited to VDOMs, the global context for
+an account with global scope (where routes, policies and objects need a `vdom`); `fortigate_list_vdoms` tells which.
+With `vdom`, `get_config`, `run_show_command`, `run_ping` and `run_traceroute` run the command in that VDOM.
 
 FortiOS reaches another VDOM through configuration mode (`config vdom`, `edit <name>`, the command, `end`), and for an
 account that may create VDOMs, `edit` with a name that does not exist creates one. The tools therefore never send
@@ -376,7 +377,11 @@ account that may create VDOMs, `edit` with a name that does not exist creates on
    discarded. The result ends with a note naming the VDOM.
 
 The list is fetched for every call that passes `vdom` (about a tenth of a second on a FortiGate-1100E) rather than
-cached, so a VDOM deleted in the meantime is never edited, and thereby created again.
+cached, so the gap between checking the name and sending `edit` is as short as one SSH connection allows: the time it
+takes to open the exec session after the listing session closes. It is not zero, and FortiOS offers no way to edit a
+VDOM only if it exists. If another administrator deletes the VDOM in that gap, and this account may create VDOMs (only
+an account with global scope can), the `edit` recreates it empty. An account limited to VDOMs cannot create one, so for
+it a deleted VDOM only makes the `edit` fail.
 
 ### `trust_host_key`
 

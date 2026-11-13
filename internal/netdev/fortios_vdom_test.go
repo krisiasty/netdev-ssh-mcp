@@ -106,12 +106,31 @@ func TestFortiOSVDOMsAfterPromptShapedBanner(t *testing.T) {
 }
 
 func TestFortiOSVDOMsRefusesBannerToAccept(t *testing.T) {
-	sh := &fakeVDOMShell{buf: "This system is for authorised use only.\r\n(Press 'a' to accept):"}
-	if _, err := fortiOSVDOMs(t.Context(), sh); !errors.Is(err, errBannerToAccept) {
-		t.Fatalf("fortiOSVDOMs() error = %v, want errBannerToAccept", err)
+	for _, banner := range []string{"(Press 'a' to accept):", "Press 'a' to accept or 'd' to decline: ", "PRESS A TO ACCEPT?"} {
+		sh := &fakeVDOMShell{buf: "This system is for authorised use only.\r\n" + banner}
+		if _, err := fortiOSVDOMs(t.Context(), sh); !errors.Is(err, errBannerToAccept) {
+			t.Fatalf("%q: fortiOSVDOMs() error = %v, want errBannerToAccept", banner, err)
+		}
+		if len(sh.sent) != 0 {
+			t.Fatalf("%q: sent %q, want nothing", banner, sh.sent)
+		}
 	}
-	if len(sh.sent) != 0 {
-		t.Fatalf("sent %q, want nothing", sh.sent)
+}
+
+// TestFortiOSVDOMsAfterNoticeMentioningAccept checks that a notice that
+// mentions pressing and accepting but goes on to the prompt is not taken for
+// a banner to accept, even read in pieces (the fake delivers it as if byte
+// by byte).
+func TestFortiOSVDOMsAfterNoticeMentioningAccept(t *testing.T) {
+	sh := &fakeVDOMShell{
+		buf: "Press Ctrl-C to exit; continued use means you accept monitoring.\r\nFGT-1 $ ",
+		replies: map[string]string{
+			"config vdom\r": "config vdom\r\r\n\r\nFGT-1 (vdom) $ ",
+			"edit ?":        vdomHelp,
+		},
+	}
+	if got, err := fortiOSVDOMs(t.Context(), sh); err != nil || len(got) != 3 {
+		t.Fatalf("fortiOSVDOMs() = %q, %v; want the list", got, err)
 	}
 }
 
@@ -414,7 +433,7 @@ func TestFortigateListVDOMsUsesDetection(t *testing.T) {
 	t.Run("current VDOM from this call's probe only", func(t *testing.T) {
 		resetDetection(t)
 		runProbe = (&fakeProbe{ident: identFortiOS, outputs: map[string]string{probeSystemStatus: fortiOSStatus(t, "multiple", "ads_mgmt")}}).probe
-		calls := stubListVDOMs(t, vdomInfo{enabled: true, names: []string{"ads_mgmt"}, current: "ads_mgmt"}, nil)
+		calls := stubListVDOMs(t, vdomInfo{names: []string{"ads_mgmt"}, current: "ads_mgmt"}, nil)
 		for range 2 {
 			if _, _, err := FortigateListVDOMs(t.Context(), nil, FortigateListVDOMsInput{Host: "fw1", Username: "u"}); err != nil {
 				t.Fatal(err)
@@ -439,7 +458,8 @@ func TestFortigateListVDOMsUsesDetection(t *testing.T) {
 }
 
 func TestVDOMReportGlobalScope(t *testing.T) {
-	got := vdomReport(vdomInfo{enabled: true, globalScope: true, names: []string{"root", "dmz"}, current: "root"})
+	// fortiOSListVDOMs never sets current for a global account.
+	got := vdomReport(vdomInfo{globalScope: true, names: []string{"root", "dmz"}})
 	if strings.Contains(got, "sessions start here") || !strings.Contains(got, "global context") {
 		t.Fatalf("vdomReport() = %q; want no VDOM marked and the global context named", got)
 	}
@@ -470,15 +490,17 @@ func TestVDOMErrorsAreAnswers(t *testing.T) {
 			t.Errorf("answerError(%v) = false", e)
 		}
 	}
-	if answerError(errVDOMNotConfirmed) {
-		t.Error("answerError(errVDOMNotConfirmed) = true; an unconfirmed switch is a device failure")
+	for _, e := range []error{errVDOMNotConfirmed, errUnexpectedVDOMs, errors.New("dial tcp: connection refused")} {
+		if answerError(e) {
+			t.Errorf("answerError(%v) = true; a device or connection failure is not an answer", e)
+		}
 	}
 }
 
 func TestFortigateListVDOMs(t *testing.T) {
 	resetDetection(t)
 	runProbe = (&fakeProbe{ident: identFortiOS, outputs: map[string]string{probeSystemStatus: fortiOSStatus(t, "multiple", "ads_mgmt")}}).probe
-	stubListVDOMs(t, vdomInfo{enabled: true, names: []string{"ads_mgmt", "openstack"}, current: "ads_mgmt"}, nil)
+	stubListVDOMs(t, vdomInfo{names: []string{"ads_mgmt", "openstack"}, current: "ads_mgmt"}, nil)
 
 	res, _, err := FortigateListVDOMs(t.Context(), nil, FortigateListVDOMsInput{Host: "fw1", Username: "u"})
 	if err != nil {

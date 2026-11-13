@@ -178,8 +178,11 @@ func main() {
 		Description: "Connect to a FortiGate via SSH and list the VDOMs (virtual domains) this account can reach, marking the one its sessions start in. " +
 			"Pass one of the names as vdom to get_config, run_show_command, run_ping or run_traceroute to run there. " +
 			"FortiOS lists the VDOMs only in an interactive CLI, so the tool opens one, enters 'config vdom', asks for the names with 'edit ?', " +
-			"and closes the session without entering anything else; it also runs 'get system status'. " +
-			"The platform is auto-detected (and cached) first; a device that is not a FortiGate is refused.",
+			"and closes that session without entering anything else. To tell where sessions start, it then runs 'config global' and 'end' over exec, " +
+			"which changes nothing (an account without global scope gets an error), and, for an account limited to VDOMs, 'get system status' " +
+			"unless platform detection in the same call has just read it. " +
+			"The platform is auto-detected (and cached) first; a device that is not a FortiGate is refused, and one detected without VDOMs " +
+			"is answered without connecting again.",
 	}, netdev.FortigateListVDOMs)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -214,7 +217,9 @@ const deviceTypeGuidance = "device_type selects the platform syntax: 'eos' (Aris
 // vdomGuidance is shared by the tools that take vdom.
 const vdomGuidance = " On a FortiGate with VDOMs, vdom runs the command in that VDOM; call fortigate_list_vdoms for the names this account can reach. " +
 	"The tool checks the name against that list on the device before using it, and refuses a name that is not on it, suggesting close matches. " +
-	"Without vdom, the command runs in the VDOM where the account's session starts. vdom applies only to device_type fortios."
+	"Without vdom, the command runs where the account's session starts: its VDOM for an account limited to VDOMs, " +
+	"the global context for an account with global scope, where routes, policies and objects need a vdom; fortigate_list_vdoms tells which. " +
+	"vdom applies only to device_type fortios."
 
 func logLevel() slog.Level {
 	switch os.Getenv("LOG_LEVEL") {

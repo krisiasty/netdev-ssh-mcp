@@ -236,25 +236,15 @@ func extractVersion(dt deviceType, output string) string {
 	return ""
 }
 
-// extractVDOMMode returns the FortiOS "Virtual domain configuration" from
-// the probe output, or "" on other platforms or when it is missing.
-func extractVDOMMode(dt deviceType, output string) string {
+// fortiOSStatusField returns the value re captures from FortiOS "get system
+// status" output, made safe to echo back, or "" on other platforms or when
+// the field is missing. vdomConfigRe gives the "Virtual domain
+// configuration", currentVDOMRe the "Current virtual domain".
+func fortiOSStatusField(dt deviceType, re *regexp.Regexp, output string) string {
 	if dt != deviceTypeFortiOS {
 		return ""
 	}
-	if m := vdomConfigRe.FindStringSubmatch(output); m != nil {
-		return displayValue(m[1])
-	}
-	return ""
-}
-
-// extractCurrentVDOM returns the FortiOS "Current virtual domain" from the
-// probe output, or "" on other platforms or when it is missing.
-func extractCurrentVDOM(dt deviceType, output string) string {
-	if dt != deviceTypeFortiOS {
-		return ""
-	}
-	if m := currentVDOMRe.FindStringSubmatch(output); m != nil {
+	if m := re.FindStringSubmatch(output); m != nil {
 		return displayValue(m[1])
 	}
 	return ""
@@ -369,10 +359,11 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 		source:        sourceProbe,
 		serverVersion: displayValue(res.ServerVersion),
 		version:       extractVersion(dt, res.Output),
-		vdomMode:      extractVDOMMode(dt, res.Output),
+		vdomMode:      fortiOSStatusField(dt, vdomConfigRe, res.Output),
 	}
 	storeType(key, r)
-	r.currentVDOM = extractCurrentVDOM(dt, res.Output)                                                                      // for this call only, not the cache
+	// For this call only, not the cache: it depends on the account.
+	r.currentVDOM = fortiOSStatusField(dt, currentVDOMRe, res.Output)
 	slog.Info("platform detected", "host", sanitizeLog(cfg.Host), "device_type", string(dt), "ssh_server", r.serverVersion) //nolint:gosec // G706: values are sanitized before logging
 	return r, nil
 }
@@ -537,19 +528,22 @@ func afterRun(cfg sshclient.ConnConfig, r resolvedType, output string, runErr er
 	return notices
 }
 
-// answerError reports whether err answers the call rather than reporting a
-// failure of the device or the connection: a vdom the device does not list,
-// or one given for a device type without VDOMs, a FortiGate without VDOMs,
-// output FortiOS paged, or a banner the tools will not accept. Such errors
-// are logged at Info, and returned without detection notices, which have
-// nothing to do with them.
+// answer is an error that answers the call rather than reporting a failure
+// of the device or the connection, such as a vdom the device does not list
+// or output FortiOS paged. Such errors are logged at Info, and returned
+// without detection notices, which have nothing to do with them. Make them
+// with newAnswer where they arise.
+type answer struct{ msg string }
+
+func (a *answer) Error() string { return a.msg }
+
+// newAnswer returns an error that answers the call (see answer).
+func newAnswer(msg string) error { return &answer{msg: msg} }
+
+// answerError reports whether err, or an error it wraps, is an answer.
 func answerError(err error) bool {
-	for _, target := range []error{errVDOMNotOnTheList, errVDOMNotApplicable, errNoVDOMs, errFortiOSPaged, errBannerToAccept} {
-		if errors.Is(err, target) {
-			return true
-		}
-	}
-	return false
+	var a *answer
+	return errors.As(err, &a)
 }
 
 // runError wraps a failed command, adding the same notice afterRun would

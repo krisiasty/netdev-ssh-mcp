@@ -72,14 +72,14 @@ func vdomsDisabledSource(rt resolvedType) string {
 // vdomNameRe.
 func vdomReport(info vdomInfo) string {
 	var b strings.Builder
-	if !info.enabled {
+	if len(info.names) == 0 {
 		b.WriteString("This FortiGate does not use VDOMs, or this account cannot reach them; omit vdom on the other tools.")
 		return b.String()
 	}
 	b.WriteString("VDOMs this account can reach (reported by the device):\n")
 	for _, name := range info.names {
 		b.WriteString(name)
-		if !info.globalScope && name == info.current {
+		if name == info.current {
 			b.WriteString(" (sessions start here)")
 		}
 		b.WriteByte('\n')

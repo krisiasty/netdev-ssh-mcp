@@ -17,7 +17,7 @@ type GetConfigInput struct {
 	Port       int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
 	ConfigType string `json:"config_type,omitempty" jsonschema:"configuration type: running (default) or startup; startup is not supported for JunOS, FortiOS or Cumulus Linux"`
 	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), or cumulus4x (Cumulus Linux 4.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
-	VDOM       string `json:"vdom,omitempty" jsonschema:"FortiOS only: the VDOM to run in, one of those fortigate_list_vdoms lists; if omitted, the command runs in the VDOM where the account's session starts"`
+	VDOM       string `json:"vdom,omitempty" jsonschema:"FortiOS only: the VDOM to run in, one of those fortigate_list_vdoms lists; if omitted, the command runs where the account's session starts: its VDOM for an account limited to VDOMs, the global context for an account with global scope (fortigate_list_vdoms tells which)"`
 }
 
 // GetConfig retrieves the running or startup configuration from a network device.
