@@ -112,21 +112,23 @@ const (
 )
 
 // probeCommandFor returns the one command to run for an identification
-// class, chosen so the likely platform accepts it. Platforms that are known
-// to be unsupported get an error before anything runs: on the Cisco Business
-// switch OS an exec request hangs. A Linux system reaches a shell, so the
-// probe only reads /etc/os-release.
-func probeCommandFor(c identClass, serverVersion string) (string, error) {
+// class, chosen so the likely platform accepts it, and the terminal to
+// request for it (nil for none). Platforms that are known to be unsupported
+// get an error before anything runs: on the Cisco Business switch OS an exec
+// request hangs. A Linux system reaches a shell, so the probe only reads
+// /etc/os-release. The FortiOS probe's output can be long enough to page
+// (see terminalFor).
+func probeCommandFor(c identClass, serverVersion string) (string, *sshclient.Terminal, error) {
 	switch c {
 	case identLinux:
-		return probeOSRelease, nil
+		return probeOSRelease, nil, nil
 	case identCiscoBusiness:
-		return "", fmt.Errorf("%w: the SSH server %q is the Cisco Business switch OS (Catalyst 1200/1300, CBS), which does not answer SSH exec requests",
+		return "", nil, fmt.Errorf("%w: the SSH server %q is the Cisco Business switch OS (Catalyst 1200/1300, CBS), which does not answer SSH exec requests",
 			errUnsupportedPlatform, displayValue(serverVersion))
 	case identObfuscated:
-		return probeSystemStatus, nil
+		return probeSystemStatus, terminalFor(deviceTypeFortiOS), nil
 	default:
-		return probeShowVersion, nil
+		return probeShowVersion, nil, nil
 	}
 }
 
@@ -155,7 +157,8 @@ var probeMarkers = map[string][]platformMarker{
 		marker(deviceTypeIOS, `^\s*IOS \(tm\) `),
 	},
 	probeSystemStatus: {
-		marker(deviceTypeFortiOS, `^Version:\s+Forti\S+\s+v\d`),
+		// FortiOS writes its CLI prompt before the output, on the same line.
+		marker(deviceTypeFortiOS, `^(?:`+fortiOSPromptPattern+`)?Version:\s+Forti\S+\s+v\d`),
 	},
 }
 
@@ -166,7 +169,7 @@ var versionPatterns = map[deviceType]*regexp.Regexp{
 	deviceTypeJunos:   regexp.MustCompile(`(?m)^(?:Junos:\s+|JUNOS Software Release \[)([\w.()-]+)`),
 	deviceTypeNXOS:    regexp.MustCompile(`(?m)^\s*(?:NXOS|system):\s+version\s+([\w.()-]+)`),
 	deviceTypeIOS:     regexp.MustCompile(`(?m)^\s*(?:Cisco IOS(?: XE)? Software|IOS \(tm\)).*?Version\s+([\w.()-]+)`),
-	deviceTypeFortiOS: regexp.MustCompile(`(?m)^Version:\s+Forti\S+\s+(v[\w.()-]+)`),
+	deviceTypeFortiOS: regexp.MustCompile(`(?m)^(?:` + fortiOSPromptPattern + `)?Version:\s+Forti\S+\s+(v[\w.()-]+)`),
 	// The value may be quoted and the line may end in \r.
 	deviceTypeCumulus4x: regexp.MustCompile(`(?m)^VERSION_ID="?([\w.+~-]+)"?\r?$`),
 }
@@ -300,7 +303,7 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 		}
 	}
 
-	res, err := runProbe(ctx, cfg, func(serverVersion string) (string, error) {
+	res, err := runProbe(ctx, cfg, func(serverVersion string) (string, *sshclient.Terminal, error) {
 		return probeCommandFor(classifyIdent(serverVersion), serverVersion)
 	})
 	if errors.Is(err, errUnsupportedPlatform) {
@@ -355,6 +358,7 @@ func resolveTarget(ctx context.Context, host string, port int, username, rawType
 	if rt.dt != deviceTypeCumulus4x {
 		cfg.CheckServerVersion = refuseLinuxServer
 	}
+	cfg.Terminal = terminalFor(rt.dt)
 	return cfg, rt, nil
 }
 

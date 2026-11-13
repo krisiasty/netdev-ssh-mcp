@@ -243,7 +243,7 @@ func TestProbeCancelled(t *testing.T) {
 	srv := startStallingServer(t, stallCommand)
 	usePasswordAuth(t)
 	checkCancelled(t, srv.reached, srv.closed, func(ctx context.Context) error {
-		_, err := Probe(ctx, srv.connConfig(), func(string) (string, error) { return "show version", nil })
+		_, err := Probe(ctx, srv.connConfig(), func(string) (string, *Terminal, error) { return "show version", nil, nil })
 		return err
 	})
 }
@@ -370,7 +370,7 @@ func TestRunOnClientCancelledSendsNothing(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := runOnClient(ctx, client, addr, "show version", time.Hour); !errors.Is(err, context.Canceled) {
+	if _, err := runOnClient(ctx, client, addr, "show version", nil, time.Hour); !errors.Is(err, context.Canceled) {
 		t.Fatalf("runOnClient() error = %v, want context.Canceled", err)
 	}
 	waitFor(t, srv.closed, "the connection to close")

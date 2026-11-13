@@ -54,6 +54,9 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 		logFailure(ctx, "get_config", err, "host", args.Host)
 		return nil, nil, runError(ctx, "get_config", cfg, rt, err)
 	}
+	if out, err = deviceOutput(rt.dt, out); err != nil {
+		return nil, nil, fmt.Errorf("get_config: %w", err)
+	}
 
 	res, err := obfuscatedResult(out)
 	if err != nil {

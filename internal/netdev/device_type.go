@@ -40,6 +40,32 @@ func connConfig(host string, port int, username string) sshclient.ConnConfig {
 	}
 }
 
+// terminalFor returns the pseudo-terminal the client must request on dt, or
+// nil.
+//
+// FortiOS pages its output at "--More--" when the console output mode is
+// "more", even in an SSH exec session, where it does not wait for a key: it
+// erases the prompt, carries on, and ends the command a few pages in, so long
+// output such as show full-configuration comes back cut short. The page
+// follows the terminal height, which an exec session without a terminal does
+// not set. A terminal fortiOSTerminalRows high leaves nothing to page in
+// output of up to that many lines; longer output still pages, and
+// fortiOSOutput refuses it. "set output standard" under "config system
+// console" turns the pager off altogether, but changes the configuration.
+//
+// The other platforms do not page exec output, or have it disabled with
+// "| no-more" by the command builders.
+func terminalFor(dt deviceType) *sshclient.Terminal {
+	if dt == deviceTypeFortiOS {
+		return &sshclient.Terminal{Rows: fortiOSTerminalRows, Cols: 512}
+	}
+	return nil
+}
+
+// fortiOSTerminalRows is the most rows FortiOS takes: it keeps only the low
+// 16 bits of the requested height, so 65536 rows would be 0.
+const fortiOSTerminalRows = 65535
+
 // errDeviceTypeUnresolved guards the command builders: callers must resolve
 // an omitted device_type (resolveDeviceType) before building a command, so
 // no platform's syntax is ever assumed.
