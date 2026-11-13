@@ -32,10 +32,8 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
 
-	if args.VDOM != "" {
-		if err := checkVDOMName(args.VDOM); err != nil {
-			return nil, nil, err
-		}
+	if err := checkVDOMName(args.VDOM); err != nil {
+		return nil, nil, err
 	}
 
 	// Without device_type, detection would log in to the device first, so
@@ -50,9 +48,6 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 	cfg, rt, err := resolveTarget(ctx, args.Host, args.Port, args.Username, args.DeviceType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run_show_command: %w", err)
-	}
-	if err := checkVDOMArg(args.VDOM, rt.dt); err != nil {
-		return nil, nil, err
 	}
 	command, err := normalizeOperationalCommand(args.Command, rt.dt)
 	if err != nil {

@@ -61,8 +61,11 @@ const maxShellBuffer = 1 << 20
 // Shell is an interactive shell session on a Conn, for what a device's CLI
 // offers only to a person at a terminal, such as FortiOS listing the names
 // that can follow a command when "?" is typed. Text is typed with Send and
-// read with ReadUntil. The session is limited to the command timeout from
-// when it starts. Close discards anything typed but not entered.
+// read with ReadUntil. The session, from the request that opens it, is
+// limited to the configured command timeout; ConnConfig.CommandTimeout,
+// which lets slow commands such as ping run longer, does not apply, since a
+// shell only waits for the device's prompts. Close discards anything typed
+// but not entered.
 type Shell struct {
 	session  *gossh.Session
 	stdin    io.Writer
@@ -76,33 +79,26 @@ type Shell struct {
 }
 
 // Shell starts an interactive shell in a new session, requesting term first
-// if it is not nil. The caller must Close the Shell.
+// if it is not nil. A device can stall on any of these requests, so as in
+// Run, the connection is closed if they take longer than the time limit or
+// ctx is cancelled first. The caller must Close the Shell.
 func (c *Conn) Shell(ctx context.Context, term *Terminal) (*Shell, error) {
-	if err := ctx.Err(); err != nil {
+	timeout := commandTimeout()
+	deadline := time.Now().Add(timeout)
+	stop := closeOnLimit(ctx, timeout, func() { _ = c.client.Close() })
+	session, stdout, stdin, err := c.startShell(term)
+	if reason := stop(); reason != nil {
+		if err == nil {
+			_ = session.Close()
+		}
+		if errors.Is(reason, errLimitReached) {
+			return nil, fmt.Errorf("start a shell on %s: %w (%s)", c.addr, ErrCommandTimeout, timeout)
+		}
+		return nil, fmt.Errorf("start a shell on %s: %w", c.addr, reason)
+	}
+	if err != nil {
 		return nil, err
 	}
-	session, err := c.client.NewSession()
-	if err != nil {
-		return nil, fmt.Errorf("new session: %w", err)
-	}
-	if term != nil {
-		requestTerminal(session, term)
-	}
-	stdin, err := session.StdinPipe()
-	if err != nil {
-		_ = session.Close()
-		return nil, err
-	}
-	stdout, err := session.StdoutPipe()
-	if err != nil {
-		_ = session.Close()
-		return nil, err
-	}
-	if err := session.Shell(); err != nil {
-		_ = session.Close()
-		return nil, fmt.Errorf("start a shell on %s: %w", c.addr, err)
-	}
-	timeout := commandTimeoutFor(c.cfg)
 	s := &Shell{
 		session:  session,
 		stdin:    stdin,
@@ -110,10 +106,37 @@ func (c *Conn) Shell(ctx context.Context, term *Terminal) (*Shell, error) {
 		done:     make(chan struct{}),
 		addr:     c.addr,
 		timeout:  timeout,
-		deadline: time.Now().Add(timeout),
+		deadline: deadline,
 	}
 	go s.read(stdout)
 	return s, nil
+}
+
+// startShell opens a session, requests term if it is not nil, and starts a
+// shell in it. On error the session is closed.
+func (c *Conn) startShell(term *Terminal) (*gossh.Session, io.Reader, io.Writer, error) {
+	session, err := c.client.NewSession()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("new session: %w", err)
+	}
+	if term != nil {
+		requestTerminal(session, term)
+	}
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		_ = session.Close()
+		return nil, nil, nil, err
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		_ = session.Close()
+		return nil, nil, nil, err
+	}
+	if err := session.Shell(); err != nil {
+		_ = session.Close()
+		return nil, nil, nil, fmt.Errorf("start a shell on %s: %w", c.addr, err)
+	}
+	return session, stdout, stdin, nil
 }
 
 // read passes what the device writes to ReadUntil until the session ends or

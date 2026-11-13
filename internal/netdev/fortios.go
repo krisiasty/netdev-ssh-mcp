@@ -6,11 +6,22 @@ import (
 	"strings"
 )
 
+// fortiOSHostnamePattern matches the hostname in a FortiOS CLI prompt. It is
+// set by the device.
+const fortiOSHostnamePattern = `[\w.-]+`
+
 // fortiOSPromptPattern matches the CLI prompt FortiOS writes in an SSH exec
 // session, such as "FGT-1 $ " or "FGT-1 (root) # ": once before each
 // command's output, which follows it on the same line, and once more at the
-// end. The hostname is set by the device.
-const fortiOSPromptPattern = `[\w.-]+(?: \([\w.-]+\))? [#$] `
+// end.
+const fortiOSPromptPattern = fortiOSHostnamePattern + `(?: \([\w.-]+\))? [#$] `
+
+// fortiOSContextPromptPattern matches the prompt inside a context, such as
+// "FGT-1 (vdom) $ " in "config vdom" or "FGT-1 (root) $ " in a VDOM. context
+// is a regular expression.
+func fortiOSContextPromptPattern(context string) string {
+	return fortiOSHostnamePattern + ` \(` + context + `\) [#$] `
+}
 
 var fortiOSPromptRe = regexp.MustCompile(`^` + fortiOSPromptPattern)
 

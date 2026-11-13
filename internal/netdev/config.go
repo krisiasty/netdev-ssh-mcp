@@ -32,10 +32,8 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
 
-	if args.VDOM != "" {
-		if err := checkVDOMName(args.VDOM); err != nil {
-			return nil, nil, err
-		}
+	if err := checkVDOMName(args.VDOM); err != nil {
+		return nil, nil, err
 	}
 
 	configType, err := normalizeConfigType(args.ConfigType)
@@ -45,9 +43,6 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 	cfg, rt, err := resolveTarget(ctx, args.Host, args.Port, args.Username, args.DeviceType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get_config: %w", err)
-	}
-	if err := checkVDOMArg(args.VDOM, rt.dt); err != nil {
-		return nil, nil, err
 	}
 	cmd, err := buildConfigCommand(configType, rt.dt)
 	if err != nil {

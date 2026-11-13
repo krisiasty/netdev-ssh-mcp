@@ -19,11 +19,15 @@ import (
 const vdomHelp = "edit \r\n<vdom>    Virtual Domain Name\r\nads_mgmt\r\nopenstack\r\nopenstk-tst\r\n\r\nFGT-1 (vdom) $ edit "
 
 // fakeVDOMShell answers like a FortiOS shell: each Send appends the reply
-// for that text, and ReadUntil consumes what was written up to a match.
+// for that text, and ReadUntil consumes what was written up to the earliest
+// point where re matches, as if it arrived byte by byte. late is written
+// after the first ReadUntil, like a prompt arriving after a banner.
 type fakeVDOMShell struct {
 	buf     string
+	late    string
 	replies map[string]string
 	sent    []string
+	reads   int
 }
 
 func (f *fakeVDOMShell) Send(text string) error {
@@ -33,13 +37,19 @@ func (f *fakeVDOMShell) Send(text string) error {
 }
 
 func (f *fakeVDOMShell) ReadUntil(_ context.Context, re *regexp.Regexp) (string, error) {
-	loc := re.FindStringIndex(f.buf)
-	if loc == nil {
-		return "", fmt.Errorf("no match for %v in %q", re, f.buf)
+	defer func() {
+		if f.reads++; f.reads == 1 {
+			f.buf += f.late
+		}
+	}()
+	for end := 1; end <= len(f.buf); end++ {
+		if re.MatchString(f.buf[:end]) {
+			out := f.buf[:end]
+			f.buf = f.buf[end:]
+			return out, nil
+		}
 	}
-	out := f.buf[:loc[1]]
-	f.buf = f.buf[loc[1]:]
-	return out, nil
+	return "", fmt.Errorf("no match for %v in %q", re, f.buf)
 }
 
 func TestFortiOSVDOMs(t *testing.T) {
@@ -77,9 +87,47 @@ func TestFortiOSVDOMsWithoutVDOMs(t *testing.T) {
 	}
 }
 
+// TestFortiOSVDOMsAfterPromptShapedBanner checks that a banner ending in
+// something prompt-shaped, read as the login prompt, does not make the real
+// prompt that follows pass for the reply to "config vdom".
+func TestFortiOSVDOMsAfterPromptShapedBanner(t *testing.T) {
+	sh := &fakeVDOMShell{
+		buf:  "Authorised use only\r\nNOTICE # ",
+		late: "\r\nFGT-1 # ",
+		replies: map[string]string{
+			"config vdom\r": "config vdom\r\r\n\r\nFGT-1 (vdom) # ",
+			"edit ?":        strings.ReplaceAll(vdomHelp, "(vdom) $", "(vdom) #"),
+		},
+	}
+	got, err := fortiOSVDOMs(t.Context(), sh)
+	if err != nil || !slices.Equal(got, []string{"ads_mgmt", "openstack", "openstk-tst"}) {
+		t.Fatalf("fortiOSVDOMs() = %q, %v", got, err)
+	}
+}
+
+func TestFortiOSVDOMsRefusesBannerToAccept(t *testing.T) {
+	sh := &fakeVDOMShell{buf: "This system is for authorised use only.\r\n(Press 'a' to accept):"}
+	if _, err := fortiOSVDOMs(t.Context(), sh); !errors.Is(err, errBannerToAccept) {
+		t.Fatalf("fortiOSVDOMs() error = %v, want errBannerToAccept", err)
+	}
+	if len(sh.sent) != 0 {
+		t.Fatalf("sent %q, want nothing", sh.sent)
+	}
+}
+
 func TestParseVDOMList(t *testing.T) {
-	if got, err := parseVDOMList(vdomHelp); err != nil || !slices.Equal(got, []string{"ads_mgmt", "openstack", "openstk-tst"}) {
-		t.Fatalf("parseVDOMList() = %q, %v", got, err)
+	want := []string{"ads_mgmt", "openstack", "openstk-tst"}
+	for name, help := range map[string]string{
+		"as captured":          vdomHelp,
+		"no blank line":        "edit \r\n<vdom>    Virtual Domain Name\r\nads_mgmt\r\nopenstack\r\nopenstk-tst\r\nFGT-1 (vdom) $ edit ",
+		"padded names":         "edit \r\n<vdom>    Virtual Domain Name\r\n  ads_mgmt  \r\nopenstack \r\n\topenstk-tst\r\n\r\nFGT-1 (vdom) # edit ",
+		"spaces on blank line": "edit \r\n<vdom>    Virtual Domain Name\r\nads_mgmt\r\nopenstack\r\nopenstk-tst\r\n   \r\nFGT-1 (vdom) $ edit ",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got, err := parseVDOMList(help); err != nil || !slices.Equal(got, want) {
+				t.Fatalf("parseVDOMList() = %q, %v; want %q", got, err, want)
+			}
+		})
 	}
 	for name, help := range map[string]string{
 		"no header":        "edit \r\nads_mgmt\r\n\r\nFGT-1 (vdom) $ edit ",
@@ -96,12 +144,12 @@ func TestParseVDOMList(t *testing.T) {
 }
 
 func TestCheckVDOMName(t *testing.T) {
-	for _, name := range []string{"root", "ads_mgmt", "openstk-tst", "VDOM1", strings.Repeat("a", 64)} {
+	for _, name := range []string{"", "root", "ads_mgmt", "openstk-tst", "VDOM1", strings.Repeat("a", 64)} {
 		if err := checkVDOMName(name); err != nil {
 			t.Errorf("checkVDOMName(%q) = %v", name, err)
 		}
 	}
-	for _, name := range []string{"", "a b", "root\nend", "root;end", "a.b", "?", strings.Repeat("a", 65)} {
+	for _, name := range []string{" ", "a b", "root\nend", "root;end", "a.b", "?", strings.Repeat("a", 65)} {
 		if err := checkVDOMName(name); err == nil {
 			t.Errorf("checkVDOMName(%q) = nil, want an error", name)
 		}
@@ -332,16 +380,104 @@ func TestToolsReportVDOMErrors(t *testing.T) {
 	}
 }
 
-func stubListVDOMs(t *testing.T, info vdomInfo, err error) {
+// stubListVDOMs answers listVDOMs with info and err, and records the
+// resolved types it was called with.
+func stubListVDOMs(t *testing.T, info vdomInfo, err error) *[]resolvedType {
 	t.Helper()
 	orig := listVDOMs
 	t.Cleanup(func() { listVDOMs = orig })
-	listVDOMs = func(context.Context, sshclient.ConnConfig) (vdomInfo, error) { return info, err }
+	var calls []resolvedType
+	listVDOMs = func(_ context.Context, _ sshclient.ConnConfig, rt resolvedType) (vdomInfo, error) {
+		calls = append(calls, rt)
+		return info, err
+	}
+	return &calls
+}
+
+// fortiOSStatus is the probe output of a FortiGate with the given VDOM mode
+// and current VDOM, after its CLI prompt.
+func fortiOSStatus(t *testing.T, mode, current string) string {
+	t.Helper()
+	status := readFixture(t, "fortios_get_system_status.txt")
+	status = strings.Replace(status, "Virtual domain configuration: disable", "Virtual domain configuration: "+mode, 1)
+	status = strings.Replace(status, "Current virtual domain: root", "Current virtual domain: "+current, 1)
+	if !strings.Contains(status, "Current virtual domain: "+current) {
+		t.Fatal("fixture no longer has the lines this helper edits")
+	}
+	return "FGT-1 $ " + status + "\nFGT-1 $ "
+}
+
+// TestFortigateListVDOMsUsesDetection checks that the VDOM the detection
+// probe just read reaches listVDOMs on that call only, and that a FortiGate
+// detection found without VDOMs is answered without connecting again.
+func TestFortigateListVDOMsUsesDetection(t *testing.T) {
+	t.Run("current VDOM from this call's probe only", func(t *testing.T) {
+		resetDetection(t)
+		runProbe = (&fakeProbe{ident: identFortiOS, outputs: map[string]string{probeSystemStatus: fortiOSStatus(t, "multiple", "ads_mgmt")}}).probe
+		calls := stubListVDOMs(t, vdomInfo{enabled: true, names: []string{"ads_mgmt"}, current: "ads_mgmt"}, nil)
+		for range 2 {
+			if _, _, err := FortigateListVDOMs(t.Context(), nil, FortigateListVDOMsInput{Host: "fw1", Username: "u"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if len(*calls) != 2 || (*calls)[0].currentVDOM != "ads_mgmt" || (*calls)[1].currentVDOM != "" {
+			t.Fatalf("listVDOMs got %+v; want the current VDOM on the probing call only", *calls)
+		}
+	})
+	t.Run("VDOMs disabled", func(t *testing.T) {
+		resetDetection(t)
+		runProbe = (&fakeProbe{ident: identFortiOS, outputs: map[string]string{probeSystemStatus: fortiOSStatus(t, "disable", "root")}}).probe
+		calls := stubListVDOMs(t, vdomInfo{}, errors.New("listVDOMs called"))
+		res, _, err := FortigateListVDOMs(t.Context(), nil, FortigateListVDOMsInput{Host: "fw1", Username: "u"})
+		if err != nil || len(*calls) != 0 {
+			t.Fatalf("FortigateListVDOMs() = %v, listVDOMs calls = %d; want an answer without connecting", err, len(*calls))
+		}
+		if text := contentTexts(res.Content)[0]; !strings.HasPrefix(text, "This FortiGate does not use VDOMs") || !strings.Contains(text, "disable") {
+			t.Fatalf("report = %q", text)
+		}
+	})
+}
+
+func TestVDOMReportGlobalScope(t *testing.T) {
+	got := vdomReport(vdomInfo{enabled: true, globalScope: true, names: []string{"root", "dmz"}, current: "root"})
+	if strings.Contains(got, "sessions start here") || !strings.Contains(got, "global context") {
+		t.Fatalf("vdomReport() = %q; want no VDOM marked and the global context named", got)
+	}
+}
+
+func TestFortiOSGlobalPrompt(t *testing.T) {
+	// Captured from a VDOM-scoped account; an account with global scope gets
+	// the "(global)" prompt instead.
+	vdomScoped := "fg2-cds $ 8826: Unknown action 3\nCommand fail. Return code -1\n\nfg2-cds $ 8826: Unknown action 0\nCommand fail. Return code -1\n\nfg2-cds $ "
+	global := "FGT-1 # \nFGT-1 (global) # \nFGT-1 # "
+	if fortiOSGlobalPromptRe.MatchString(vdomScoped) || !fortiOSGlobalPromptRe.MatchString(global) {
+		t.Fatal("fortiOSGlobalPromptRe does not tell the scopes apart")
+	}
+}
+
+// TestVDOMErrorsAreAnswers checks that a vdom the device does not list is
+// logged as an answer and returned without the detection notice.
+func TestVDOMErrorsAreAnswers(t *testing.T) {
+	resetDetection(t)
+	runProbe = (&fakeProbe{ident: identFortiOS, outputs: map[string]string{probeSystemStatus: fortiOSStatus(t, "multiple", "ads_mgmt")}}).probe
+	stubRunInVDOM(t, "", checkVDOM("openstak", []string{"openstack"}, "fw1"))
+	_, _, err := RunShowCommand(t.Context(), nil, RunShowCommandInput{Host: "fw1", Username: "u", Command: "get system status", VDOM: "openstak"})
+	if !errors.Is(err, errVDOMNotOnTheList) || strings.Contains(err.Error(), "auto-detected") {
+		t.Fatalf("error = %v; want the VDOM error without the detection notice", err)
+	}
+	for _, e := range []error{errVDOMNotOnTheList, errVDOMNotApplicable, errNoVDOMs, errFortiOSPaged, errBannerToAccept} {
+		if !answerError(fmt.Errorf("x: %w", e)) {
+			t.Errorf("answerError(%v) = false", e)
+		}
+	}
+	if answerError(errVDOMNotConfirmed) {
+		t.Error("answerError(errVDOMNotConfirmed) = true; an unconfirmed switch is a device failure")
+	}
 }
 
 func TestFortigateListVDOMs(t *testing.T) {
 	resetDetection(t)
-	runProbe = (&fakeProbe{ident: identFortiOS, outputs: map[string]string{probeSystemStatus: readFixture(t, "fortios_get_system_status.txt")}}).probe
+	runProbe = (&fakeProbe{ident: identFortiOS, outputs: map[string]string{probeSystemStatus: fortiOSStatus(t, "multiple", "ads_mgmt")}}).probe
 	stubListVDOMs(t, vdomInfo{enabled: true, names: []string{"ads_mgmt", "openstack"}, current: "ads_mgmt"}, nil)
 
 	res, _, err := FortigateListVDOMs(t.Context(), nil, FortigateListVDOMsInput{Host: "fw1", Username: "u"})
@@ -365,8 +501,7 @@ func TestFortigateListVDOMsRefusesOtherPlatforms(t *testing.T) {
 }
 
 func TestVDOMReportWithoutVDOMs(t *testing.T) {
-	got := vdomReport(vdomInfo{current: "root"})
-	if !strings.HasPrefix(got, "This FortiGate does not use VDOMs") || !strings.Contains(got, "root") {
+	if got := vdomReport(vdomInfo{}); !strings.HasPrefix(got, "This FortiGate does not use VDOMs") {
 		t.Fatalf("vdomReport() = %q", got)
 	}
 }

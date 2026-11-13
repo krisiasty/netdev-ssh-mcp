@@ -55,18 +55,13 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 		return nil, nil, err
 	}
 
-	if args.VDOM != "" {
-		if err := checkVDOMName(args.VDOM); err != nil {
-			return nil, nil, err
-		}
+	if err := checkVDOMName(args.VDOM); err != nil {
+		return nil, nil, err
 	}
 
 	cfg, rt, err := resolveTarget(ctx, args.Host, args.Port, args.Username, args.DeviceType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run_ping: %w", err)
-	}
-	if err := checkVDOMArg(args.VDOM, rt.dt); err != nil {
-		return nil, nil, err
 	}
 	commands, err := buildPingCommands(args.Destination, rt.dt, args.Count, args.Size, args.Timeout, args.Source, args.VRF, args.OutgoingIf)
 	if err != nil {

@@ -109,6 +109,16 @@ func TestNormalizeOperationalCommand(t *testing.T) {
 		{name: "fortios show second command", command: "show system interface ; execute reboot", deviceType: deviceTypeFortiOS, wantErr: "';'"},
 		{name: "fortios show quotes", command: "show firewall address \"a b\"", deviceType: deviceTypeFortiOS, wantErr: "shell syntax"},
 		{name: "fortios showx", command: "showx system interface", deviceType: deviceTypeFortiOS, wantErr: "'get' command, or 'show'"},
+		// FortiOS takes abbreviations; outside a VDOM even "show f" is the
+		// whole configuration.
+		{name: "fortios show f", command: "show f", deviceType: deviceTypeFortiOS, wantErr: "use the get_config tool"},
+		{name: "fortios show full", command: "show full", deviceType: deviceTypeFortiOS, wantErr: "use the get_config tool"},
+		{name: "fortios show full-conf", command: "show full-conf", deviceType: deviceTypeFortiOS, wantErr: "use the get_config tool"},
+		{name: "fortios show FULL", command: "show FULL", deviceType: deviceTypeFortiOS, wantErr: "use the get_config tool"},
+		{name: "fortios show fu with grep", command: "show fu | grep x", deviceType: deviceTypeFortiOS, wantErr: "use the get_config tool"},
+		{name: "fortios show full with path", command: "show full router static", deviceType: deviceTypeFortiOS, want: "show full router static"},
+		{name: "fortios show firewall", command: "show firewall policy", deviceType: deviceTypeFortiOS, want: "show firewall policy"},
+		{name: "fortios show ftp-proxy", command: "show ftp-proxy explicit", deviceType: deviceTypeFortiOS, want: "show ftp-proxy explicit"},
 		{name: "fortios execute blocked", command: "execute ping 1.1.1.1", deviceType: deviceTypeFortiOS, wantErr: "use run_ping or run_traceroute"},
 		{name: "fortios diagnose blocked", command: "diagnose debug enable", deviceType: deviceTypeFortiOS, wantErr: "diagnose commands are not supported"},
 		// Runs of spaces must not skip the get_config redirects.

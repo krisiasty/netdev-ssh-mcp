@@ -159,8 +159,10 @@ net show interface json
 >
 > On FortiOS, `show` and `show full-configuration` without a path, `config`, `execute`, and `diagnose` commands
 > are blocked here. Use `get_config` for the whole configuration, and `run_ping` or `run_traceroute` for
-> diagnostics. `show` with a path prints only that part of the configuration (only settings that differ from the
-> defaults; `show full-configuration` includes them), and its output is obfuscated like `get_config`'s.
+> diagnostics. FortiOS accepts abbreviations, and outside a VDOM even `show f` means `show full-configuration`, so
+> every abbreviation of `full-configuration` needs a path as well. `show` with a path prints only that part of the
+> configuration (only settings that differ from the defaults; `show full-configuration` includes them), and its
+> output is obfuscated like `get_config`'s.
 >
 > On Cumulus Linux 4.x, `net show configuration`, `net show commit` and `net show rollback` (and their
 > abbreviations) are refused here. Use `get_config` instead.
@@ -328,7 +330,13 @@ Pass device_type=junos on later calls to this host to skip detection.
 
 Lists the VDOMs (virtual domains) the account can reach on a FortiGate, marking the one its sessions start in. Pass one
 of the names as `vdom` to the other tools; see [FortiGate VDOMs](#fortigate-vdoms). The platform is detected (and
-cached) first, and a device that is not a FortiGate is refused.
+cached) first, and a device that is not a FortiGate is refused; if detection found `Virtual domain configuration:
+disable`, the tool says so without connecting again.
+
+Where sessions start depends on the account. The tool enters and leaves `config global` (`config global`, `end`),
+which changes nothing: an account without global scope gets an error, and its sessions start in the VDOM `get system
+status` names; an account with global scope starts in the global context, so no VDOM is marked and the result says
+that commands without `vdom` run there.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -359,7 +367,8 @@ account that may create VDOMs, `edit` with a name that does not exist creates on
 1. The name may only contain letters, digits, `-` and `_`; anything else is refused before connecting.
 2. On the same SSH connection, the tool lists the VDOMs this account can reach, exactly as `fortigate_list_vdoms`
    does. FortiOS lists them only in an interactive CLI, so the tool opens one, enters `config vdom`, types `edit ?`
-   without Enter, reads the names, and closes the session, which discards the typed `edit`.
+   without Enter, reads the names, and closes the session, which discards the typed `edit`. If the FortiGate asks to
+   accept a post-login banner first, the tool stops with an error instead of accepting it for the user.
 3. A name that is not on that list is refused, with up to three close names suggested (for a typo or different case)
    and a pointer to `fortigate_list_vdoms`. The tool never substitutes a suggestion.
 4. The command then runs over SSH exec, wrapped in `config vdom` / `edit <name>` / ... / `end`. Its output is returned

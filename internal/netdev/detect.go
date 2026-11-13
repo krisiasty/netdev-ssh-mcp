@@ -59,8 +59,12 @@ type resolvedType struct {
 	version       string
 	// vdomMode is the FortiOS "Virtual domain configuration", such as
 	// "multiple" or "disable". It describes the device, not the account,
-	// so it can be cached per host; the VDOM a session starts in cannot.
+	// so it can be cached per host.
 	vdomMode string
+	// currentVDOM is the FortiOS "Current virtual domain" this call's probe
+	// read. It depends on the account, so it is never cached: it is set only
+	// when source is sourceProbe.
+	currentVDOM string
 }
 
 // identClass groups SSH identification strings by what they reveal.
@@ -244,6 +248,18 @@ func extractVDOMMode(dt deviceType, output string) string {
 	return ""
 }
 
+// extractCurrentVDOM returns the FortiOS "Current virtual domain" from the
+// probe output, or "" on other platforms or when it is missing.
+func extractCurrentVDOM(dt deviceType, output string) string {
+	if dt != deviceTypeFortiOS {
+		return ""
+	}
+	if m := currentVDOMRe.FindStringSubmatch(output); m != nil {
+		return displayValue(m[1])
+	}
+	return ""
+}
+
 // displayValue makes a device-supplied value safe to echo back: control
 // characters are removed and the length is capped.
 func displayValue(s string) string {
@@ -356,6 +372,7 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 		vdomMode:      extractVDOMMode(dt, res.Output),
 	}
 	storeType(key, r)
+	r.currentVDOM = extractCurrentVDOM(dt, res.Output)                                                                      // for this call only, not the cache
 	slog.Info("platform detected", "host", sanitizeLog(cfg.Host), "device_type", string(dt), "ssh_server", r.serverVersion) //nolint:gosec // G706: values are sanitized before logging
 	return r, nil
 }
@@ -446,6 +463,10 @@ func logFailure(ctx context.Context, tool string, err error, attrs ...any) {
 		slog.Info(tool+" cancelled by the client", attrs...)
 		return
 	}
+	if answerError(err) {
+		slog.Info(tool+": refused", append(attrs, "err", err)...)
+		return
+	}
 	if errors.Is(err, errUnsupportedPlatform) {
 		// The device was identified as one the device type does not
 		// support (refuseLinuxServer): an answer, not a failure. The
@@ -516,11 +537,27 @@ func afterRun(cfg sshclient.ConnConfig, r resolvedType, output string, runErr er
 	return notices
 }
 
+// answerError reports whether err answers the call rather than reporting a
+// failure of the device or the connection: a vdom the device does not list,
+// or one given for a device type without VDOMs, a FortiGate without VDOMs,
+// output FortiOS paged, or a banner the tools will not accept. Such errors
+// are logged at Info, and returned without detection notices, which have
+// nothing to do with them.
+func answerError(err error) bool {
+	for _, target := range []error{errVDOMNotOnTheList, errVDOMNotApplicable, errNoVDOMs, errFortiOSPaged, errBannerToAccept} {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+	return false
+}
+
 // runError wraps a failed command, adding the same notice afterRun would
 // have appended to a successful result.
 func runError(ctx context.Context, tool string, cfg sshclient.ConnConfig, r resolvedType, err error) error {
-	if requestCancelled(ctx) {
-		// The caller has gone; a detection notice or hint means nothing.
+	if requestCancelled(ctx) || answerError(err) {
+		// The caller has gone, or the error answers the call: a detection
+		// notice or hint means nothing.
 		return fmt.Errorf("%s: %w", tool, err)
 	}
 	var extra []string

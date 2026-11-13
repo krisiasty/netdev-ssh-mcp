@@ -31,38 +31,54 @@ import (
 var vdomNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // checkVDOMName rejects a vdom argument that cannot be a VDOM name, before
-// anything connects. A valid name cannot carry another line into a command.
+// anything connects; "" (no vdom) passes. A valid name cannot carry another
+// line into a command. Whether the device type takes a vdom at all is
+// runOn's check.
 func checkVDOMName(name string) error {
-	if !vdomNameRe.MatchString(name) {
+	if name != "" && !vdomNameRe.MatchString(name) {
 		return fmt.Errorf("vdom may only contain letters, digits, '-' and '_' (up to 64 characters)")
 	}
 	return nil
 }
 
-// checkVDOMArg rejects a vdom argument on a device type without VDOMs.
-func checkVDOMArg(vdom string, dt deviceType) error {
-	if vdom != "" && dt != deviceTypeFortiOS {
-		return fmt.Errorf("vdom applies only to device_type fortios, not %s", dt)
-	}
-	return nil
-}
+// fortiOSErrorPattern matches the messages FortiOS prints for a command it
+// refuses ("command parse error before ...", "Unknown action 0", "Command
+// fail. Return code ...").
+const fortiOSErrorPattern = `(?:command parse error|Unknown action|Command fail)`
 
 var (
-	// fortiOSShellPromptRe matches a FortiOS CLI prompt at the end of what
-	// was read: the login prompt, or the one after a command.
-	fortiOSShellPromptRe = regexp.MustCompile(`(?:\A|\n)` + fortiOSPromptPattern + `\z`)
-	// fortiOSVDOMModePromptRe matches the prompt inside "config vdom".
-	fortiOSVDOMModePromptRe = regexp.MustCompile(`\(vdom\) [#$] \z`)
+	// fortiOSLoginRe matches the end of what an interactive FortiOS shell
+	// writes before it takes commands: a prompt, or a post-login banner that
+	// asks to be accepted (fortiOSBannerRe), which the tools never do.
+	fortiOSLoginRe  = regexp.MustCompile(`(?:(?:\A|\n)` + fortiOSPromptPattern + `\z)|` + fortiOSBannerPattern)
+	fortiOSBannerRe = regexp.MustCompile(fortiOSBannerPattern)
+	// fortiOSConfigVDOMReplyRe matches the end of FortiOS's reply to "config
+	// vdom": the prompt inside it, or a prompt after an error. Text that only
+	// looks like a prompt, such as the end of a banner or a prompt drawn
+	// again, matches neither, so it is read past rather than taken for the
+	// reply.
+	fortiOSConfigVDOMReplyRe = regexp.MustCompile(`(?:\A|\n)` + fortiOSContextPromptPattern("vdom") + `\z|(?s)` +
+		fortiOSErrorPattern + `.*\n` + fortiOSPromptPattern + `\z`)
+	fortiOSVDOMModePromptRe = regexp.MustCompile(`(?:\A|\n)` + fortiOSContextPromptPattern("vdom") + `\z`)
 	// fortiOSEditHelpRe matches the end of the help "edit ?" shows: the
 	// prompt again, with the typed "edit " redrawn after it.
-	fortiOSEditHelpRe = regexp.MustCompile(`\n[\w.-]+ \(vdom\) [#$] edit \z`)
+	fortiOSEditHelpRe = regexp.MustCompile(`\n` + fortiOSContextPromptPattern("vdom") + `edit \z`)
+	// fortiOSEditRedrawRe matches that redrawn line on its own.
+	fortiOSEditRedrawRe = regexp.MustCompile(`^` + fortiOSContextPromptPattern("vdom") + `edit$`)
 )
 
+// fortiOSBannerPattern matches FortiOS asking to accept a post-login banner
+// ("(Press 'a' to accept):"). The wording is matched loosely: it has not been
+// seen from a device here.
+const fortiOSBannerPattern = `(?i)press\b[^\n]*\baccept`
+
 var (
-	errNoVDOMs          = errors.New("this FortiGate does not use VDOMs, or this account cannot reach them")
-	errUnexpectedVDOMs  = errors.New("FortiOS listed the VDOMs in an unexpected format")
-	errVDOMNotConfirmed = errors.New("FortiOS did not confirm the switch to the VDOM, so the output was discarded")
-	errVDOMNotOnTheList = errors.New("VDOM not found")
+	errNoVDOMs           = errors.New("this FortiGate does not use VDOMs, or this account cannot reach them")
+	errUnexpectedVDOMs   = errors.New("FortiOS listed the VDOMs in an unexpected format")
+	errVDOMNotConfirmed  = errors.New("FortiOS did not confirm the switch to the VDOM, so the output was discarded")
+	errVDOMNotOnTheList  = errors.New("VDOM not found")
+	errVDOMNotApplicable = errors.New("vdom applies only to device_type fortios")
+	errBannerToAccept    = errors.New("FortiOS asks to accept a post-login banner before its CLI takes commands, and the tools do not accept it on the user's behalf")
 )
 
 const listVDOMsCommandHint = "Call fortigate_list_vdoms to see the available VDOMs."
@@ -77,17 +93,21 @@ type vdomShell interface {
 // interactive FortiOS shell that has just started. It never enters anything
 // after "edit": the caller closes sh, which discards the typed "edit ".
 func fortiOSVDOMs(ctx context.Context, sh vdomShell) ([]string, error) {
-	if _, err := sh.ReadUntil(ctx, fortiOSShellPromptRe); err != nil {
+	login, err := sh.ReadUntil(ctx, fortiOSLoginRe)
+	if err != nil {
 		return nil, fmt.Errorf("wait for the FortiOS prompt: %w", err)
+	}
+	if fortiOSBannerRe.MatchString(login) {
+		return nil, errBannerToAccept
 	}
 	if err := sh.Send("config vdom\r"); err != nil {
 		return nil, err
 	}
-	prompt, err := sh.ReadUntil(ctx, fortiOSShellPromptRe)
+	reply, err := sh.ReadUntil(ctx, fortiOSConfigVDOMReplyRe)
 	if err != nil {
 		return nil, fmt.Errorf("enter config vdom: %w", err)
 	}
-	if !fortiOSVDOMModePromptRe.MatchString(prompt) {
+	if !fortiOSVDOMModePromptRe.MatchString(reply) {
 		return nil, errNoVDOMs
 	}
 	if err := sh.Send("edit ?"); err != nil {
@@ -101,17 +121,19 @@ func fortiOSVDOMs(ctx context.Context, sh vdomShell) ([]string, error) {
 }
 
 // parseVDOMList reads the names FortiOS lists under "<vdom>" in its help for
-// "edit ?", up to the first blank line. Anything else there, or no names at
-// all, is an error rather than a partial list.
+// "edit ?", one per line, up to a blank line or the redrawn "edit" prompt.
+// Spaces around a name are ignored. Anything else there, or no names at all,
+// is an error rather than a partial list.
 func parseVDOMList(help string) ([]string, error) {
 	lines := strings.Split(strings.ReplaceAll(help, "\r", ""), "\n")
-	start := slices.IndexFunc(lines, func(l string) bool { return strings.HasPrefix(l, "<vdom>") })
+	start := slices.IndexFunc(lines, func(l string) bool { return strings.HasPrefix(strings.TrimSpace(l), "<vdom>") })
 	if start < 0 {
 		return nil, errUnexpectedVDOMs
 	}
 	var names []string
 	for _, l := range lines[start+1:] {
-		if l == "" {
+		l = strings.TrimSpace(l)
+		if l == "" || fortiOSEditRedrawRe.MatchString(l) {
 			break
 		}
 		if !vdomNameRe.MatchString(l) {
@@ -223,18 +245,16 @@ func vdomCommand(vdom string, commands []string) string {
 // returns the commands' output without the prompts, and refuses output that
 // FortiOS paged, as fortiOSOutput does.
 func fortiOSVDOMOutput(out, vdom string) (string, error) {
-	if fortiOSPagedRe.MatchString(out) {
-		return "", errFortiOSPaged
-	}
 	q := regexp.QuoteMeta(vdom)
-	re := regexp.MustCompile(`\A(` + fortiOSPromptPattern + `)\n?[\w.-]+ \(vdom\) [#$] current vf=` + q + `:\d+\n+([\w.-]+ \(` + q + `\) [#$] )`)
+	re := regexp.MustCompile(`\A(` + fortiOSPromptPattern + `)\n?` + fortiOSContextPromptPattern("vdom") +
+		`current vf=` + q + `:\d+\n+(` + fortiOSContextPromptPattern(q) + `)`)
 	m := re.FindStringSubmatchIndex(out)
 	if m == nil {
 		return "", fmt.Errorf("%w (vdom %q)", errVDOMNotConfirmed, vdom)
 	}
 	startPrompt, vdomPrompt := out[m[2]:m[3]], out[m[4]:m[5]]
 	rest := strings.TrimSuffix(out[m[1]:], startPrompt)
-	return trimFortiOSPrompts(vdomPrompt + rest), nil
+	return fortiOSOutput(vdomPrompt + rest)
 }
 
 // listVDOMsOn lists the VDOMs over a shell on conn, and closes the shell.
@@ -277,42 +297,64 @@ func fortiOSRunInVDOM(ctx context.Context, cfg sshclient.ConnConfig, vdom string
 
 // vdomInfo is what fortigate_list_vdoms reports.
 type vdomInfo struct {
-	enabled bool     // the FortiGate uses VDOMs and this account reaches them
-	names   []string // the VDOMs this account can reach
-	current string   // where this account's sessions start, if reported
+	enabled     bool     // the FortiGate uses VDOMs and this account reaches them
+	names       []string // the VDOMs this account can reach
+	globalScope bool     // the account's sessions start in the global context
+	current     string   // the VDOM where the account's sessions start, if not global
 }
 
-// listVDOMs fetches vdomInfo for the FortiGate cfg points at. A variable so
-// that tests can stub it.
+// listVDOMs fetches vdomInfo for the FortiGate cfg points at; rt is its
+// detected or explicit type. A variable so that tests can stub it.
 var listVDOMs = fortiOSListVDOMs
 
 var (
 	vdomConfigRe  = regexp.MustCompile(`(?m)^Virtual domain configuration: ([\w-]+)`)
 	currentVDOMRe = regexp.MustCompile(`(?m)^Current virtual domain: ([\w-]+)`)
+	// fortiOSGlobalPromptRe matches the prompt inside "config global",
+	// which only an account with global scope reaches.
+	fortiOSGlobalPromptRe = regexp.MustCompile(`(?:\A|\n)` + fortiOSContextPromptPattern("global"))
 )
 
-// fortiOSListVDOMs reads "get system status" for whether VDOMs are in use
-// and where the session starts, then lists the VDOMs, on one connection.
-func fortiOSListVDOMs(ctx context.Context, cfg sshclient.ConnConfig) (vdomInfo, error) {
+// fortiOSScopeCommand enters the global context and leaves it again,
+// changing nothing; an account without global scope gets an error instead
+// ("Unknown action 3").
+const fortiOSScopeCommand = "config global\nend"
+
+// fortiOSListVDOMs finds out, on one connection, where the account's
+// sessions start and which VDOMs it can reach. An account with global scope
+// starts in the global context, although "get system status" names a VDOM
+// there too ("Current virtual domain: root"); only for an account without
+// it is that VDOM where its sessions start. The VDOM the probe read is used
+// when this call detected the platform, so "get system status" does not run
+// twice.
+func fortiOSListVDOMs(ctx context.Context, cfg sshclient.ConnConfig, rt resolvedType) (vdomInfo, error) {
 	conn, err := sshclient.Connect(ctx, cfg)
 	if err != nil {
 		return vdomInfo{}, err
 	}
 	defer func() { _ = conn.Close() }()
 
-	status, err := conn.Run(ctx, "get system status")
-	if err != nil {
-		return vdomInfo{}, err
-	}
-	if status, err = fortiOSOutput(status); err != nil {
-		return vdomInfo{}, err
-	}
 	var info vdomInfo
-	if m := currentVDOMRe.FindStringSubmatch(status); m != nil {
-		info.current = m[1]
+	scope, err := conn.Run(ctx, fortiOSScopeCommand)
+	var cmdErr *sshclient.CommandError
+	if err != nil && !errors.As(err, &cmdErr) {
+		return vdomInfo{}, err
 	}
-	if m := vdomConfigRe.FindStringSubmatch(status); m != nil && m[1] == "disable" {
-		return info, nil
+	info.globalScope = fortiOSGlobalPromptRe.MatchString(scope)
+	if !info.globalScope {
+		info.current = rt.currentVDOM
+		if info.current == "" {
+			status, err := conn.Run(ctx, "get system status")
+			if err != nil {
+				return vdomInfo{}, err
+			}
+			if status, err = fortiOSOutput(status); err != nil {
+				return vdomInfo{}, err
+			}
+			if m := currentVDOMRe.FindStringSubmatch(status); m != nil {
+				info.current = m[1]
+			}
+		}
 	}
 	names, err := listVDOMsOn(ctx, conn)
 	if errors.Is(err, errNoVDOMs) {

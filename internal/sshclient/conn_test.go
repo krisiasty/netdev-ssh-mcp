@@ -211,3 +211,64 @@ func TestConnectChecksServerVersion(t *testing.T) {
 		t.Fatalf("Connect() error = %v, want the check's error", err)
 	}
 }
+
+// TestShellSetupTimesOut checks that a device stalling on the shell request
+// is cut off at the command timeout rather than waited on for ever.
+func TestShellSetupTimesOut(t *testing.T) {
+	s := startTestServer(t, "SSH-2.0-OpenSSH_9.6", nil)
+	s.stallShell = true
+	conn, err := Connect(t.Context(), useTestServer(t, s, 300*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	start := time.Now()
+	if _, err := conn.Shell(t.Context(), &Terminal{Rows: 65535, Cols: 512}); !errors.Is(err, ErrCommandTimeout) {
+		t.Fatalf("Shell() error = %v, want ErrCommandTimeout", err)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("Shell() took %v", d)
+	}
+}
+
+func TestShellSetupCancelled(t *testing.T) {
+	s := startTestServer(t, "SSH-2.0-OpenSSH_9.6", nil)
+	s.stallShell = true
+	conn, err := Connect(t.Context(), useTestServer(t, s, 5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := conn.Shell(ctx, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Shell() error = %v, want the context's error", err)
+	}
+}
+
+// TestShellIgnoresLongCommandTimeout checks that a shell keeps to the
+// configured command timeout even when the connection allows commands such
+// as ping to run longer: it only waits for prompts.
+func TestShellIgnoresLongCommandTimeout(t *testing.T) {
+	s := startTestServer(t, "SSH-2.0-OpenSSH_9.6", nil)
+	s.shell = newFakeCLI("no prompt here", nil).serve
+	cfg := useTestServer(t, s, 300*time.Millisecond)
+	cfg.CommandTimeout = time.Minute
+	conn, err := Connect(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	sh, err := conn.Shell(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sh.Close() }()
+	start := time.Now()
+	if _, err := sh.ReadUntil(t.Context(), regexp.MustCompile(`\$ \z`)); !errors.Is(err, ErrCommandTimeout) {
+		t.Fatalf("ReadUntil() error = %v, want ErrCommandTimeout", err)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Fatalf("ReadUntil() took %v, want the configured 300ms", d)
+	}
+}

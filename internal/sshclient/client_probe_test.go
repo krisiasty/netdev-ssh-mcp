@@ -26,7 +26,10 @@ type testServer struct {
 	refusePTY bool
 	// shell, when set, serves shell requests on the channel.
 	shell func(ch gossh.Channel)
-	conns atomic.Int32 // connections accepted
+	// stallShell leaves shell requests unanswered, like a device that
+	// stalls on them.
+	stallShell bool
+	conns      atomic.Int32 // connections accepted
 
 	mu       sync.Mutex
 	requests []string     // channel request types, in order
@@ -128,6 +131,9 @@ func (s *testServer) serve(conn net.Conn, cfg *gossh.ServerConfig) {
 				s.mu.Lock()
 				s.requests = append(s.requests, req.Type)
 				s.mu.Unlock()
+				if req.Type == "shell" && s.stallShell {
+					continue // never answer
+				}
 				if req.Type == "shell" && s.shell != nil {
 					_ = req.Reply(true, nil)
 					go s.shell(ch)

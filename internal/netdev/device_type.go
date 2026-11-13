@@ -30,12 +30,16 @@ var (
 )
 
 // runOn runs a tool's commands and returns their output ready to report. With
-// vdom (fortios only, already checked by checkVDOMName and checkVDOMArg) they
-// run in that VDOM (runInVDOM). Otherwise one command runs on its own and
-// several are sent together in one exec request, and the output goes
+// vdom, which checkVDOMName has accepted, they run in that VDOM (runInVDOM);
+// a vdom on any device type but fortios is refused here, so no tool can send
+// "config vdom" to another platform. Otherwise one command runs on its own
+// and several are sent together in one exec request, and the output goes
 // through deviceOutput.
 func runOn(ctx context.Context, cfg sshclient.ConnConfig, dt deviceType, vdom string, commands []string) (string, error) {
 	if vdom != "" {
+		if dt != deviceTypeFortiOS {
+			return "", fmt.Errorf("%w, not %s", errVDOMNotApplicable, dt)
+		}
 		return runInVDOM(ctx, cfg, vdom, commands)
 	}
 	var out string
@@ -268,13 +272,16 @@ var errFortiOSWholeConfig = fmt.Errorf("use the get_config tool to retrieve the 
 // normalizeFortiOSShow accepts "show <path> [entry]" and "show
 // full-configuration <path> [entry]", which print that part of the
 // configuration, with the same word and filter rules as "get". Without a
-// path they print all of it, which get_config retrieves.
+// path they print all of it, which get_config retrieves. FortiOS accepts
+// any unambiguous abbreviation, and where few commands are offered (an exec
+// session outside a VDOM) even "show f" means "show full-configuration", so
+// every prefix of full-configuration counts as one.
 func normalizeFortiOSShow(command string) (string, error) {
 	if err := checkOperationalCommand(command, "show", deviceTypeFortiOS); err != nil {
 		return "", err
 	}
 	path := spaceSeparated(strings.Split(command, "|")[0])[1:]
-	if len(path) > 0 && strings.EqualFold(path[0], "full-configuration") {
+	if len(path) > 0 && strings.HasPrefix("full-configuration", strings.ToLower(path[0])) {
 		path = path[1:]
 	}
 	if len(path) == 0 {
