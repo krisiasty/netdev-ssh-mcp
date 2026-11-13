@@ -82,6 +82,7 @@ identical secrets. See [Obfuscation](#obfuscation) for how the key is chosen.
 | `port` | int | no | 22 | SSH port |
 | `config_type` | string | no | `running` | `running` or `startup` (not on JunOS, FortiOS or Cumulus Linux) |
 | `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, or `cumulus4x`; see [Platform detection](#platform-detection) |
+| `vdom` | string | no | — | FortiOS only: run in this VDOM; see [FortiGate VDOMs](#fortigate-vdoms) |
 
 Cisco IOS notes:
 
@@ -134,6 +135,7 @@ supported, or `| no-more` to disable pagination for text output.
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
 | `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, or `cumulus4x`; see [Platform detection](#platform-detection) |
+| `vdom` | string | no | — | FortiOS only: run in this VDOM; see [FortiGate VDOMs](#fortigate-vdoms) |
 
 Example commands:
 
@@ -224,6 +226,7 @@ options within the same SSH session. On Cumulus Linux 4.x it runs Linux `ping`:
 | `size` | int | no | — | Packet size in bytes |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
 | `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`; sets ping syntax |
+| `vdom` | string | no | — | FortiOS only: run in this VDOM; see [FortiGate VDOMs](#fortigate-vdoms) |
 
 `destination`, `source`, `vrf` and `outgoing_interface` may only contain
 letters, digits and `. _ : / @ % -`, which covers addresses, hostnames and
@@ -268,6 +271,7 @@ runs `execute traceroute`, then resets the options within the same SSH session. 
 | `vrf` | string | no | — | VRF name |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
 | `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`; sets syntax |
+| `vdom` | string | no | — | FortiOS only: run in this VDOM; see [FortiGate VDOMs](#fortigate-vdoms) |
 
 The same character restrictions as `run_ping` apply to `destination`, `source`,
 `vrf` and `outgoing_interface`.
@@ -311,6 +315,51 @@ ssh_server: SSH-2.0-OpenSSH_7.5 (reported by the device)
 detected: now, over SSH
 Pass device_type=junos on later calls to this host to skip detection.
 ```
+
+### `fortigate_list_vdoms`
+
+Lists the VDOMs (virtual domains) the account can reach on a FortiGate, marking the one its sessions start in. Pass one
+of the names as `vdom` to the other tools; see [FortiGate VDOMs](#fortigate-vdoms). The platform is detected (and
+cached) first, and a device that is not a FortiGate is refused.
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `host` | string | yes | — | Hostname or IP address of the FortiGate |
+| `username` | string | no | `DEVICE_USERNAME` | SSH username |
+| `port` | int | no | 22 | SSH port |
+
+Example result:
+
+```text
+VDOMs this account can reach (reported by the device):
+root (sessions start here)
+customer-a
+customer-b
+Pass one of these as vdom to get_config, run_show_command, run_ping or run_traceroute; without vdom, commands run in root.
+```
+
+### FortiGate VDOMs
+
+On a FortiGate with multiple VDOMs, each command runs in one of them. Without `vdom`, the tools run commands in the VDOM
+where the account's session starts. With `vdom`, `get_config`, `run_show_command`, `run_ping` and `run_traceroute` run
+the command in that VDOM.
+
+FortiOS reaches another VDOM through configuration mode (`config vdom`, `edit <name>`, the command, `end`), and for an
+account that may create VDOMs, `edit` with a name that does not exist creates one. The tools therefore never send
+`edit` with a name the device has not listed:
+
+1. The name may only contain letters, digits, `-` and `_`; anything else is refused before connecting.
+2. On the same SSH connection, the tool lists the VDOMs this account can reach, exactly as `fortigate_list_vdoms`
+   does. FortiOS lists them only in an interactive CLI, so the tool opens one, enters `config vdom`, types `edit ?`
+   without Enter, reads the names, and closes the session, which discards the typed `edit`.
+3. A name that is not on that list is refused, with up to three close names suggested (for a typo or different case)
+   and a pointer to `fortigate_list_vdoms`. The tool never substitutes a suggestion.
+4. The command then runs over SSH exec, wrapped in `config vdom` / `edit <name>` / ... / `end`. Its output is returned
+   only if FortiOS confirmed the switch (`current vf=<name>:<index>` and a prompt naming the VDOM); otherwise it is
+   discarded. The result ends with a note naming the VDOM.
+
+The list is fetched for every call that passes `vdom` (about a tenth of a second on a FortiGate-1100E) rather than
+cached, so a VDOM deleted in the meantime is never edited, and thereby created again.
 
 ### `trust_host_key`
 

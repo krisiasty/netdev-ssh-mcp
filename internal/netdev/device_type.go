@@ -1,10 +1,13 @@
 package netdev
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/krisiasty/netdev-ssh-mcp/internal/sshclient"
 )
@@ -25,6 +28,37 @@ var (
 	runCommand  = sshclient.RunCommand
 	runCommands = sshclient.RunCommands
 )
+
+// runOn runs a tool's commands and returns their output ready to report. With
+// vdom (fortios only, already checked by checkVDOMName and checkVDOMArg) they
+// run in that VDOM (runInVDOM). Otherwise one command runs on its own and
+// several are sent together in one exec request, and the output goes
+// through deviceOutput.
+func runOn(ctx context.Context, cfg sshclient.ConnConfig, dt deviceType, vdom string, commands []string) (string, error) {
+	if vdom != "" {
+		return runInVDOM(ctx, cfg, vdom, commands)
+	}
+	var out string
+	var err error
+	if len(commands) == 1 {
+		out, err = runCommand(ctx, cfg, commands[0])
+	} else {
+		out, err = runCommands(ctx, cfg, commands)
+	}
+	if err != nil {
+		return out, err
+	}
+	return deviceOutput(dt, out)
+}
+
+// vdomNotice tells the caller which VDOM a command ran in, or nothing when
+// none was asked for.
+func vdomNotice(vdom string) []mcp.Content {
+	if vdom == "" {
+		return nil
+	}
+	return []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("vdom: %s (FortiOS confirmed the switch to it)", vdom)}}
+}
 
 // longCommandTimeout is the command timeout for ping and traceroute, which
 // wait on the network rather than the device: a traceroute towards an

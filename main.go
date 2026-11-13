@@ -105,7 +105,8 @@ func main() {
 			deviceTypeGuidance +
 			"The command depends on the platform: 'show configuration' on JunOS, 'show full-configuration' on FortiOS, " +
 			"'show running-config' on IOS, 'show running-config | no-more' on EOS and NX-OS and 'net show configuration commands' on Cumulus Linux 4.x. " +
-			"JunOS, FortiOS and Cumulus Linux do not support config_type='startup'.",
+			"JunOS, FortiOS and Cumulus Linux do not support config_type='startup'." +
+			vdomGuidance,
 	}, netdev.GetConfig)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -132,7 +133,8 @@ func main() {
 			"when no filter fits, run the command without one and extract what you need from the full output. " +
 			"Examples: 'show bgp summary | json', 'show interfaces status | json', " +
 			"'show lldp neighbors detail | json', 'show inventory | json', 'show version | json', " +
-			"'get system status', 'get router info routing-table all', 'net show interface json'.",
+			"'get system status', 'get router info routing-table all', 'net show interface json'." +
+			vdomGuidance,
 	}, netdev.RunShowCommand)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -146,7 +148,8 @@ func main() {
 			"outgoing_interface (FortiOS only). FortiOS 7.4+ does not support vrf for ping via this tool. " +
 			"On Cumulus Linux 4.x the tool runs 'ping -c <count> [-s size] [-W timeout] [-I source|vrf] destination' with 5 probes unless count is set; " +
 			"vrf cannot be combined with source, outgoing_interface is not supported, and when nothing answers the output with its statistics " +
-			"is returned instead of an error.",
+			"is returned instead of an error." +
+			vdomGuidance,
 	}, netdev.RunPing)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -164,8 +167,18 @@ func main() {
 			"On Cumulus Linux 4.x the tool runs 'traceroute [-m max_hops] [-w timeout] [-q probe] [-s source-ip | -i source-iface | -i vrf] destination'; " +
 			"vrf cannot be combined with source, and outgoing_interface is not supported. " +
 			"Optional parameters: max_hops, timeout (per-probe seconds), probe (probes per hop, not used on JunOS), " +
-			"source (source IP or interface), vrf (routing-instance on JunOS), outgoing_interface (FortiOS only).",
+			"source (source IP or interface), vrf (routing-instance on JunOS), outgoing_interface (FortiOS only)." +
+			vdomGuidance,
 	}, netdev.RunTraceroute)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "fortigate_list_vdoms",
+		Description: "Connect to a FortiGate via SSH and list the VDOMs (virtual domains) this account can reach, marking the one its sessions start in. " +
+			"Pass one of the names as vdom to get_config, run_show_command, run_ping or run_traceroute to run there. " +
+			"FortiOS lists the VDOMs only in an interactive CLI, so the tool opens one, enters 'config vdom', asks for the names with 'edit ?', " +
+			"and closes the session without entering anything else; it also runs 'get system status'. " +
+			"The platform is auto-detected (and cached) first; a device that is not a FortiGate is refused.",
+	}, netdev.FortigateListVDOMs)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "detect_platform",
@@ -194,6 +207,11 @@ const deviceTypeGuidance = "device_type selects the platform syntax: 'eos' (Aris
 	"'junos' (Juniper JunOS), 'fortios' (FortiGate/FortiOS) or 'cumulus4x' (Cumulus Linux 4.x; 5.x is not supported). Pass it when you know the platform, for example from an inventory " +
 	"system. If it is omitted, the platform is auto-detected over SSH, cached for the host, and reported in a note after the output; " +
 	"pass that value on later calls. To work through many hosts, call detect_platform for each one first. "
+
+// vdomGuidance is shared by the tools that take vdom.
+const vdomGuidance = " On a FortiGate with VDOMs, vdom runs the command in that VDOM; call fortigate_list_vdoms for the names this account can reach. " +
+	"The tool checks the name against that list on the device before using it, and refuses a name that is not on it, suggesting close matches. " +
+	"Without vdom, the command runs in the VDOM where the account's session starts. vdom applies only to device_type fortios."
 
 func logLevel() slog.Level {
 	switch os.Getenv("LOG_LEVEL") {

@@ -17,6 +17,7 @@ type GetConfigInput struct {
 	Port       int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
 	ConfigType string `json:"config_type,omitempty" jsonschema:"configuration type: running (default) or startup; startup is not supported for JunOS, FortiOS or Cumulus Linux"`
 	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), or cumulus4x (Cumulus Linux 4.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
+	VDOM       string `json:"vdom,omitempty" jsonschema:"FortiOS only: the VDOM to run in, one of those fortigate_list_vdoms lists; if omitted, the command runs in the VDOM where the account's session starts"`
 }
 
 // GetConfig retrieves the running or startup configuration from a network device.
@@ -31,6 +32,12 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
 
+	if args.VDOM != "" {
+		if err := checkVDOMName(args.VDOM); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	configType, err := normalizeConfigType(args.ConfigType)
 	if err != nil {
 		return nil, nil, err
@@ -38,6 +45,9 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 	cfg, rt, err := resolveTarget(ctx, args.Host, args.Port, args.Username, args.DeviceType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get_config: %w", err)
+	}
+	if err := checkVDOMArg(args.VDOM, rt.dt); err != nil {
+		return nil, nil, err
 	}
 	cmd, err := buildConfigCommand(configType, rt.dt)
 	if err != nil {
@@ -49,19 +59,17 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 
 	slog.Info("get_config", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "config_type", configType) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
-	out, err := runCommand(ctx, cfg, cmd)
+	out, err := runOn(ctx, cfg, rt.dt, args.VDOM, []string{cmd})
 	if err != nil {
 		logFailure(ctx, "get_config", err, "host", args.Host)
 		return nil, nil, runError(ctx, "get_config", cfg, rt, err)
-	}
-	if out, err = deviceOutput(rt.dt, out); err != nil {
-		return nil, nil, fmt.Errorf("get_config: %w", err)
 	}
 
 	res, err := obfuscatedResult(out)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get_config: %w", err)
 	}
+	res.Content = append(res.Content, vdomNotice(args.VDOM)...)
 	res.Content = append(res.Content, afterRun(cfg, rt, out, nil)...)
 	slog.Info("get_config done", "host", args.Host, "bytes", len(out))
 	return res, nil, nil

@@ -9,6 +9,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +24,9 @@ type testServer struct {
 	addr      *net.TCPAddr
 	commands  map[string]testReply
 	refusePTY bool
+	// shell, when set, serves shell requests on the channel.
+	shell func(ch gossh.Channel)
+	conns atomic.Int32 // connections accepted
 
 	mu       sync.Mutex
 	requests []string     // channel request types, in order
@@ -106,6 +110,7 @@ func (s *testServer) serve(conn net.Conn, cfg *gossh.ServerConfig) {
 	if err != nil {
 		return
 	}
+	s.conns.Add(1)
 	defer func() { _ = sconn.Close() }()
 	go gossh.DiscardRequests(reqs)
 
@@ -123,6 +128,11 @@ func (s *testServer) serve(conn net.Conn, cfg *gossh.ServerConfig) {
 				s.mu.Lock()
 				s.requests = append(s.requests, req.Type)
 				s.mu.Unlock()
+				if req.Type == "shell" && s.shell != nil {
+					_ = req.Reply(true, nil)
+					go s.shell(ch)
+					continue
+				}
 				if req.Type == "pty-req" {
 					var pr ptyRequest
 					if err := gossh.Unmarshal(req.Payload, &pr); err == nil {
