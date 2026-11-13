@@ -105,7 +105,7 @@ FortiOS notes:
   `set buffer` or `set script` value, cannot be told from a prompt if an SSH read happens to end right after it, and
   is removed from the output. This is rare, but turning the pager off on the device rules it out and is recommended:
 
-  ```
+  ```text
   config global
   config system console
       set output standard
