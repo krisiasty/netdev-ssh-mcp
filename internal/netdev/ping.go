@@ -72,7 +72,7 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 	slog.Info("run_ping", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "cmd", sanitizeLog(commandLog)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
 	cfg.CommandTimeout = longCommandTimeout
-	out, err := runOn(ctx, cfg, rt.dt, args.VDOM, commands)
+	out, err := runOn(ctx, cfg, rt, args.VDOM, commands)
 	if err != nil {
 		// Linux ping exits 1 when nothing answered; on Cumulus that output
 		// is the result.

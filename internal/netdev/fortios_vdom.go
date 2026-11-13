@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/krisiasty/netdev-ssh-mcp/internal/sshclient"
 )
@@ -50,22 +51,41 @@ var (
 	// fortiOSLoginRe matches the end of what an interactive FortiOS shell
 	// writes before it takes commands: a prompt, or a post-login banner that
 	// asks to be accepted (fortiOSBannerRe), which the tools never do.
-	fortiOSLoginRe  = regexp.MustCompile(`(?:(?:\A|\n)` + fortiOSPromptPattern + `\z)|` + fortiOSBannerPattern)
-	fortiOSBannerRe = regexp.MustCompile(fortiOSBannerPattern)
+	fortiOSLoginRe = regexp.MustCompile(`(?:` + fortiOSShellPromptPattern + `)|` + fortiOSBannerPattern)
+	// fortiOSShellPromptRe matches a prompt at the end of what was read.
+	fortiOSShellPromptRe = regexp.MustCompile(fortiOSShellPromptPattern)
+	fortiOSBannerRe      = regexp.MustCompile(fortiOSBannerPattern)
 	// fortiOSConfigVDOMReplyRe matches the end of FortiOS's reply to "config
 	// vdom": the prompt inside it, or a prompt after an error. Text that only
 	// looks like a prompt, such as the end of a banner or a prompt drawn
 	// again, matches neither, so it is read past rather than taken for the
 	// reply.
-	fortiOSConfigVDOMReplyRe = regexp.MustCompile(`(?:\A|\n)` + fortiOSContextPromptPattern("vdom") + `\z|(?s)` +
+	fortiOSConfigVDOMReplyRe = regexp.MustCompile(fortiOSVDOMModePromptPattern + `|(?s)` +
 		fortiOSErrorPattern + `.*\n` + fortiOSPromptPattern + `\z`)
-	fortiOSVDOMModePromptRe = regexp.MustCompile(`(?:\A|\n)` + fortiOSContextPromptPattern("vdom") + `\z`)
+	fortiOSVDOMModePromptRe = regexp.MustCompile(fortiOSVDOMModePromptPattern)
+	fortiOSErrorRe          = regexp.MustCompile(fortiOSErrorPattern)
 	// fortiOSEditHelpRe matches the end of the help "edit ?" shows: the
 	// prompt again, with the typed "edit " redrawn after it.
 	fortiOSEditHelpRe = regexp.MustCompile(`\n` + fortiOSContextPromptPattern("vdom") + `edit \z`)
 	// fortiOSEditRedrawRe matches that redrawn line on its own.
 	fortiOSEditRedrawRe = regexp.MustCompile(`^` + fortiOSContextPromptPattern("vdom") + `edit$`)
 )
+
+// fortiOSShellPromptPattern matches a FortiOS prompt at the end of what was
+// read.
+const fortiOSShellPromptPattern = `(?:\A|\n)` + fortiOSPromptPattern + `\z`
+
+// fortiOSVDOMModePromptPattern matches the prompt inside "config vdom" at the
+// end of what was read. A VDOM named "vdom" gives the same prompt, so the
+// reply to "config vdom" is also checked for an error.
+const fortiOSVDOMModePromptPattern = `(?:\A|\n)` + `[\w.-]+ \(vdom\) [#$] \z`
+
+// fortiOSBannerQuiet is how long the device must stay silent after a line
+// that reads like a request to accept a banner before it is taken for one: a
+// device asking for the key stops and waits, while a notice that only reads
+// like it, cut off at the end of a read, goes on to the prompt. A variable
+// so that tests can shorten it.
+var fortiOSBannerQuiet = time.Second
 
 // fortiOSBannerPattern matches FortiOS asking to accept a post-login banner
 // ("(Press 'a' to accept):"): a line about pressing a key to accept that
@@ -76,12 +96,14 @@ var (
 const fortiOSBannerPattern = `(?i)press\b[^\n]*\baccept[^\n]*[:?)] *\z`
 
 var (
-	errNoVDOMs           = newAnswer("this FortiGate does not use VDOMs, or this account cannot reach them")
+	errNoVDOMs           = newAnswer("this FortiGate does not use VDOMs, or this account cannot reach them; omit vdom")
 	errUnexpectedVDOMs   = errors.New("FortiOS listed the VDOMs in an unexpected format")
 	errVDOMNotConfirmed  = errors.New("FortiOS did not confirm the switch to the VDOM, so the output was discarded")
 	errVDOMNotOnTheList  = newAnswer("VDOM not found")
 	errVDOMNotApplicable = newAnswer("vdom applies only to device_type fortios")
-	errBannerToAccept    = newAnswer("FortiOS asks to accept a post-login banner before its CLI takes commands, and the tools do not accept it on the user's behalf")
+	errVDOMsDisabled     = newAnswer("this FortiGate does not use VDOMs ('Virtual domain configuration: disable', from platform detection); " +
+		"omit vdom, or call detect_platform with refresh=true if that has changed")
+	errBannerToAccept = newAnswer("FortiOS asks to accept a post-login banner before its CLI takes commands, and the tools do not accept it on the user's behalf")
 )
 
 const listVDOMsCommandHint = "Call fortigate_list_vdoms to see the available VDOMs."
@@ -101,7 +123,9 @@ func fortiOSVDOMs(ctx context.Context, sh vdomShell) ([]string, error) {
 		return nil, fmt.Errorf("wait for the FortiOS prompt: %w", err)
 	}
 	if fortiOSBannerRe.MatchString(login) {
-		return nil, errBannerToAccept
+		if err := awaitPromptAfterBanner(ctx, sh); err != nil {
+			return nil, err
+		}
 	}
 	if err := sh.Send("config vdom\r"); err != nil {
 		return nil, err
@@ -110,7 +134,7 @@ func fortiOSVDOMs(ctx context.Context, sh vdomShell) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("enter config vdom: %w", err)
 	}
-	if !fortiOSVDOMModePromptRe.MatchString(reply) {
+	if fortiOSErrorRe.MatchString(reply) || !fortiOSVDOMModePromptRe.MatchString(reply) {
 		return nil, errNoVDOMs
 	}
 	if err := sh.Send("edit ?"); err != nil {
@@ -121,6 +145,23 @@ func fortiOSVDOMs(ctx context.Context, sh vdomShell) ([]string, error) {
 		return nil, fmt.Errorf("read the VDOM list: %w", err)
 	}
 	return parseVDOMList(help)
+}
+
+// awaitPromptAfterBanner waits up to fortiOSBannerQuiet for the prompt after
+// a line that reads like a request to accept a banner. If the device stays
+// silent it is waiting for the key, which the tools never press.
+func awaitPromptAfterBanner(ctx context.Context, sh vdomShell) error {
+	waitCtx, cancel := context.WithTimeout(ctx, fortiOSBannerQuiet)
+	defer cancel()
+	_, err := sh.ReadUntil(waitCtx, fortiOSShellPromptRe)
+	switch {
+	case err == nil:
+		return nil
+	case ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded):
+		return errBannerToAccept
+	default:
+		return fmt.Errorf("wait for the FortiOS prompt: %w", err)
+	}
 }
 
 // parseVDOMList reads the names FortiOS lists under "<vdom>" in its help for

@@ -49,7 +49,8 @@ func (f *fakeVDOMShell) ReadUntil(_ context.Context, re *regexp.Regexp) (string,
 			return out, nil
 		}
 	}
-	return "", fmt.Errorf("no match for %v in %q", re, f.buf)
+	// Like a shell whose wait for more output ran out.
+	return "", fmt.Errorf("no match for %v in %q: %w", re, f.buf, context.DeadlineExceeded)
 }
 
 func TestFortiOSVDOMs(t *testing.T) {
@@ -113,6 +114,74 @@ func TestFortiOSVDOMsRefusesBannerToAccept(t *testing.T) {
 		}
 		if len(sh.sent) != 0 {
 			t.Fatalf("%q: sent %q, want nothing", banner, sh.sent)
+		}
+	}
+}
+
+// TestFortiOSVDOMsAfterNoticeCutAtColon checks that a notice line that
+// reads like a request to accept, cut off by a read right after its ":", is
+// not taken for one when the prompt follows.
+func TestFortiOSVDOMsAfterNoticeCutAtColon(t *testing.T) {
+	sh := &fakeVDOMShell{
+		buf:  "Press Enter to continue; you accept monitoring (see policy):",
+		late: "\r\nAuthorised use only.\r\nFGT-1 $ ",
+		replies: map[string]string{
+			"config vdom\r": "config vdom\r\r\n\r\nFGT-1 (vdom) $ ",
+			"edit ?":        vdomHelp,
+		},
+	}
+	if got, err := fortiOSVDOMs(t.Context(), sh); err != nil || len(got) != 3 {
+		t.Fatalf("fortiOSVDOMs() = %q, %v; want the list", got, err)
+	}
+}
+
+// TestFortiOSVDOMsInVDOMNamedVDOM checks that an account whose session
+// starts in a VDOM named "vdom", where "config vdom" fails but the prompt
+// still reads "(vdom)", is reported as having no VDOMs to reach, without
+// typing "edit ?".
+func TestFortiOSVDOMsInVDOMNamedVDOM(t *testing.T) {
+	sh := &fakeVDOMShell{
+		buf:     "FGT-1 (vdom) $ ",
+		replies: map[string]string{"config vdom\r": "config vdom\r\r\ncommand parse error before 'vdom'\r\nCommand fail. Return code -61\r\n\r\nFGT-1 (vdom) $ "},
+	}
+	if _, err := fortiOSVDOMs(t.Context(), sh); !errors.Is(err, errNoVDOMs) {
+		t.Fatalf("fortiOSVDOMs() error = %v, want errNoVDOMs", err)
+	}
+	if !slices.Equal(sh.sent, []string{"config vdom\r"}) {
+		t.Fatalf("sent %q, want nothing after config vdom", sh.sent)
+	}
+}
+
+// TestToolsRefuseVDOMWhereDetectionFoundNone checks that vdom on a FortiGate
+// detection found without VDOMs is refused without logging in again.
+func TestToolsRefuseVDOMWhereDetectionFoundNone(t *testing.T) {
+	for name, call := range vdomToolCalls {
+		t.Run(name, func(t *testing.T) {
+			resetDetection(t)
+			runProbe = (&fakeProbe{ident: identFortiOS, outputs: map[string]string{probeSystemStatus: fortiOSStatus(t, "disable", "root")}}).probe
+			stubRunInVDOM(t, "", nil)
+			orig := runInVDOM
+			runInVDOM = func(context.Context, sshclient.ConnConfig, string, []string) (string, error) {
+				t.Fatal("runInVDOM called")
+				return "", nil
+			}
+			t.Cleanup(func() { runInVDOM = orig })
+			err := call(t.Context(), "", "root")
+			if !errors.Is(err, errVDOMsDisabled) || !strings.Contains(err.Error(), "omit vdom") || strings.Contains(err.Error(), "auto-detected") {
+				t.Fatalf("error = %v, want errVDOMsDisabled telling to omit vdom, without notices", err)
+			}
+		})
+	}
+}
+
+func TestShowVerbDeviceTypes(t *testing.T) {
+	want := []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos}
+	if !slices.Equal(showVerbDeviceTypes, want) {
+		t.Fatalf("showVerbDeviceTypes = %v, want %v", showVerbDeviceTypes, want)
+	}
+	for _, dt := range showVerbDeviceTypes {
+		if _, err := normalizeOperationalCommand("show version", dt); err != nil {
+			t.Errorf("%s does not take 'show version': %v", dt, err)
 		}
 	}
 }
@@ -610,4 +679,39 @@ func TestStoreTypeDropsCurrentVDOM(t *testing.T) {
 	if !ok || r.vdomMode != "multiple" || r.currentVDOM != "" {
 		t.Fatalf("cachedType() = %+v, %v; want the VDOM mode kept and the current VDOM dropped", r, ok)
 	}
+}
+
+// TestFortigateListVDOMsDeviceType checks the optional device_type: fortios
+// skips detection, anything else is refused, and a device detected as
+// another platform gets a way out.
+func TestFortigateListVDOMsDeviceType(t *testing.T) {
+	t.Run("fortios skips detection", func(t *testing.T) {
+		resetDetection(t)
+		f := &fakeProbe{ident: identFortiOS}
+		runProbe = f.probe
+		calls := stubListVDOMs(t, vdomInfo{names: []string{"root"}}, nil)
+		if _, _, err := FortigateListVDOMs(t.Context(), nil, FortigateListVDOMsInput{Host: "fw1", Username: "u", DeviceType: "fortigate"}); err != nil {
+			t.Fatal(err)
+		}
+		if f.calls != 0 || len(*calls) != 1 {
+			t.Fatalf("probes = %d, listVDOMs calls = %d; want no probe and one listing", f.calls, len(*calls))
+		}
+	})
+	t.Run("other device_type", func(t *testing.T) {
+		resetDetection(t)
+		stubListVDOMs(t, vdomInfo{}, errors.New("listVDOMs called"))
+		_, _, err := FortigateListVDOMs(t.Context(), nil, FortigateListVDOMsInput{Host: "fw1", Username: "u", DeviceType: "eos"})
+		if err == nil || !strings.Contains(err.Error(), "can only be fortios") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+	t.Run("detected as another platform", func(t *testing.T) {
+		resetDetection(t)
+		runProbe = (&fakeProbe{ident: identEOS, outputs: map[string]string{probeShowVersion: readFixture(t, "eos_show_version.txt")}}).probe
+		stubListVDOMs(t, vdomInfo{}, errors.New("listVDOMs called"))
+		_, _, err := FortigateListVDOMs(t.Context(), nil, FortigateListVDOMsInput{Host: "sw1", Username: "u"})
+		if err == nil || !strings.Contains(err.Error(), "device_type=fortios") || !strings.Contains(err.Error(), "refresh=true") {
+			t.Fatalf("error = %v, want the way out", err)
+		}
+	})
 }

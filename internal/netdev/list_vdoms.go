@@ -17,6 +17,9 @@ type FortigateListVDOMsInput struct {
 	Host     string `json:"host"     jsonschema:"hostname or IP address of the FortiGate"`
 	Username string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port     int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
+	// DeviceType lets a FortiGate that detection misclassifies, or has cached
+	// as another type, be listed anyway.
+	DeviceType string `json:"device_type,omitempty" jsonschema:"optional: fortios (or fortigate) to skip platform detection, for a FortiGate that detection misclassifies or has cached as another type; no other value is accepted"`
 }
 
 // FortigateListVDOMs lists the VDOMs the account can reach on a FortiGate.
@@ -31,12 +34,16 @@ func FortigateListVDOMs(ctx context.Context, req *mcp.CallToolRequest, args Fort
 		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
 	}
 
-	cfg, rt, err := resolveTarget(ctx, args.Host, args.Port, args.Username, "")
+	cfg, rt, err := resolveTarget(ctx, args.Host, args.Port, args.Username, args.DeviceType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("fortigate_list_vdoms: %w", err)
 	}
 	if rt.dt != deviceTypeFortiOS {
-		return nil, nil, fmt.Errorf("fortigate_list_vdoms: %q is not a FortiGate: its device_type is %s", args.Host, rt.dt)
+		if rt.source == sourceExplicit {
+			return nil, nil, fmt.Errorf("fortigate_list_vdoms: device_type can only be fortios here, not %s", rt.dt)
+		}
+		return nil, nil, fmt.Errorf("fortigate_list_vdoms: %q was detected as %s, not a FortiGate; if it is one, "+
+			"pass device_type=fortios, or call detect_platform with refresh=true to detect it again", args.Host, rt.dt)
 	}
 
 	slog.Info("fortigate_list_vdoms", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging

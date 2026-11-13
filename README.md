@@ -343,6 +343,7 @@ that commands without `vdom` run there.
 | `host` | string | yes | — | Hostname or IP address of the FortiGate |
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
+| `device_type` | string | no | detected | Only `fortios`: skips detection if it gets a FortiGate wrong |
 
 Example result:
 

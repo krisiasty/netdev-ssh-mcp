@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -32,13 +33,19 @@ var (
 // runOn runs a tool's commands and returns their output ready to report. With
 // vdom, which checkVDOMName has accepted, they run in that VDOM (runInVDOM);
 // a vdom on any device type but fortios is refused here, so no tool can send
-// "config vdom" to another platform. Otherwise one command runs on its own
+// "config vdom" to another platform, and so is a vdom on a FortiGate that
+// detection found without VDOMs. Otherwise one command runs on its own
 // and several are sent together in one exec request, and the output goes
 // through deviceOutput.
-func runOn(ctx context.Context, cfg sshclient.ConnConfig, dt deviceType, vdom string, commands []string) (string, error) {
+func runOn(ctx context.Context, cfg sshclient.ConnConfig, rt resolvedType, vdom string, commands []string) (string, error) {
+	dt := rt.dt
 	if vdom != "" {
 		if dt != deviceTypeFortiOS {
 			return "", fmt.Errorf("%w, not %s", errVDOMNotApplicable, dt)
+		}
+		// Detection may already know there are none; then no login is needed.
+		if rt.vdomMode == "disable" {
+			return "", errVDOMsDisabled
 		}
 		return runInVDOM(ctx, cfg, vdom, commands)
 	}
@@ -172,6 +179,13 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 // allDeviceTypes lists every supported platform.
 var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos, deviceTypeFortiOS, deviceTypeCumulus4x}
 
+// showVerbDeviceTypes lists the platforms whose run_show_command commands
+// start with "show": every platform but FortiOS ("get") and Cumulus Linux
+// ("net show").
+var showVerbDeviceTypes = slices.DeleteFunc(slices.Clone(allDeviceTypes), func(dt deviceType) bool {
+	return dt == deviceTypeFortiOS || dt == deviceTypeCumulus4x
+})
+
 // checkCommandOnAnyPlatform rejects a run_show_command command that no
 // supported platform would accept, so it fails before detection logs in to
 // the device. The platform's own check still runs once the type is known.
@@ -193,7 +207,7 @@ func checkCommandOnAnyPlatform(command string) error {
 	// genuine FortiOS "show <path>" passes them too, as they check only the
 	// words, and FortiOS's own check runs once the type is known.
 	var firstErr error
-	for _, dt := range []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos} {
+	for _, dt := range showVerbDeviceTypes {
 		_, err := normalizeOperationalCommand(command, dt)
 		if err == nil {
 			return nil

@@ -181,8 +181,8 @@ func main() {
 			"and closes that session without entering anything else. To tell where sessions start, it then runs 'config global' and 'end' over exec, " +
 			"which changes nothing (an account without global scope gets an error), and, for an account limited to VDOMs, 'get system status' " +
 			"unless platform detection in the same call has just read it. " +
-			"The platform is auto-detected (and cached) first; a device that is not a FortiGate is refused, and one detected without VDOMs " +
-			"is answered without connecting again.",
+			"The platform is auto-detected (and cached) first, unless device_type=fortios is passed for a FortiGate that detection gets wrong; " +
+			"a device that is not a FortiGate is refused, and one detected without VDOMs is answered without connecting again.",
 	}, netdev.FortigateListVDOMs)
 
 	mcp.AddTool(server, &mcp.Tool{

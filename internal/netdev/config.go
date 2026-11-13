@@ -54,7 +54,7 @@ func GetConfig(ctx context.Context, req *mcp.CallToolRequest, args GetConfigInpu
 
 	slog.Info("get_config", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "config_type", configType) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
-	out, err := runOn(ctx, cfg, rt.dt, args.VDOM, []string{cmd})
+	out, err := runOn(ctx, cfg, rt, args.VDOM, []string{cmd})
 	if err != nil {
 		logFailure(ctx, "get_config", err, "host", args.Host)
 		return nil, nil, runError(ctx, "get_config", cfg, rt, err)

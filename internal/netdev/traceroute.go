@@ -72,7 +72,7 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 	slog.Info("run_traceroute", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "cmd", sanitizeLog(commandLog)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
 	cfg.CommandTimeout = longCommandTimeout
-	out, err := runOn(ctx, cfg, rt.dt, args.VDOM, commands)
+	out, err := runOn(ctx, cfg, rt, args.VDOM, commands)
 	if err != nil {
 		logFailure(ctx, "run_traceroute", err, "host", args.Host, "destination", args.Destination)
 		return nil, nil, runError(ctx, "run_traceroute", cfg, rt, cumulusNetError(rt.dt, err))

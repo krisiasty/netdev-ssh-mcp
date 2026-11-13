@@ -59,7 +59,7 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 
 	slog.Info("run_show_command", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "command", sanitizeLog(command)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
-	out, err := runOn(ctx, cfg, rt.dt, args.VDOM, []string{command})
+	out, err := runOn(ctx, cfg, rt, args.VDOM, []string{command})
 	if err != nil {
 		logFailure(ctx, "run_show_command", err, "host", args.Host, "command", command)
 		return nil, nil, runError(ctx, "run_show_command", cfg, rt, err)
