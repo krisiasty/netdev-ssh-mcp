@@ -170,9 +170,10 @@ every word must contain only letters, digits and `. _ : / , @ %` and `-`, no wor
 separated by spaces. The server appends `2>&1` itself so that error messages are returned.
 
 On the other platforms, the command must be a single line holding a single command (no `;`), must start with the
-verb in lower case (`show`, or `get` or `show` on FortiOS), and may not use `<` or `>` redirection. Words are separated by
-spaces, and every word may contain only letters, digits and `. _ : / , @ % + = ^ $ -`, so quotes, brackets, braces,
-globs and other shell syntax are refused. `^` and `$` are there for regexes such as `show ip bgp regexp ^65000_`.
+verb in lower case (`show`, or `get` or `show` on FortiOS), and may not use `<` or `>` redirection. Words are
+separated by spaces, and every word may contain only letters, digits and `. _ : / , @ % + = ^ $ -`, so quotes,
+brackets, braces, globs and other shell syntax are refused. `^` and `$` are there for regexes such as
+`show ip bgp regexp ^65000_`.
 
 After `|` (with or without spaces around it), only the filters below are accepted, written exactly as shown, in lower
 case. `W` is one plain word: letters, digits and `. _ : / , @ % + = -`, not starting with `-`. `N` is a number of up
