@@ -51,6 +51,14 @@ func detectPlatformReport(rt resolvedType) string {
 	if rt.version != "" {
 		fmt.Fprintf(&b, "version: %s (reported by the device)\n", rt.version)
 	}
+	switch rt.vdomMode {
+	case "":
+	case "disable":
+		b.WriteString("vdoms: disable (reported by the device)\n")
+	default:
+		fmt.Fprintf(&b, "vdoms: %s (reported by the device); call fortigate_list_vdoms for the VDOMs this account can reach, "+
+			"and pass one as vdom to get_config, run_show_command, run_ping or run_traceroute\n", rt.vdomMode)
+	}
 	if rt.serverVersion != "" {
 		fmt.Fprintf(&b, "ssh_server: %s (reported by the device)\n", rt.serverVersion)
 	}

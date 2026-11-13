@@ -57,6 +57,10 @@ type resolvedType struct {
 	// The fields below are set only for detected types and are sanitized.
 	serverVersion string
 	version       string
+	// vdomMode is the FortiOS "Virtual domain configuration", such as
+	// "multiple" or "disable". It describes the device, not the account,
+	// so it can be cached per host; the VDOM a session starts in cannot.
+	vdomMode string
 }
 
 // identClass groups SSH identification strings by what they reveal.
@@ -228,6 +232,18 @@ func extractVersion(dt deviceType, output string) string {
 	return ""
 }
 
+// extractVDOMMode returns the FortiOS "Virtual domain configuration" from
+// the probe output, or "" on other platforms or when it is missing.
+func extractVDOMMode(dt deviceType, output string) string {
+	if dt != deviceTypeFortiOS {
+		return ""
+	}
+	if m := vdomConfigRe.FindStringSubmatch(output); m != nil {
+		return displayValue(m[1])
+	}
+	return ""
+}
+
 // displayValue makes a device-supplied value safe to echo back: control
 // characters are removed and the length is capped.
 func displayValue(s string) string {
@@ -337,6 +353,7 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 		source:        sourceProbe,
 		serverVersion: displayValue(res.ServerVersion),
 		version:       extractVersion(dt, res.Output),
+		vdomMode:      extractVDOMMode(dt, res.Output),
 	}
 	storeType(key, r)
 	slog.Info("platform detected", "host", sanitizeLog(cfg.Host), "device_type", string(dt), "ssh_server", r.serverVersion) //nolint:gosec // G706: values are sanitized before logging

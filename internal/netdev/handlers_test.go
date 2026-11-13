@@ -361,6 +361,10 @@ func TestDetectPlatform(t *testing.T) {
 		}
 	}
 
+	if strings.Contains(text, "vdoms:") {
+		t.Errorf("report on junos mentions VDOMs:\n%s", text)
+	}
+
 	res, _, err = DetectPlatform(context.Background(), nil, DetectPlatformInput{Host: "r1", Username: "u"})
 	if err != nil || !strings.Contains(strings.Join(contentTexts(res.Content), "\n"), "cached by this server") || f.calls != 1 {
 		t.Fatalf("second DetectPlatform() = %v, probes = %d; want a cached report", err, f.calls)
@@ -368,6 +372,46 @@ func TestDetectPlatform(t *testing.T) {
 
 	if _, _, err = DetectPlatform(context.Background(), nil, DetectPlatformInput{Host: "r1", Username: "u", Refresh: true}); err != nil || f.calls != 2 {
 		t.Fatalf("refresh DetectPlatform() = %v, probes = %d; want a new probe", err, f.calls)
+	}
+}
+
+// TestDetectPlatformReportsVDOMs checks that a FortiGate's VDOM mode is
+// reported, also from the cache, and that one using VDOMs points at
+// fortigate_list_vdoms. The probe output starts with the CLI prompt, as
+// FortiOS writes it in an exec session.
+func TestDetectPlatformReportsVDOMs(t *testing.T) {
+	status := readFixture(t, "fortios_get_system_status.txt")
+	if !strings.Contains(status, "Virtual domain configuration: disable\n") {
+		t.Fatal("fixture no longer has the line this test edits")
+	}
+	tests := []struct {
+		mode, want string
+		pointer    bool
+	}{
+		{"disable", "vdoms: disable (reported by the device)", false},
+		{"multiple", "vdoms: multiple (reported by the device)", true},
+		{"split-vdom", "vdoms: split-vdom (reported by the device)", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			resetDetection(t)
+			out := "FGT-1 $ " + strings.Replace(status, "configuration: disable", "configuration: "+tt.mode, 1) + "\nFGT-1 $ "
+			f := &fakeProbe{ident: identFortiOS, outputs: map[string]string{probeSystemStatus: out}}
+			runProbe = f.probe
+			for _, round := range []string{"probed", "cached"} {
+				res, _, err := DetectPlatform(t.Context(), nil, DetectPlatformInput{Host: "fw1", Username: "u"})
+				if err != nil {
+					t.Fatalf("%s: DetectPlatform() error = %v", round, err)
+				}
+				text := strings.Join(contentTexts(res.Content), "\n")
+				if !strings.Contains(text, tt.want) || strings.Contains(text, "fortigate_list_vdoms") != tt.pointer {
+					t.Fatalf("%s: report =\n%s\nwant %q, pointer to fortigate_list_vdoms: %v", round, text, tt.want, tt.pointer)
+				}
+			}
+			if f.calls != 1 {
+				t.Fatalf("probes = %d, want one and then the cache", f.calls)
+			}
+		})
 	}
 }
 

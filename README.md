@@ -297,7 +297,10 @@ FortiOS limitations:
 ### `detect_platform`
 
 Identifies a device's platform and returns the `device_type` to pass to the other tools, using the same probe and
-cache as [Platform detection](#platform-detection). Useful before working through a list of hosts.
+cache as [Platform detection](#platform-detection). Useful before working through a list of hosts. On FortiOS it also
+reports whether the FortiGate uses VDOMs (`vdoms: multiple`, or `vdoms: disable`), from the same `get system status`;
+when it does, the line points at [`fortigate_list_vdoms`](#fortigate_list_vdoms) and the `vdom` parameter. The VDOM a
+session starts in depends on the account, so it is not part of the cached detection; `fortigate_list_vdoms` reports it.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |

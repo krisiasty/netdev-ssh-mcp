@@ -186,6 +186,7 @@ func main() {
 			"(eos, ios, nxos, junos, fortios or cumulus4x) and a short software version. Detection reads the SSH server identification and runs " +
 			"one read-only command ('show version', 'get system status' on FortiOS, or 'cat /etc/os-release' on Debian or Ubuntu based systems). Results are cached by this server per host; " +
 			"set refresh=true to probe again. Use it to resolve a list of hosts before working through them. " +
+			"On FortiOS it also reports whether the FortiGate uses VDOMs ('vdoms: multiple'), pointing at fortigate_list_vdoms. " +
 			"Cumulus Linux 5.x, other Linux systems and the Cisco Business switch OS (e.g. Catalyst 1200) are recognised and reported as unsupported.",
 	}, netdev.DetectPlatform)
 
