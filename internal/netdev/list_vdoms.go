@@ -51,7 +51,9 @@ func FortigateListVDOMs(ctx context.Context, req *mcp.CallToolRequest, args Fort
 	info, err := listVDOMs(ctx, cfg, rt)
 	if err != nil {
 		logFailure(ctx, "fortigate_list_vdoms", err, "host", args.Host)
-		return nil, nil, runError(ctx, "fortigate_list_vdoms", cfg, rt, err)
+		// Not runError: this tool has no device_type to suggest, and its
+		// errors say nothing about whether detection was right.
+		return nil, nil, fmt.Errorf("fortigate_list_vdoms: %w", err)
 	}
 	slog.Info("fortigate_list_vdoms done", "host", args.Host, "vdoms", len(info.names))
 	return &mcp.CallToolResult{

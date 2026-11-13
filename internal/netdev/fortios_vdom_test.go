@@ -527,3 +527,87 @@ func TestVDOMReportWithoutVDOMs(t *testing.T) {
 		t.Fatalf("vdomReport() = %q", got)
 	}
 }
+
+// TestCheckCommandOnAnyPlatformShowRunningConfig checks that accepting
+// FortiOS "show <path>" did not let through, before detection connects, the
+// commands every "show" platform sends to get_config.
+func TestCheckCommandOnAnyPlatformShowRunningConfig(t *testing.T) {
+	for _, command := range []string{"show running-config", "show run", "show startup-config", "show running-config | include hostname"} {
+		if err := checkCommandOnAnyPlatform(command); err == nil || !strings.Contains(err.Error(), "get_config") {
+			t.Errorf("checkCommandOnAnyPlatform(%q) = %v, want the get_config redirect", command, err)
+		}
+	}
+	for _, command := range []string{"show firewall service custom VersityGW-S3", "show router static | grep 10.0.0.0", "show full-configuration system interface"} {
+		if err := checkCommandOnAnyPlatform(command); err != nil {
+			t.Errorf("checkCommandOnAnyPlatform(%q) = %v, want a FortiOS show with a path accepted", command, err)
+		}
+	}
+}
+
+func TestRequireFortiOSServer(t *testing.T) {
+	for _, ident := range []string{identFortiOS, identFortiSSH} {
+		if err := requireFortiOSServer(ident); err != nil {
+			t.Errorf("requireFortiOSServer(%q) = %v", ident, err)
+		}
+	}
+	for _, ident := range []string{identEOS, identIOS, identNXOS, identJunos, identCumulus, identUbuntu} {
+		if err := requireFortiOSServer(ident); !errors.Is(err, errUnsupportedPlatform) || !strings.Contains(err.Error(), "check device_type") {
+			t.Errorf("requireFortiOSServer(%q) = %v, want an unsupported platform pointing at device_type", ident, err)
+		}
+	}
+}
+
+// TestFortiOSVDOMOutputClosingPrompt checks that the prompt after "end" is
+// removed even when it is not the one the session started at.
+func TestFortiOSVDOMOutputClosingPrompt(t *testing.T) {
+	for name, in := range map[string]string{
+		"start prompt with a context": "FGT (root) $ \nFGT (vdom) $ current vf=vd1:3\n\nFGT (vd1) $ out\n\nFGT (vd1) $ \nFGT $ ",
+		"closing prompt redrawn":      "FGT $ \nFGT (vdom) $ current vf=vd1:3\n\nFGT (vd1) $ out\n\nFGT (vd1) $ \nFGT $ \n",
+		"no prompt after end":         "FGT $ \nFGT (vdom) $ current vf=vd1:3\n\nFGT (vd1) $ out\n\nFGT (vd1) $ ",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got, err := fortiOSVDOMOutput(in, "vd1"); err != nil || got != "out\n" {
+				t.Fatalf("fortiOSVDOMOutput() = %q, %v; want %q", got, err, "out\n")
+			}
+		})
+	}
+}
+
+// TestUnconfirmedVDOMHasNoNotice checks that a VDOM switch FortiOS did not
+// confirm is reported without detection notices.
+func TestUnconfirmedVDOMHasNoNotice(t *testing.T) {
+	resetDetection(t)
+	runProbe = (&fakeProbe{ident: identFortiOS, outputs: map[string]string{probeSystemStatus: fortiOSStatus(t, "multiple", "ads_mgmt")}}).probe
+	stubRunInVDOM(t, "", fmt.Errorf("%w (vdom %q)", errVDOMNotConfirmed, "openstack"))
+	_, _, err := RunShowCommand(t.Context(), nil, RunShowCommandInput{Host: "fw1", Username: "u", Command: "get system status", VDOM: "openstack"})
+	if !errors.Is(err, errVDOMNotConfirmed) || strings.Contains(err.Error(), "auto-detected") {
+		t.Fatalf("error = %v; want the unconfirmed switch without the detection notice", err)
+	}
+}
+
+// TestFortigateListVDOMsErrors checks that a failed listing suggests no
+// device_type, which the tool does not take, and keeps the detection.
+func TestFortigateListVDOMsErrors(t *testing.T) {
+	resetDetection(t)
+	f := &fakeProbe{ident: identFortiOS, outputs: map[string]string{probeSystemStatus: fortiOSStatus(t, "multiple", "ads_mgmt")}}
+	runProbe = f.probe
+	stubListVDOMs(t, vdomInfo{}, &sshclient.CommandError{Command: "get system status", Output: []byte("8826: Unknown action 0\nCommand fail. Return code -1\n")})
+	for range 2 {
+		_, _, err := FortigateListVDOMs(t.Context(), nil, FortigateListVDOMsInput{Host: "fw1", Username: "u"})
+		if err == nil || strings.Contains(err.Error(), "device_type") {
+			t.Fatalf("error = %v; want the failure without a device_type suggestion", err)
+		}
+	}
+	if f.calls != 1 {
+		t.Fatalf("probes = %d, want 1: a failed listing must not drop the detection", f.calls)
+	}
+}
+
+func TestStoreTypeDropsCurrentVDOM(t *testing.T) {
+	resetDetection(t)
+	storeType("fw1:22", resolvedType{dt: deviceTypeFortiOS, source: sourceProbe, vdomMode: "multiple", currentVDOM: "ads_mgmt"})
+	r, ok := cachedType("fw1:22")
+	if !ok || r.vdomMode != "multiple" || r.currentVDOM != "" {
+		t.Fatalf("cachedType() = %+v, %v; want the VDOM mode kept and the current VDOM dropped", r, ok)
+	}
+}

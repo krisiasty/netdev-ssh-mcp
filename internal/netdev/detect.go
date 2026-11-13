@@ -237,13 +237,10 @@ func extractVersion(dt deviceType, output string) string {
 }
 
 // fortiOSStatusField returns the value re captures from FortiOS "get system
-// status" output, made safe to echo back, or "" on other platforms or when
-// the field is missing. vdomConfigRe gives the "Virtual domain
-// configuration", currentVDOMRe the "Current virtual domain".
-func fortiOSStatusField(dt deviceType, re *regexp.Regexp, output string) string {
-	if dt != deviceTypeFortiOS {
-		return ""
-	}
+// status" output, made safe to echo back, or "" when the field is missing.
+// vdomConfigRe gives the "Virtual domain configuration", currentVDOMRe the
+// "Current virtual domain".
+func fortiOSStatusField(re *regexp.Regexp, output string) string {
 	if m := re.FindStringSubmatch(output); m != nil {
 		return displayValue(m[1])
 	}
@@ -295,6 +292,7 @@ func cachedType(key string) (resolvedType, bool) {
 }
 
 func storeType(key string, r resolvedType) {
+	r.currentVDOM = "" // depends on the account, so it is never cached
 	detectCache.Lock()
 	defer detectCache.Unlock()
 	detectCache.m[key] = cacheEntry{r: r, expires: now().Add(detectCacheTTL)}
@@ -359,11 +357,14 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 		source:        sourceProbe,
 		serverVersion: displayValue(res.ServerVersion),
 		version:       extractVersion(dt, res.Output),
-		vdomMode:      fortiOSStatusField(dt, vdomConfigRe, res.Output),
+	}
+	if dt == deviceTypeFortiOS {
+		r.vdomMode = fortiOSStatusField(vdomConfigRe, res.Output)
+		// For this call only: storeType drops it, as it depends on the
+		// account.
+		r.currentVDOM = fortiOSStatusField(currentVDOMRe, res.Output)
 	}
 	storeType(key, r)
-	// For this call only, not the cache: it depends on the account.
-	r.currentVDOM = fortiOSStatusField(dt, currentVDOMRe, res.Output)
 	slog.Info("platform detected", "host", sanitizeLog(cfg.Host), "device_type", string(dt), "ssh_server", r.serverVersion) //nolint:gosec // G706: values are sanitized before logging
 	return r, nil
 }
@@ -549,8 +550,10 @@ func answerError(err error) bool {
 // runError wraps a failed command, adding the same notice afterRun would
 // have appended to a successful result.
 func runError(ctx context.Context, tool string, cfg sshclient.ConnConfig, r resolvedType, err error) error {
-	if requestCancelled(ctx) || answerError(err) {
-		// The caller has gone, or the error answers the call: a detection
+	if requestCancelled(ctx) || answerError(err) || errors.Is(err, errVDOMNotConfirmed) {
+		// The caller has gone, the error answers the call, or FortiOS did
+		// not confirm a VDOM switch (logged as a failure, as the tools'
+		// reading of FortiOS no longer matches the device): a detection
 		// notice or hint means nothing.
 		return fmt.Errorf("%s: %w", tool, err)
 	}

@@ -248,16 +248,43 @@ func vdomCommand(vdom string, commands []string) string {
 // returns the commands' output without the prompts, and refuses output that
 // FortiOS paged, as fortiOSOutput does.
 func fortiOSVDOMOutput(out, vdom string) (string, error) {
-	q := regexp.QuoteMeta(vdom)
-	re := regexp.MustCompile(`\A(` + fortiOSPromptPattern + `)\n?` + fortiOSContextPromptPattern("vdom") +
-		`current vf=` + q + `:\d+\n+(` + fortiOSContextPromptPattern(q) + `)`)
-	m := re.FindStringSubmatchIndex(out)
-	if m == nil {
+	m := fortiOSVDOMSwitchRe.FindStringSubmatchIndex(out)
+	if m == nil || out[m[2]:m[3]] != vdom || out[m[6]:m[7]] != vdom {
 		return "", fmt.Errorf("%w (vdom %q)", errVDOMNotConfirmed, vdom)
 	}
-	startPrompt, vdomPrompt := out[m[2]:m[3]], out[m[4]:m[5]]
-	rest := strings.TrimSuffix(out[m[1]:], startPrompt)
+	vdomPrompt, rest := out[m[4]:m[5]], out[m[1]:]
+	// The prompt after "end" may differ from the one the session started
+	// at, so whichever prompt ends the output goes.
+	if loc := fortiOSClosingPromptRe.FindStringIndex(rest); loc != nil {
+		rest = rest[:loc[0]+1]
+	}
 	return fortiOSOutput(vdomPrompt + rest)
+}
+
+var (
+	// fortiOSVDOMSwitchRe matches the start of vdomCommand's output, up to
+	// the prompt the first command's output follows. It captures the VDOM
+	// named in "current vf=", that prompt, and the VDOM the prompt names,
+	// which fortiOSVDOMOutput compares with the one asked for.
+	fortiOSVDOMSwitchRe = regexp.MustCompile(`\A` + fortiOSPromptPattern + `\n?` + fortiOSContextPromptPattern("vdom") +
+		`current vf=([\w-]+):\d+\n+(` + fortiOSHostnamePattern + ` \(([\w-]+)\) [#$] )`)
+	// fortiOSClosingPromptRe matches the prompt that ends vdomCommand's
+	// output, after "end", in whatever context.
+	fortiOSClosingPromptRe = regexp.MustCompile(`\n` + fortiOSPromptPattern + `\s*\z`)
+)
+
+// requireFortiOSServer is the CheckServerVersion for the VDOM paths, which
+// type into an interactive FortiOS CLI. FortiOS identifies its SSH server
+// with a random token, or as FortiSSH on older releases; anything else is
+// refused before a session opens, so a device_type wrongly given as fortios
+// never has "config vdom" typed into another CLI or a long wait for a
+// FortiOS prompt.
+func requireFortiOSServer(serverVersion string) error {
+	if classifyIdent(serverVersion) != identObfuscated {
+		return fmt.Errorf("%w: it identifies as %q, not as a FortiGate; vdom works only on FortiOS, so check device_type",
+			errUnsupportedPlatform, displayValue(serverVersion))
+	}
+	return nil
 }
 
 // listVDOMsOn lists the VDOMs over a shell on conn, and closes the shell.
@@ -278,6 +305,7 @@ var runInVDOM = fortiOSRunInVDOM
 // refuses vdom unless it is one of them, and only then runs commands in it
 // over exec, all on one connection.
 func fortiOSRunInVDOM(ctx context.Context, cfg sshclient.ConnConfig, vdom string, commands []string) (string, error) {
+	cfg.CheckServerVersion = requireFortiOSServer
 	conn, err := sshclient.Connect(ctx, cfg)
 	if err != nil {
 		return "", err
@@ -332,6 +360,7 @@ const fortiOSScopeCommand = "config global\nend"
 // this call detected the platform, so "get system status" does not run
 // twice.
 func fortiOSListVDOMs(ctx context.Context, cfg sshclient.ConnConfig, rt resolvedType) (vdomInfo, error) {
+	cfg.CheckServerVersion = requireFortiOSServer
 	conn, err := sshclient.Connect(ctx, cfg)
 	if err != nil {
 		return vdomInfo{}, err
@@ -356,14 +385,14 @@ func fortiOSListVDOMs(ctx context.Context, cfg sshclient.ConnConfig, rt resolved
 		return info, nil
 	}
 	if info.current = rt.currentVDOM; info.current == "" {
-		status, err := conn.Run(ctx, "get system status")
+		status, err := conn.Run(ctx, probeSystemStatus)
 		if err != nil {
 			return vdomInfo{}, err
 		}
 		if status, err = fortiOSOutput(status); err != nil {
 			return vdomInfo{}, err
 		}
-		info.current = fortiOSStatusField(deviceTypeFortiOS, currentVDOMRe, status)
+		info.current = fortiOSStatusField(currentVDOMRe, status)
 	}
 	return info, nil
 }

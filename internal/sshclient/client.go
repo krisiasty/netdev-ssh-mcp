@@ -264,20 +264,22 @@ type ProbeResult struct {
 // returns "", Probe runs nothing. Cancelling ctx closes the connection and
 // returns ctx's error.
 func Probe(ctx context.Context, cfg ConnConfig, choose func(serverVersion string) (string, *Terminal, error)) (ProbeResult, error) {
-	client, addr, err := dial(ctx, cfg)
+	// Probe hands the server's identification to choose instead.
+	cfg.CheckServerVersion = nil
+	conn, err := Connect(ctx, cfg)
 	if err != nil {
 		return ProbeResult{}, err
 	}
-	defer func() { _ = client.Close() }()
+	defer func() { _ = conn.Close() }()
 
-	res := ProbeResult{ServerVersion: string(client.ServerVersion())}
+	res := ProbeResult{ServerVersion: string(conn.client.ServerVersion())}
 	cmd, term, err := choose(res.ServerVersion)
 	if err != nil || cmd == "" {
 		return res, err
 	}
 	res.Command = cmd
 
-	out, err := runOnClient(ctx, client, addr, cmd, term, commandTimeout())
+	out, err := runOnClient(ctx, conn.client, conn.addr, cmd, term, commandTimeout())
 	res.Output = out
 	var exitErr *gossh.ExitError
 	if err != nil && !errors.As(err, &exitErr) {

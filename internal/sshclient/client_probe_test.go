@@ -383,3 +383,15 @@ func TestCheckServerVersionAccepts(t *testing.T) {
 		t.Fatalf("RunCommand() = %q, %v, check saw %q", out, err, seen)
 	}
 }
+
+// TestProbeIgnoresCheckServerVersion checks that Probe hands the server's
+// identification to choose rather than to cfg.CheckServerVersion.
+func TestProbeIgnoresCheckServerVersion(t *testing.T) {
+	s := startTestServer(t, "SSH-2.0-OpenSSH_9.6", map[string]testReply{"show version": {output: "ok\n"}})
+	cfg := useTestServer(t, s, 5*time.Second)
+	cfg.CheckServerVersion = func(string) error { return errors.New("refused") }
+	res, err := Probe(t.Context(), cfg, func(string) (string, *Terminal, error) { return "show version", nil, nil })
+	if err != nil || res.Output != "ok\n" {
+		t.Fatalf("Probe() = %+v, %v; want the command run", res, err)
+	}
+}

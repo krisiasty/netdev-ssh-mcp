@@ -368,7 +368,9 @@ account that may create VDOMs, `edit` with a name that does not exist creates on
 1. The name may only contain letters, digits, `-` and `_`; anything else is refused before connecting.
 2. On the same SSH connection, the tool lists the VDOMs this account can reach, exactly as `fortigate_list_vdoms`
    does. FortiOS lists them only in an interactive CLI, so the tool opens one, enters `config vdom`, types `edit ?`
-   without Enter, reads the names, and closes the session, which discards the typed `edit`. If the FortiGate asks to
+   without Enter, reads the names, and closes the session, which discards the typed `edit`. Before anything is typed,
+   the SSH server must identify as FortiOS (a random token, or `FortiSSH` on older releases); a device given
+   `device_type=fortios` by mistake is refused instead. If the FortiGate asks to
    accept a post-login banner first, the tool stops with an error instead of accepting it for the user.
 3. A name that is not on that list is refused, with up to three close names suggested (for a typo or different case)
    and a pointer to `fortigate_list_vdoms`. The tool never substitutes a suggestion.

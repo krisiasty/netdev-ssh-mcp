@@ -177,8 +177,7 @@ var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, 
 // the device. The platform's own check still runs once the type is known.
 func checkCommandOnAnyPlatform(command string) error {
 	// Only Cumulus commands start with "net", and only FortiOS commands with
-	// "get"; that platform's error is the useful one. A "show" command is
-	// tried on every platform, FortiOS included.
+	// "get"; that platform's error is the useful one.
 	first, _, _ := strings.Cut(strings.TrimSpace(command), " ")
 	switch {
 	case first == "net":
@@ -188,8 +187,13 @@ func checkCommandOnAnyPlatform(command string) error {
 		_, err := normalizeOperationalCommand(command, deviceTypeFortiOS)
 		return err
 	}
+	// Everything else is checked against the platforms whose verb is
+	// "show". FortiOS also takes "show <path>", and would let through what
+	// all of them send to get_config, such as "show running-config"; a
+	// genuine FortiOS "show <path>" passes them too, as they check only the
+	// words, and FortiOS's own check runs once the type is known.
 	var firstErr error
-	for _, dt := range allDeviceTypes {
+	for _, dt := range []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos} {
 		_, err := normalizeOperationalCommand(command, dt)
 		if err == nil {
 			return nil
