@@ -455,6 +455,7 @@ func TestNormalizeOperationalCommandRequiresLowerCaseVerb(t *testing.T) {
 		{deviceTypeJunos, "Show version", "lower case"},
 		{deviceTypeFortiOS, "GET http://192.0.2.1/ | grep x", "lower case"},
 		{deviceTypeFortiOS, "Get system status", "lower case"},
+		{deviceTypeFortiOS, "SHOW system interface", "lower case"},
 		// FortiOS still routes the other lower-case verbs to their tools.
 		{deviceTypeFortiOS, "show full-configuration", "get_config"},
 		{deviceTypeFortiOS, "config system admin", "configuration mode"},

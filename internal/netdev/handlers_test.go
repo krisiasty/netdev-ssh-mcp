@@ -233,7 +233,7 @@ func TestHandlersExplicitDeviceTypeSyntaxErrorHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetConfig() error = %v", err)
 	}
-	if texts := contentTexts(res.Content); len(texts) != 2 || !strings.Contains(texts[1], "omit device_type to auto-detect") {
+	if texts := contentTexts(res.Content); len(texts) != 2 || !strings.Contains(texts[1], "may not be valid on eos") || !strings.Contains(texts[1], "omit device_type to auto-detect") {
 		t.Fatalf("content = %q, want the output followed by the hint", texts)
 	}
 }

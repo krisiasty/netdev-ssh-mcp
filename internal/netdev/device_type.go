@@ -173,7 +173,8 @@ var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, 
 // the device. The platform's own check still runs once the type is known.
 func checkCommandOnAnyPlatform(command string) error {
 	// Only Cumulus commands start with "net", and only FortiOS commands with
-	// "get"; that platform's error is the useful one.
+	// "get"; that platform's error is the useful one. A "show" command is
+	// tried on every platform, FortiOS included.
 	first, _, _ := strings.Cut(strings.TrimSpace(command), " ")
 	switch {
 	case first == "net":
@@ -235,10 +236,14 @@ func normalizeOperationalCommand(command string, dt deviceType) (string, error) 
 	return trimmed, nil
 }
 
+// normalizeFortiOSOperationalCommand accepts "get" commands and "show" of
+// part of the configuration on FortiOS. Both only read; the whole
+// configuration is get_config's job, and configuration mode, execute and
+// diagnose are refused or sent to their tools.
 func normalizeFortiOSOperationalCommand(command, lower string) (string, error) {
 	switch {
-	case strings.HasPrefix(lower, "show full-configuration"), strings.HasPrefix(lower, "show"):
-		return "", fmt.Errorf("use the get_config tool to retrieve FortiOS configuration")
+	case lower == "show" || strings.HasPrefix(lower, "show ") || strings.HasPrefix(lower, "show|"):
+		return normalizeFortiOSShow(command)
 	case strings.HasPrefix(lower, "config"):
 		return "", fmt.Errorf("FortiOS configuration mode is not supported here; use get_config to retrieve configuration")
 	case strings.HasPrefix(lower, "execute ping"), strings.HasPrefix(lower, "execute traceroute"):
@@ -248,10 +253,32 @@ func normalizeFortiOSOperationalCommand(command, lower string) (string, error) {
 	case strings.HasPrefix(lower, "diagnose"):
 		return "", fmt.Errorf("FortiOS diagnose commands are not supported by run_show_command")
 	case !strings.HasPrefix(lower, "get"):
-		return "", fmt.Errorf("FortiOS operational reads must use a 'get' command")
+		return "", fmt.Errorf("FortiOS reads must use a 'get' command, or 'show' with a configuration path")
 	}
 	if err := checkOperationalCommand(command, "get", deviceTypeFortiOS); err != nil {
 		return "", err
+	}
+	return command, nil
+}
+
+// errFortiOSWholeConfig redirects a "show" without a path to get_config.
+var errFortiOSWholeConfig = fmt.Errorf("use the get_config tool to retrieve the whole FortiOS configuration; " +
+	"run_show_command takes 'show' or 'show full-configuration' only with a path, such as 'show firewall service custom' or 'show router static'")
+
+// normalizeFortiOSShow accepts "show <path> [entry]" and "show
+// full-configuration <path> [entry]", which print that part of the
+// configuration, with the same word and filter rules as "get". Without a
+// path they print all of it, which get_config retrieves.
+func normalizeFortiOSShow(command string) (string, error) {
+	if err := checkOperationalCommand(command, "show", deviceTypeFortiOS); err != nil {
+		return "", err
+	}
+	path := spaceSeparated(strings.Split(command, "|")[0])[1:]
+	if len(path) > 0 && strings.EqualFold(path[0], "full-configuration") {
+		path = path[1:]
+	}
+	if len(path) == 0 {
+		return "", errFortiOSWholeConfig
 	}
 	return command, nil
 }

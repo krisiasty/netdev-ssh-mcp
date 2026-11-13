@@ -112,15 +112,17 @@ func main() {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_show_command",
 		Description: "Connect to an Arista, Cisco Nexus, Cisco IOS/IOS-XE, Juniper JunOS, FortiGate FortiOS, or Cumulus Linux 4.x device via SSH and run an operational read command. " +
-			"Arista/Cisco/JunOS commands must start with 'show'. FortiOS commands must start with 'get'. Cumulus Linux 4.x commands must start with 'net show'. " +
+			"Arista/Cisco/JunOS commands must start with 'show'. FortiOS commands must start with 'get', or be 'show <path> [entry]' or " +
+			"'show full-configuration <path> [entry]' for part of the configuration (for example 'show firewall service custom NAME'). " +
+			"Cumulus Linux 4.x commands must start with 'net show'. " +
 			deviceTypeGuidance +
 			"Running-config and startup-config are not allowed here — use the get_config tool instead. " +
 			"On JunOS, 'show configuration' is also blocked and redirected to get_config. " +
-			"For FortiOS, 'show', 'config', 'execute', and 'diagnose' commands are blocked here. " +
+			"For FortiOS, 'show' and 'show full-configuration' without a path, 'config', 'execute', and 'diagnose' commands are blocked here. " +
 			"On Cumulus Linux 4.x, 'net show configuration', 'net show commit' and 'net show rollback' (or any abbreviation of them) are blocked and redirected to get_config, " +
 			"the command may end with 'json' for structured output, takes no pipes or redirection, and its words may contain only " +
 			"letters, digits and . _ : / , @ % -. " +
-			"On the other platforms the command must be a single line holding one command, start with the verb in lower case ('show', or 'get' on FortiOS), " +
+			"On the other platforms the command must be a single line holding one command, start with the verb in lower case ('show', or 'get' or 'show' on FortiOS), " +
 			"and have no ';' or '<'/'>' redirection; its words may contain only letters, digits and . _ : / , @ % + = ^ $ -. " +
 			"It may pipe only into these filters, written exactly in lower case, where N is a number of up to 6 digits and W is one plain word: " +
 			"letters, digits and . _ : / , @ % + = -, not starting with '-'. Filters per device_type: " +

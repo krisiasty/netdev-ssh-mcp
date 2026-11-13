@@ -470,10 +470,13 @@ func detectedNotice(r resolvedType) string {
 	}
 }
 
-// explicitTypeHint suggests detection when a command the caller typed for an
-// explicit device_type was rejected as invalid syntax.
+// explicitTypeHint explains a command the caller typed for an explicit
+// device_type that the device rejected as invalid syntax. Usually the
+// command is wrong for that platform, so that comes first; a wrong
+// device_type is the less likely cause.
 func explicitTypeHint(r resolvedType) string {
-	return fmt.Sprintf("The device rejected the command syntax. If device_type=%s is not this device's platform, omit device_type to auto-detect it, or call detect_platform.", r.dt)
+	return fmt.Sprintf("The device rejected the command syntax: the command, or its arguments, may not be valid on %s in this form. "+
+		"If device_type=%s is not this device's platform, omit device_type to auto-detect it, or call detect_platform.", r.dt, r.dt)
 }
 
 // detectedRejectedNotice explains a rejected command after detection: the

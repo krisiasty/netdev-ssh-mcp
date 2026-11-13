@@ -124,7 +124,9 @@ Cumulus Linux notes:
 
 Runs operational read commands on a network device and returns the output.
 For Arista/Cisco/JunOS, the command must start with `show`. For FortiOS, the
-command must start with `get`. For Cumulus Linux 4.x, the command must start with `net show`. Append
+command must start with `get`, or be `show <path> [entry]` or `show full-configuration <path> [entry]` for part of the
+configuration (for example `show firewall service custom NAME`). For Cumulus Linux 4.x, the command must start with
+`net show`. Append
 `| json` for structured output where
 supported, or `| no-more` to disable pagination for text output.
 
@@ -155,8 +157,10 @@ net show interface json
 > allowed here — use the `get_config` tool instead. On JunOS, `show configuration` and its abbreviations, such as
 > `show conf`, are refused too.
 >
-> On FortiOS, `show`, `config`, `execute`, and `diagnose` commands are blocked
-> here. Use `get_config`, `run_ping`, or `run_traceroute` instead.
+> On FortiOS, `show` and `show full-configuration` without a path, `config`, `execute`, and `diagnose` commands
+> are blocked here. Use `get_config` for the whole configuration, and `run_ping` or `run_traceroute` for
+> diagnostics. `show` with a path prints only that part of the configuration (only settings that differ from the
+> defaults; `show full-configuration` includes them), and its output is obfuscated like `get_config`'s.
 >
 > On Cumulus Linux 4.x, `net show configuration`, `net show commit` and `net show rollback` (and their
 > abbreviations) are refused here. Use `get_config` instead.
@@ -166,7 +170,7 @@ every word must contain only letters, digits and `. _ : / , @ %` and `-`, no wor
 separated by spaces. The server appends `2>&1` itself so that error messages are returned.
 
 On the other platforms, the command must be a single line holding a single command (no `;`), must start with the
-verb in lower case (`show`, or `get` on FortiOS), and may not use `<` or `>` redirection. Words are separated by
+verb in lower case (`show`, or `get` or `show` on FortiOS), and may not use `<` or `>` redirection. Words are separated by
 spaces, and every word may contain only letters, digits and `. _ : / , @ % + = ^ $ -`, so quotes, brackets, braces,
 globs and other shell syntax are refused. `^` and `$` are there for regexes such as `show ip bgp regexp ^65000_`.
 
