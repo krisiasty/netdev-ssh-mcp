@@ -298,7 +298,6 @@ func fortiOSRunInVDOM(ctx context.Context, cfg sshclient.ConnConfig, vdom string
 	return fortiOSVDOMOutput(out, vdom)
 }
 
-// vdomInfo is what fortigate_list_vdoms reports.
 // vdomInfo is what fortigate_list_vdoms reports. No names means the
 // FortiGate does not use VDOMs, or the account cannot reach any.
 type vdomInfo struct {
