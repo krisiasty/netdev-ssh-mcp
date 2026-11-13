@@ -94,6 +94,9 @@ FortiOS notes:
 - Use `device_type=fortios` to retrieve config with `show full-configuration`.
 - `fortigate` is accepted as an alias for `fortios`.
 - FortiOS does not support `config_type=startup`.
+- FortiOS pages output at `--More--` when the console output mode is `more`, even over SSH exec, and no per-session
+  command turns that off. On `fortios` (and while detecting it) every tool answers each prompt with a space and removes
+  the prompt and its erase sequence from the output, so the device configuration does not need to change.
 
 Cumulus Linux notes:
 

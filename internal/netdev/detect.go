@@ -130,6 +130,15 @@ func probeCommandFor(c identClass, serverVersion string) (string, error) {
 	}
 }
 
+// probePager returns the pager to answer while a probe command runs: only
+// FortiOS gets "get system status", and its output can be long enough to page.
+func probePager(cmd string) *sshclient.Pager {
+	if cmd == probeSystemStatus {
+		return pagerFor(deviceTypeFortiOS)
+	}
+	return nil
+}
+
 // platformMarker identifies a platform from probe output. Every pattern is
 // anchored to the start of a line.
 type platformMarker struct {
@@ -300,8 +309,9 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 		}
 	}
 
-	res, err := runProbe(ctx, cfg, func(serverVersion string) (string, error) {
-		return probeCommandFor(classifyIdent(serverVersion), serverVersion)
+	res, err := runProbe(ctx, cfg, func(serverVersion string) (string, *sshclient.Pager, error) {
+		cmd, err := probeCommandFor(classifyIdent(serverVersion), serverVersion)
+		return cmd, probePager(cmd), err
 	})
 	if errors.Is(err, errUnsupportedPlatform) {
 		// Identified, and known not to be supported: an answer, not a failure.
@@ -355,6 +365,7 @@ func resolveTarget(ctx context.Context, host string, port int, username, rawType
 	if rt.dt != deviceTypeCumulus4x {
 		cfg.CheckServerVersion = refuseLinuxServer
 	}
+	cfg.Pager = pagerFor(rt.dt)
 	return cfg, rt, nil
 }
 

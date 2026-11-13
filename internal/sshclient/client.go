@@ -111,6 +111,22 @@ type ConnConfig struct {
 	// an error, the connection is closed and nothing runs. The string is
 	// chosen by the device and is untrusted. Probe does not call it.
 	CheckServerVersion func(serverVersion string) error
+	// Pager, when set, answers the device's output pager for commands run by
+	// RunCommand and RunCommands. Without it stdin is closed at once, so a
+	// device that pages its output waits at the first prompt until the
+	// command timeout. Probe takes its pager from choose instead.
+	Pager *Pager
+}
+
+// Pager describes an output pager that pauses at a prompt line and waits for
+// a key, such as FortiOS "--More--", which no per-session setting turns off.
+type Pager struct {
+	// Prompt is the text the device writes, alone on a line and without a
+	// newline, when it waits for a key. Surrounding spaces, tabs and carriage
+	// returns are ignored.
+	Prompt string
+	// Key is sent to show the next page.
+	Key string
 }
 
 // Options controls SSH host key handling and command timeouts.
@@ -242,11 +258,12 @@ type ProbeResult struct {
 }
 
 // Probe dials the SSH host and passes the server's identification string to
-// choose, which returns the command to run on the same connection. If choose
-// returns an error, Probe returns it without running anything; if it returns
-// "", Probe runs nothing. Cancelling ctx closes the connection and returns
-// ctx's error.
-func Probe(ctx context.Context, cfg ConnConfig, choose func(serverVersion string) (string, error)) (ProbeResult, error) {
+// choose, which returns the command to run on the same connection and the
+// pager to answer while it runs (nil for none; cfg.Pager is not used). If
+// choose returns an error, Probe returns it without running anything; if it
+// returns "", Probe runs nothing. Cancelling ctx closes the connection and
+// returns ctx's error.
+func Probe(ctx context.Context, cfg ConnConfig, choose func(serverVersion string) (string, *Pager, error)) (ProbeResult, error) {
 	client, addr, err := dial(ctx, cfg)
 	if err != nil {
 		return ProbeResult{}, err
@@ -254,13 +271,13 @@ func Probe(ctx context.Context, cfg ConnConfig, choose func(serverVersion string
 	defer func() { _ = client.Close() }()
 
 	res := ProbeResult{ServerVersion: string(client.ServerVersion())}
-	cmd, err := choose(res.ServerVersion)
+	cmd, pager, err := choose(res.ServerVersion)
 	if err != nil || cmd == "" {
 		return res, err
 	}
 	res.Command = cmd
 
-	out, err := runOnClient(ctx, client, addr, cmd, commandTimeout())
+	out, err := runOnClient(ctx, client, addr, cmd, pager, commandTimeout())
 	res.Output = out
 	var exitErr *gossh.ExitError
 	if err != nil && !errors.As(err, &exitErr) {
@@ -282,7 +299,7 @@ func runSessionCommand(ctx context.Context, cfg ConnConfig, cmd string) (string,
 		}
 	}
 
-	out, err := runOnClient(ctx, client, addr, cmd, commandTimeoutFor(cfg))
+	out, err := runOnClient(ctx, client, addr, cmd, cfg.Pager, commandTimeoutFor(cfg))
 	if err != nil {
 		return "", err
 	}
@@ -346,8 +363,9 @@ func dial(ctx context.Context, cfg ConnConfig) (*gossh.Client, string, error) {
 // session and running the command take longer than timeout, the connection
 // is closed and ErrCommandTimeout is returned; if ctx is cancelled first, it
 // is closed and ctx's error is returned. On a non-zero exit status it
-// returns the output together with a *CommandError.
-func runOnClient(ctx context.Context, client *gossh.Client, addr, cmd string, timeout time.Duration) (string, error) {
+// returns the output together with a *CommandError. A non-nil pager is
+// answered while the command runs (see outputWithPager).
+func runOnClient(ctx context.Context, client *gossh.Client, addr, cmd string, pager *Pager, timeout time.Duration) (string, error) {
 	// Start the limit before opening the session: a device can also stall
 	// on the session request. An already-cancelled ctx closes the client
 	// here, so NewSession fails without sending anything.
@@ -373,7 +391,12 @@ func runOnClient(ctx context.Context, client *gossh.Client, addr, cmd string, ti
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
 
-	out, err := session.Output(cmd)
+	var out []byte
+	if pager != nil {
+		out, err = outputWithPager(session, cmd, pager)
+	} else {
+		out, err = session.Output(cmd)
+	}
 	if reason := stop(); reason != nil {
 		return "", limitErr(reason)
 	}

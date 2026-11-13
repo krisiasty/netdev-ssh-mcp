@@ -40,6 +40,19 @@ func connConfig(host string, port int, username string) sshclient.ConnConfig {
 	}
 }
 
+// pagerFor returns the output pager the client must answer on dt, or nil.
+// FortiOS pages at "--More--" whenever the console output mode is "more",
+// even in an SSH exec session, and offers no per-session way to turn it off:
+// "config system console / set output standard" changes the configuration.
+// The other platforms do not page exec output, or have it disabled with
+// "| no-more" by the command builders.
+func pagerFor(dt deviceType) *sshclient.Pager {
+	if dt == deviceTypeFortiOS {
+		return &sshclient.Pager{Prompt: "--More--", Key: " "}
+	}
+	return nil
+}
+
 // errDeviceTypeUnresolved guards the command builders: callers must resolve
 // an omitted device_type (resolveDeviceType) before building a command, so
 // no platform's syntax is ever assumed.

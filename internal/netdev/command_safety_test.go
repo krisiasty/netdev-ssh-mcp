@@ -542,7 +542,7 @@ func TestRunShowCommandInjectionNeverReachesSSH(t *testing.T) {
 func TestRunShowCommandShellSyntaxNeverReachesSSH(t *testing.T) {
 	ran := stubRunCommand(t, "", nil)
 	resetDetection(t)
-	runProbe = func(context.Context, sshclient.ConnConfig, func(string) (string, error)) (sshclient.ProbeResult, error) {
+	runProbe = func(context.Context, sshclient.ConnConfig, func(string) (string, *sshclient.Pager, error)) (sshclient.ProbeResult, error) {
 		t.Fatal("detection ran, want the command refused first")
 		return sshclient.ProbeResult{}, nil
 	}

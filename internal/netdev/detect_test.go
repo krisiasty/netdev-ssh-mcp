@@ -61,19 +61,21 @@ type fakeProbe struct {
 	err     error
 	calls   int
 	ran     []string
+	pagers  []*sshclient.Pager // the pager chosen for each command in ran
 }
 
-func (f *fakeProbe) probe(_ context.Context, cfg sshclient.ConnConfig, choose func(string) (string, error)) (sshclient.ProbeResult, error) {
+func (f *fakeProbe) probe(_ context.Context, cfg sshclient.ConnConfig, choose func(string) (string, *sshclient.Pager, error)) (sshclient.ProbeResult, error) {
 	f.calls++
 	res := sshclient.ProbeResult{ServerVersion: f.ident}
 	if f.err != nil {
 		return res, f.err
 	}
-	cmd, err := choose(f.ident)
+	cmd, pager, err := choose(f.ident)
 	if err != nil || cmd == "" {
 		return res, err
 	}
 	f.ran = append(f.ran, cmd)
+	f.pagers = append(f.pagers, pager)
 	res.Command = cmd
 	res.Output = f.outputs[cmd]
 	return res, nil
@@ -280,6 +282,9 @@ func TestResolveDeviceType(t *testing.T) {
 		}
 		if len(f.ran) != 1 || f.ran[0] != probeSystemStatus {
 			t.Fatalf("ran %v, want only %q", f.ran, probeSystemStatus)
+		}
+		if p := f.pagers[0]; p == nil || p.Prompt != "--More--" || p.Key != " " {
+			t.Fatalf("probe pager = %+v, want the FortiOS --More-- pager", p)
 		}
 	})
 

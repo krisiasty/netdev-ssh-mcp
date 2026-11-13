@@ -125,9 +125,9 @@ func TestProbeReturnsServerVersionAndOutput(t *testing.T) {
 	cfg := useTestServer(t, s, 5*time.Second)
 
 	var seen string
-	res, err := Probe(t.Context(), cfg, func(serverVersion string) (string, error) {
+	res, err := Probe(t.Context(), cfg, func(serverVersion string) (string, *Pager, error) {
 		seen = serverVersion
-		return "show version", nil
+		return "show version", nil, nil
 	})
 	if err != nil {
 		t.Fatalf("Probe() error = %v", err)
@@ -146,7 +146,7 @@ func TestProbeKeepsOutputOnNonZeroExit(t *testing.T) {
 	})
 	cfg := useTestServer(t, s, 5*time.Second)
 
-	res, err := Probe(t.Context(), cfg, func(string) (string, error) { return "show version", nil })
+	res, err := Probe(t.Context(), cfg, func(string) (string, *Pager, error) { return "show version", nil, nil })
 	if err != nil || res.Output != "% Invalid input\n" {
 		t.Fatalf("Probe() = %+v, %v; want the output and no error", res, err)
 	}
@@ -157,7 +157,7 @@ func TestProbeRunsNothingWhenChooseRefuses(t *testing.T) {
 	cfg := useTestServer(t, s, 5*time.Second)
 
 	refused := errors.New("unsupported")
-	res, err := Probe(t.Context(), cfg, func(string) (string, error) { return "", refused })
+	res, err := Probe(t.Context(), cfg, func(string) (string, *Pager, error) { return "", nil, refused })
 	if !errors.Is(err, refused) || res.Command != "" || res.ServerVersion != "SSH-2.0-OpenSSH_7.3p1.RL" {
 		t.Fatalf("Probe() = %+v, %v; want the refusal, the server version and no command", res, err)
 	}
