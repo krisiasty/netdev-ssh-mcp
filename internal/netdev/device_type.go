@@ -26,7 +26,6 @@ const (
 )
 
 var (
-	runCommand  = sshclient.RunCommand
 	runCommands = sshclient.RunCommands
 )
 
@@ -34,9 +33,9 @@ var (
 // vdom, which checkVDOMName has accepted, they run in that VDOM (runInVDOM);
 // a vdom on any device type but fortios is refused here, so no tool can send
 // "config vdom" to another platform, and so is a vdom on a FortiGate that
-// detection found without VDOMs. Otherwise one command runs on its own
-// and several are sent together in one exec request, and the output goes
-// through deviceOutput.
+// detection found without VDOMs. Otherwise the commands are sent together in
+// one exec request, a single one included, and the output goes through
+// deviceOutput.
 func runOn(ctx context.Context, cfg sshclient.ConnConfig, rt resolvedType, vdom string, commands []string) (string, error) {
 	dt := rt.dt
 	if vdom != "" {
@@ -49,13 +48,7 @@ func runOn(ctx context.Context, cfg sshclient.ConnConfig, rt resolvedType, vdom 
 		}
 		return runInVDOM(ctx, cfg, vdom, commands)
 	}
-	var out string
-	var err error
-	if len(commands) == 1 {
-		out, err = runCommand(ctx, cfg, commands[0])
-	} else {
-		out, err = runCommands(ctx, cfg, commands)
-	}
+	out, err := runCommands(ctx, cfg, commands)
 	if err != nil {
 		return out, err
 	}

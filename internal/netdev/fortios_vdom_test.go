@@ -379,19 +379,15 @@ type vdomRun struct {
 }
 
 // stubRunInVDOM records the calls to runInVDOM and answers them with out
-// and err; runCommand and runCommands must not be called.
+// and err; runCommands must not be called.
 func stubRunInVDOM(t *testing.T, out string, err error) *[]vdomRun {
 	t.Helper()
-	orig, origOne, origMany := runInVDOM, runCommand, runCommands
-	t.Cleanup(func() { runInVDOM, runCommand, runCommands = orig, origOne, origMany })
+	orig, origMany := runInVDOM, runCommands
+	t.Cleanup(func() { runInVDOM, runCommands = orig, origMany })
 	var runs []vdomRun
 	runInVDOM = func(_ context.Context, _ sshclient.ConnConfig, vdom string, commands []string) (string, error) {
 		runs = append(runs, vdomRun{vdom, commands})
 		return out, err
-	}
-	runCommand = func(context.Context, sshclient.ConnConfig, string) (string, error) {
-		t.Fatal("runCommand called")
-		return "", nil
 	}
 	runCommands = func(context.Context, sshclient.ConnConfig, []string) (string, error) {
 		t.Fatal("runCommands called")

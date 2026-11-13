@@ -522,10 +522,10 @@ func TestCheckCommandArgAllowsRealValues(t *testing.T) {
 
 // A refused command must never reach the device.
 func TestRunShowCommandInjectionNeverReachesSSH(t *testing.T) {
-	original := runCommand
-	defer func() { runCommand = original }()
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-		t.Fatalf("runCommand called with %q", cmd)
+	original := runCommands
+	defer func() { runCommands = original }()
+	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
+		t.Fatalf("runCommands called with %q", cmds)
 		return "", nil
 	}
 
@@ -563,12 +563,8 @@ func TestRunShowCommandShellSyntaxNeverReachesSSH(t *testing.T) {
 }
 
 func TestRunPingInjectionNeverReachesSSH(t *testing.T) {
-	originalOne, originalMany := runCommand, runCommands
-	defer func() { runCommand, runCommands = originalOne, originalMany }()
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-		t.Fatalf("runCommand called with %q", cmd)
-		return "", nil
-	}
+	original := runCommands
+	defer func() { runCommands = original }()
 	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
 		t.Fatalf("runCommands called with %q", cmds)
 		return "", nil

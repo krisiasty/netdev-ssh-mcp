@@ -17,12 +17,12 @@ import (
 )
 
 func TestGetConfigFortiOSUsesShowFullConfiguration(t *testing.T) {
-	original := runCommand
-	defer func() { runCommand = original }()
+	original := runCommands
+	defer func() { runCommands = original }()
 
 	var gotCmd string
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-		gotCmd = cmd
+	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
+		gotCmd = strings.Join(cmds, "\n")
 		return "ok", nil
 	}
 
@@ -54,12 +54,12 @@ func TestGetConfigIOSOmitsNoMore(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			original := runCommand
-			defer func() { runCommand = original }()
+			original := runCommands
+			defer func() { runCommands = original }()
 
 			var gotCmd string
-			runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-				gotCmd = cmd
+			runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
+				gotCmd = strings.Join(cmds, "\n")
 				return "ok", nil
 			}
 
@@ -92,12 +92,12 @@ func TestGetConfigFortiOSRejectsStartup(t *testing.T) {
 }
 
 func TestRunShowCommandFortiOSAllowsGet(t *testing.T) {
-	original := runCommand
-	defer func() { runCommand = original }()
+	original := runCommands
+	defer func() { runCommands = original }()
 
 	var gotCmd string
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-		gotCmd = cmd
+	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
+		gotCmd = strings.Join(cmds, "\n")
 		return "Version: FortiGate", nil
 	}
 
@@ -130,13 +130,9 @@ func TestRunShowCommandFortiOSRejectsExecute(t *testing.T) {
 // stubRunCommand records the commands a handler runs and answers with out.
 func stubRunCommand(t *testing.T, out string, err error) *[]string {
 	t.Helper()
-	origOne, origMany := runCommand, runCommands
-	t.Cleanup(func() { runCommand, runCommands = origOne, origMany })
+	orig := runCommands
+	t.Cleanup(func() { runCommands = orig })
 	var ran []string
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-		ran = append(ran, cmd)
-		return out, err
-	}
 	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
 		ran = append(ran, strings.Join(cmds, "\n"))
 		return out, err
@@ -419,14 +415,10 @@ func TestDetectPlatformReportsVDOMs(t *testing.T) {
 // command timeout, on both the single-command and FortiOS multi-command
 // paths, and that other tools keep the configured one.
 func TestCommandTimeoutPerTool(t *testing.T) {
-	originalOne, originalMany := runCommand, runCommands
-	t.Cleanup(func() { runCommand, runCommands = originalOne, originalMany })
+	original := runCommands
+	t.Cleanup(func() { runCommands = original })
 
 	var got time.Duration
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-		got = cfg.CommandTimeout
-		return "ok", nil
-	}
 	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
 		got = cfg.CommandTimeout
 		return "ok", nil
@@ -494,9 +486,9 @@ func TestHandlersPassRequestContext(t *testing.T) {
 		check("probe", pctx)
 		return f.probe(pctx, cfg, choose)
 	}
-	origOne, origMany, origInspect, origTrust := runCommand, runCommands, inspectHostKey, trustHostKey
+	origMany, origInspect, origTrust := runCommands, inspectHostKey, trustHostKey
 	t.Cleanup(func() {
-		runCommand, runCommands, inspectHostKey, trustHostKey = origOne, origMany, origInspect, origTrust
+		runCommands, inspectHostKey, trustHostKey = origMany, origInspect, origTrust
 	})
 	inspectHostKey = func(cctx context.Context, host string, port int) (sshclient.HostKeyInfo, error) {
 		check("inspectHostKey", cctx)
@@ -505,10 +497,6 @@ func TestHandlersPassRequestContext(t *testing.T) {
 	trustHostKey = func(cctx context.Context, host string, port int, replace bool) (sshclient.TrustHostKeyResult, error) {
 		check("trustHostKey", cctx)
 		return sshclient.TrustHostKeyResult{}, nil
-	}
-	runCommand = func(cctx context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-		check("runCommand "+cmd, cctx)
-		return "ok", nil
 	}
 	runCommands = func(cctx context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
 		check("runCommands", cctx)
@@ -799,13 +787,9 @@ func TestPingCumulusExitOneDetected(t *testing.T) {
 // handler runs and answers with out.
 func stubRunCommandConfigs(t *testing.T, out string) *[]sshclient.ConnConfig {
 	t.Helper()
-	origOne, origMany := runCommand, runCommands
-	t.Cleanup(func() { runCommand, runCommands = origOne, origMany })
+	orig := runCommands
+	t.Cleanup(func() { runCommands = orig })
 	var cfgs []sshclient.ConnConfig
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, _ string) (string, error) {
-		cfgs = append(cfgs, cfg)
-		return out, nil
-	}
 	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, _ []string) (string, error) {
 		cfgs = append(cfgs, cfg)
 		return out, nil
@@ -928,8 +912,8 @@ func TestDetectedTypeRefusesLinuxServer(t *testing.T) {
 // CheckServerVersion surfaces: with the tool prefix, as
 // errUnsupportedPlatform, and logged at Info rather than as a device failure.
 func TestLinuxServerRefusalReachesCaller(t *testing.T) {
-	origOne, origMany := runCommand, runCommands
-	t.Cleanup(func() { runCommand, runCommands = origOne, origMany })
+	orig := runCommands
+	t.Cleanup(func() { runCommands = orig })
 	refuse := func(cfg sshclient.ConnConfig) (string, error) {
 		if cfg.CheckServerVersion == nil {
 			return "FAKEdevice output", nil
@@ -939,7 +923,6 @@ func TestLinuxServerRefusalReachesCaller(t *testing.T) {
 		}
 		return "FAKEdevice output", nil
 	}
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, _ string) (string, error) { return refuse(cfg) }
 	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, _ []string) (string, error) { return refuse(cfg) }
 
 	for name, call := range commandToolCalls {
@@ -960,8 +943,8 @@ func TestLinuxServerRefusalReachesCaller(t *testing.T) {
 // refused by refuseLinuxServer is forgotten, and that the error does not tell
 // the caller to pass the type that no longer fits the SSH server.
 func TestLinuxServerRefusalForgetsDetectedType(t *testing.T) {
-	origOne, origMany := runCommand, runCommands
-	t.Cleanup(func() { runCommand, runCommands = origOne, origMany })
+	orig := runCommands
+	t.Cleanup(func() { runCommands = orig })
 	refuse := func(cfg sshclient.ConnConfig) (string, error) {
 		if cfg.CheckServerVersion == nil {
 			return "", nil
@@ -971,7 +954,6 @@ func TestLinuxServerRefusalForgetsDetectedType(t *testing.T) {
 		}
 		return "", nil
 	}
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, _ string) (string, error) { return refuse(cfg) }
 	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, _ []string) (string, error) { return refuse(cfg) }
 
 	for name, call := range commandToolCalls {
