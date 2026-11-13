@@ -17,12 +17,12 @@ import (
 )
 
 func TestGetConfigFortiOSUsesShowFullConfiguration(t *testing.T) {
-	original := runCommand
-	defer func() { runCommand = original }()
+	original := runCommands
+	defer func() { runCommands = original }()
 
 	var gotCmd string
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-		gotCmd = cmd
+	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
+		gotCmd = strings.Join(cmds, "\n")
 		return "ok", nil
 	}
 
@@ -54,12 +54,12 @@ func TestGetConfigIOSOmitsNoMore(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			original := runCommand
-			defer func() { runCommand = original }()
+			original := runCommands
+			defer func() { runCommands = original }()
 
 			var gotCmd string
-			runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-				gotCmd = cmd
+			runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
+				gotCmd = strings.Join(cmds, "\n")
 				return "ok", nil
 			}
 
@@ -92,12 +92,12 @@ func TestGetConfigFortiOSRejectsStartup(t *testing.T) {
 }
 
 func TestRunShowCommandFortiOSAllowsGet(t *testing.T) {
-	original := runCommand
-	defer func() { runCommand = original }()
+	original := runCommands
+	defer func() { runCommands = original }()
 
 	var gotCmd string
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-		gotCmd = cmd
+	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
+		gotCmd = strings.Join(cmds, "\n")
 		return "Version: FortiGate", nil
 	}
 
@@ -130,13 +130,9 @@ func TestRunShowCommandFortiOSRejectsExecute(t *testing.T) {
 // stubRunCommand records the commands a handler runs and answers with out.
 func stubRunCommand(t *testing.T, out string, err error) *[]string {
 	t.Helper()
-	origOne, origMany := runCommand, runCommands
-	t.Cleanup(func() { runCommand, runCommands = origOne, origMany })
+	orig := runCommands
+	t.Cleanup(func() { runCommands = orig })
 	var ran []string
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-		ran = append(ran, cmd)
-		return out, err
-	}
 	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
 		ran = append(ran, strings.Join(cmds, "\n"))
 		return out, err
@@ -233,7 +229,7 @@ func TestHandlersExplicitDeviceTypeSyntaxErrorHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetConfig() error = %v", err)
 	}
-	if texts := contentTexts(res.Content); len(texts) != 2 || !strings.Contains(texts[1], "omit device_type to auto-detect") {
+	if texts := contentTexts(res.Content); len(texts) != 2 || !strings.Contains(texts[1], "may not be valid on eos") || !strings.Contains(texts[1], "omit device_type to auto-detect") {
 		t.Fatalf("content = %q, want the output followed by the hint", texts)
 	}
 }
@@ -361,6 +357,10 @@ func TestDetectPlatform(t *testing.T) {
 		}
 	}
 
+	if strings.Contains(text, "vdoms:") {
+		t.Errorf("report on junos mentions VDOMs:\n%s", text)
+	}
+
 	res, _, err = DetectPlatform(context.Background(), nil, DetectPlatformInput{Host: "r1", Username: "u"})
 	if err != nil || !strings.Contains(strings.Join(contentTexts(res.Content), "\n"), "cached by this server") || f.calls != 1 {
 		t.Fatalf("second DetectPlatform() = %v, probes = %d; want a cached report", err, f.calls)
@@ -371,18 +371,54 @@ func TestDetectPlatform(t *testing.T) {
 	}
 }
 
+// TestDetectPlatformReportsVDOMs checks that a FortiGate's VDOM mode is
+// reported, also from the cache, and that one using VDOMs points at
+// fortigate_list_vdoms. The probe output starts with the CLI prompt, as
+// FortiOS writes it in an exec session.
+func TestDetectPlatformReportsVDOMs(t *testing.T) {
+	status := readFixture(t, "fortios_get_system_status.txt")
+	if !strings.Contains(status, "Virtual domain configuration: disable\n") {
+		t.Fatal("fixture no longer has the line this test edits")
+	}
+	tests := []struct {
+		mode, want string
+		pointer    bool
+	}{
+		{"disable", "vdoms: disable (reported by the device)", false},
+		{"multiple", "vdoms: multiple (reported by the device)", true},
+		{"split-vdom", "vdoms: split-vdom (reported by the device)", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			resetDetection(t)
+			out := "FGT-1 $ " + strings.Replace(status, "configuration: disable", "configuration: "+tt.mode, 1) + "\nFGT-1 $ "
+			f := &fakeProbe{ident: identFortiOS, outputs: map[string]string{probeSystemStatus: out}}
+			runProbe = f.probe
+			for _, round := range []string{"probed", "cached"} {
+				res, _, err := DetectPlatform(t.Context(), nil, DetectPlatformInput{Host: "fw1", Username: "u"})
+				if err != nil {
+					t.Fatalf("%s: DetectPlatform() error = %v", round, err)
+				}
+				text := strings.Join(contentTexts(res.Content), "\n")
+				if !strings.Contains(text, tt.want) || strings.Contains(text, "fortigate_list_vdoms") != tt.pointer {
+					t.Fatalf("%s: report =\n%s\nwant %q, pointer to fortigate_list_vdoms: %v", round, text, tt.want, tt.pointer)
+				}
+			}
+			if f.calls != 1 {
+				t.Fatalf("probes = %d, want one and then the cache", f.calls)
+			}
+		})
+	}
+}
+
 // TestCommandTimeoutPerTool checks that ping and traceroute ask for the long
 // command timeout, on both the single-command and FortiOS multi-command
 // paths, and that other tools keep the configured one.
 func TestCommandTimeoutPerTool(t *testing.T) {
-	originalOne, originalMany := runCommand, runCommands
-	t.Cleanup(func() { runCommand, runCommands = originalOne, originalMany })
+	original := runCommands
+	t.Cleanup(func() { runCommands = original })
 
 	var got time.Duration
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-		got = cfg.CommandTimeout
-		return "ok", nil
-	}
 	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
 		got = cfg.CommandTimeout
 		return "ok", nil
@@ -450,9 +486,9 @@ func TestHandlersPassRequestContext(t *testing.T) {
 		check("probe", pctx)
 		return f.probe(pctx, cfg, choose)
 	}
-	origOne, origMany, origInspect, origTrust := runCommand, runCommands, inspectHostKey, trustHostKey
+	origMany, origInspect, origTrust := runCommands, inspectHostKey, trustHostKey
 	t.Cleanup(func() {
-		runCommand, runCommands, inspectHostKey, trustHostKey = origOne, origMany, origInspect, origTrust
+		runCommands, inspectHostKey, trustHostKey = origMany, origInspect, origTrust
 	})
 	inspectHostKey = func(cctx context.Context, host string, port int) (sshclient.HostKeyInfo, error) {
 		check("inspectHostKey", cctx)
@@ -461,10 +497,6 @@ func TestHandlersPassRequestContext(t *testing.T) {
 	trustHostKey = func(cctx context.Context, host string, port int, replace bool) (sshclient.TrustHostKeyResult, error) {
 		check("trustHostKey", cctx)
 		return sshclient.TrustHostKeyResult{}, nil
-	}
-	runCommand = func(cctx context.Context, cfg sshclient.ConnConfig, cmd string) (string, error) {
-		check("runCommand "+cmd, cctx)
-		return "ok", nil
 	}
 	runCommands = func(cctx context.Context, cfg sshclient.ConnConfig, cmds []string) (string, error) {
 		check("runCommands", cctx)
@@ -755,13 +787,9 @@ func TestPingCumulusExitOneDetected(t *testing.T) {
 // handler runs and answers with out.
 func stubRunCommandConfigs(t *testing.T, out string) *[]sshclient.ConnConfig {
 	t.Helper()
-	origOne, origMany := runCommand, runCommands
-	t.Cleanup(func() { runCommand, runCommands = origOne, origMany })
+	orig := runCommands
+	t.Cleanup(func() { runCommands = orig })
 	var cfgs []sshclient.ConnConfig
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, _ string) (string, error) {
-		cfgs = append(cfgs, cfg)
-		return out, nil
-	}
 	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, _ []string) (string, error) {
 		cfgs = append(cfgs, cfg)
 		return out, nil
@@ -884,8 +912,8 @@ func TestDetectedTypeRefusesLinuxServer(t *testing.T) {
 // CheckServerVersion surfaces: with the tool prefix, as
 // errUnsupportedPlatform, and logged at Info rather than as a device failure.
 func TestLinuxServerRefusalReachesCaller(t *testing.T) {
-	origOne, origMany := runCommand, runCommands
-	t.Cleanup(func() { runCommand, runCommands = origOne, origMany })
+	orig := runCommands
+	t.Cleanup(func() { runCommands = orig })
 	refuse := func(cfg sshclient.ConnConfig) (string, error) {
 		if cfg.CheckServerVersion == nil {
 			return "FAKEdevice output", nil
@@ -895,7 +923,6 @@ func TestLinuxServerRefusalReachesCaller(t *testing.T) {
 		}
 		return "FAKEdevice output", nil
 	}
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, _ string) (string, error) { return refuse(cfg) }
 	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, _ []string) (string, error) { return refuse(cfg) }
 
 	for name, call := range commandToolCalls {
@@ -916,8 +943,8 @@ func TestLinuxServerRefusalReachesCaller(t *testing.T) {
 // refused by refuseLinuxServer is forgotten, and that the error does not tell
 // the caller to pass the type that no longer fits the SSH server.
 func TestLinuxServerRefusalForgetsDetectedType(t *testing.T) {
-	origOne, origMany := runCommand, runCommands
-	t.Cleanup(func() { runCommand, runCommands = origOne, origMany })
+	orig := runCommands
+	t.Cleanup(func() { runCommands = orig })
 	refuse := func(cfg sshclient.ConnConfig) (string, error) {
 		if cfg.CheckServerVersion == nil {
 			return "", nil
@@ -927,7 +954,6 @@ func TestLinuxServerRefusalForgetsDetectedType(t *testing.T) {
 		}
 		return "", nil
 	}
-	runCommand = func(_ context.Context, cfg sshclient.ConnConfig, _ string) (string, error) { return refuse(cfg) }
 	runCommands = func(_ context.Context, cfg sshclient.ConnConfig, _ []string) (string, error) { return refuse(cfg) }
 
 	for name, call := range commandToolCalls {

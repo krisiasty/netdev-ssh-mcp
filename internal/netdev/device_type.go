@@ -1,10 +1,14 @@
 package netdev
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/krisiasty/netdev-ssh-mcp/internal/sshclient"
 )
@@ -22,9 +26,43 @@ const (
 )
 
 var (
-	runCommand  = sshclient.RunCommand
 	runCommands = sshclient.RunCommands
 )
+
+// runOn runs a tool's commands and returns their output ready to report. With
+// vdom, which checkVDOMName has accepted, they run in that VDOM (runInVDOM);
+// a vdom on any device type but fortios is refused here, so no tool can send
+// "config vdom" to another platform, and so is a vdom on a FortiGate that
+// detection found without VDOMs. Otherwise the commands are sent together in
+// one exec request, a single one included, and the output goes through
+// deviceOutput.
+func runOn(ctx context.Context, cfg sshclient.ConnConfig, rt resolvedType, vdom string, commands []string) (string, error) {
+	dt := rt.dt
+	if vdom != "" {
+		if dt != deviceTypeFortiOS {
+			return "", fmt.Errorf("%w, not %s", errVDOMNotApplicable, dt)
+		}
+		// Detection may already know there are none; then no login is needed.
+		if rt.vdomMode == "disable" {
+			return "", errVDOMsDisabled
+		}
+		return runInVDOM(ctx, cfg, vdom, commands)
+	}
+	out, err := runCommands(ctx, cfg, commands)
+	if err != nil {
+		return out, err
+	}
+	return deviceOutput(dt, out)
+}
+
+// vdomNotice tells the caller which VDOM a command ran in, or nothing when
+// none was asked for.
+func vdomNotice(vdom string) []mcp.Content {
+	if vdom == "" {
+		return nil
+	}
+	return []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("vdom: %s (FortiOS confirmed the switch to it)", vdom)}}
+}
 
 // longCommandTimeout is the command timeout for ping and traceroute, which
 // wait on the network rather than the device: a traceroute towards an
@@ -134,6 +172,13 @@ func buildConfigCommand(configType string, dt deviceType) (string, error) {
 // allDeviceTypes lists every supported platform.
 var allDeviceTypes = []deviceType{deviceTypeEOS, deviceTypeIOS, deviceTypeNXOS, deviceTypeJunos, deviceTypeFortiOS, deviceTypeCumulus4x}
 
+// showVerbDeviceTypes lists the platforms whose run_show_command commands
+// start with "show": every platform but FortiOS ("get") and Cumulus Linux
+// ("net show").
+var showVerbDeviceTypes = slices.DeleteFunc(slices.Clone(allDeviceTypes), func(dt deviceType) bool {
+	return dt == deviceTypeFortiOS || dt == deviceTypeCumulus4x
+})
+
 // checkCommandOnAnyPlatform rejects a run_show_command command that no
 // supported platform would accept, so it fails before detection logs in to
 // the device. The platform's own check still runs once the type is known.
@@ -149,8 +194,13 @@ func checkCommandOnAnyPlatform(command string) error {
 		_, err := normalizeOperationalCommand(command, deviceTypeFortiOS)
 		return err
 	}
+	// Everything else is checked against the platforms whose verb is
+	// "show". FortiOS also takes "show <path>", and would let through what
+	// all of them send to get_config, such as "show running-config"; a
+	// genuine FortiOS "show <path>" passes them too, as they check only the
+	// words, and FortiOS's own check runs once the type is known.
 	var firstErr error
-	for _, dt := range allDeviceTypes {
+	for _, dt := range showVerbDeviceTypes {
 		_, err := normalizeOperationalCommand(command, dt)
 		if err == nil {
 			return nil
@@ -201,10 +251,14 @@ func normalizeOperationalCommand(command string, dt deviceType) (string, error) 
 	return trimmed, nil
 }
 
+// normalizeFortiOSOperationalCommand accepts "get" commands and "show" of
+// part of the configuration on FortiOS. Both only read; the whole
+// configuration is get_config's job, and configuration mode, execute and
+// diagnose are refused or sent to their tools.
 func normalizeFortiOSOperationalCommand(command, lower string) (string, error) {
 	switch {
-	case strings.HasPrefix(lower, "show full-configuration"), strings.HasPrefix(lower, "show"):
-		return "", fmt.Errorf("use the get_config tool to retrieve FortiOS configuration")
+	case lower == "show" || strings.HasPrefix(lower, "show ") || strings.HasPrefix(lower, "show|"):
+		return normalizeFortiOSShow(command)
 	case strings.HasPrefix(lower, "config"):
 		return "", fmt.Errorf("FortiOS configuration mode is not supported here; use get_config to retrieve configuration")
 	case strings.HasPrefix(lower, "execute ping"), strings.HasPrefix(lower, "execute traceroute"):
@@ -214,10 +268,35 @@ func normalizeFortiOSOperationalCommand(command, lower string) (string, error) {
 	case strings.HasPrefix(lower, "diagnose"):
 		return "", fmt.Errorf("FortiOS diagnose commands are not supported by run_show_command")
 	case !strings.HasPrefix(lower, "get"):
-		return "", fmt.Errorf("FortiOS operational reads must use a 'get' command")
+		return "", fmt.Errorf("FortiOS reads must use a 'get' command, or 'show' with a configuration path")
 	}
 	if err := checkOperationalCommand(command, "get", deviceTypeFortiOS); err != nil {
 		return "", err
+	}
+	return command, nil
+}
+
+// errFortiOSWholeConfig redirects a "show" without a path to get_config.
+var errFortiOSWholeConfig = fmt.Errorf("use the get_config tool to retrieve the whole FortiOS configuration; " +
+	"run_show_command takes 'show' or 'show full-configuration' only with a path, such as 'show firewall service custom' or 'show router static'")
+
+// normalizeFortiOSShow accepts "show <path> [entry]" and "show
+// full-configuration <path> [entry]", which print that part of the
+// configuration, with the same word and filter rules as "get". Without a
+// path they print all of it, which get_config retrieves. FortiOS accepts
+// any unambiguous abbreviation, and where few commands are offered (an exec
+// session outside a VDOM) even "show f" means "show full-configuration", so
+// every prefix of full-configuration counts as one.
+func normalizeFortiOSShow(command string) (string, error) {
+	if err := checkOperationalCommand(command, "show", deviceTypeFortiOS); err != nil {
+		return "", err
+	}
+	path := spaceSeparated(strings.Split(command, "|")[0])[1:]
+	if len(path) > 0 && strings.HasPrefix("full-configuration", strings.ToLower(path[0])) {
+		path = path[1:]
+	}
+	if len(path) == 0 {
+		return "", errFortiOSWholeConfig
 	}
 	return command, nil
 }

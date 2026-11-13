@@ -131,6 +131,14 @@ func TestObfuscateConfigHidesSecrets(t *testing.T) {
 		{"fortios community", `set community "<<FAKEcommunity>>"`},
 		{"fortios psksecret enc", `set psksecret ENC <<FAKEsecret456>>`},
 		{"fortios key quoted", `set key "<<FAKEkey>>"`},
+		// Any ENC value, whatever the field is called.
+		{"fortios api-key enc", `    set api-key ENC <<FAKEapi>>`},
+		{"fortios secondary-secret enc", `        set secondary-secret ENC <<FAKEsec2>>`},
+		{"fortios tertiary-secret enc", `        set tertiary-secret ENC <<FAKEsec3>>`},
+		{"fortios secondary-key enc", `        set secondary-key ENC <<FAKEkey2>>`},
+		{"fortios sso-secret enc", `        set sso-secret ENC <<FAKEsso>>`},
+		{"fortios auth-password-l1 enc", `        set auth-password-l1 ENC <<FAKEl1>>`},
+		{"fortios auth-password-l2 enc", `        set auth-password-l2 ENC <<FAKEl2>>`},
 
 		// Escaped quotes inside quoted values must not end the secret early.
 		{"escaped quote junos set community", `set snmp community "<<FAKE\"tail>>" authorization read-only`},
@@ -251,6 +259,39 @@ func TestObfuscateConfigMultiLine(t *testing.T) {
 	}
 	if got != expand(want) {
 		t.Fatalf("obfuscateConfig() =\n%s\nwant\n%s", got, expand(want))
+	}
+}
+
+// TestObfuscateConfigMultiLineSecrets checks secrets whose value spans
+// several lines: a FortiOS private key (as FortiOS 7.4 prints it, with the
+// key material on its own lines) and a PEM private key block anywhere.
+func TestObfuscateConfigMultiLineSecrets(t *testing.T) {
+	for name, in := range map[string]string{
+		"fortios private-key": "config firewall ssh local-key\n    edit \"k1\"\n        set private-key \"-----BEGIN OPENSSH PRIVATE KEY-----\nFAKEline1\nFAKEline2\n-----END OPENSSH PRIVATE KEY-----\"\n        set public-key \"ssh-ed25519 AAAA\"\n    next\nend\n",
+		"pem block":           "crypto material:\n-----BEGIN RSA PRIVATE KEY-----\nFAKEline1\nFAKEline2\n-----END RSA PRIVATE KEY-----\ntrailer\n",
+		"encrypted pem block": "-----BEGIN ENCRYPTED PRIVATE KEY-----\nFAKEline1\n-----END ENCRYPTED PRIVATE KEY-----\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := obfuscateConfig(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(got, "FAKE") || !strings.Contains(got, "[h:") {
+				t.Fatalf("obfuscateConfig() =\n%s\nwant the key material replaced by a token", got)
+			}
+		})
+	}
+	// What surrounds the key stays, and a public certificate is not a secret.
+	in := "        set private-key \"-----BEGIN OPENSSH PRIVATE KEY-----\nFAKE\n-----END OPENSSH PRIVATE KEY-----\"\n        set public-key \"ssh-ed25519 AAAA\"\n" +
+		"        set certificate \"-----BEGIN CERTIFICATE-----\nMIIBpublic\n-----END CERTIFICATE-----\"\n"
+	got, err := obfuscateConfig(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, keep := range []string{"set private-key \"[h:", `set public-key "ssh-ed25519 AAAA"`, "MIIBpublic", "-----BEGIN CERTIFICATE-----"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("obfuscateConfig() lost %q:\n%s", keep, got)
+		}
 	}
 }
 

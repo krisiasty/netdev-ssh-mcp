@@ -82,6 +82,7 @@ identical secrets. See [Obfuscation](#obfuscation) for how the key is chosen.
 | `port` | int | no | 22 | SSH port |
 | `config_type` | string | no | `running` | `running` or `startup` (not on JunOS, FortiOS or Cumulus Linux) |
 | `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, or `cumulus4x`; see [Platform detection](#platform-detection) |
+| `vdom` | string | no | — | FortiOS only: run in this VDOM; see [FortiGate VDOMs](#fortigate-vdoms) |
 
 Cisco IOS notes:
 
@@ -123,7 +124,9 @@ Cumulus Linux notes:
 
 Runs operational read commands on a network device and returns the output.
 For Arista/Cisco/JunOS, the command must start with `show`. For FortiOS, the
-command must start with `get`. For Cumulus Linux 4.x, the command must start with `net show`. Append
+command must start with `get`, or be `show <path> [entry]` or `show full-configuration <path> [entry]` for part of the
+configuration (for example `show firewall service custom NAME`). For Cumulus Linux 4.x, the command must start with
+`net show`. Append
 `| json` for structured output where
 supported, or `| no-more` to disable pagination for text output.
 
@@ -134,6 +137,7 @@ supported, or `| no-more` to disable pagination for text output.
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
 | `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, or `cumulus4x`; see [Platform detection](#platform-detection) |
+| `vdom` | string | no | — | FortiOS only: run in this VDOM; see [FortiGate VDOMs](#fortigate-vdoms) |
 
 Example commands:
 
@@ -153,8 +157,12 @@ net show interface json
 > allowed here — use the `get_config` tool instead. On JunOS, `show configuration` and its abbreviations, such as
 > `show conf`, are refused too.
 >
-> On FortiOS, `show`, `config`, `execute`, and `diagnose` commands are blocked
-> here. Use `get_config`, `run_ping`, or `run_traceroute` instead.
+> On FortiOS, `show` and `show full-configuration` without a path, `config`, `execute`, and `diagnose` commands
+> are blocked here. Use `get_config` for the whole configuration, and `run_ping` or `run_traceroute` for
+> diagnostics. FortiOS accepts abbreviations, and outside a VDOM even `show f` means `show full-configuration`, so
+> every abbreviation of `full-configuration` needs a path as well. `show` with a path prints only that part of the
+> configuration (only settings that differ from the defaults; `show full-configuration` includes them), and its
+> output is obfuscated like `get_config`'s.
 >
 > On Cumulus Linux 4.x, `net show configuration`, `net show commit` and `net show rollback` (and their
 > abbreviations) are refused here. Use `get_config` instead.
@@ -164,9 +172,10 @@ every word must contain only letters, digits and `. _ : / , @ %` and `-`, no wor
 separated by spaces. The server appends `2>&1` itself so that error messages are returned.
 
 On the other platforms, the command must be a single line holding a single command (no `;`), must start with the
-verb in lower case (`show`, or `get` on FortiOS), and may not use `<` or `>` redirection. Words are separated by
-spaces, and every word may contain only letters, digits and `. _ : / , @ % + = ^ $ -`, so quotes, brackets, braces,
-globs and other shell syntax are refused. `^` and `$` are there for regexes such as `show ip bgp regexp ^65000_`.
+verb in lower case (`show`, or `get` or `show` on FortiOS), and may not use `<` or `>` redirection. Words are
+separated by spaces, and every word may contain only letters, digits and `. _ : / , @ % + = ^ $ -`, so quotes,
+brackets, braces, globs and other shell syntax are refused. `^` and `$` are there for regexes such as
+`show ip bgp regexp ^65000_`.
 
 After `|` (with or without spaces around it), only the filters below are accepted, written exactly as shown, in lower
 case. `W` is one plain word: letters, digits and `. _ : / , @ % + = -`, not starting with `-`. `N` is a number of up
@@ -224,6 +233,7 @@ options within the same SSH session. On Cumulus Linux 4.x it runs Linux `ping`:
 | `size` | int | no | — | Packet size in bytes |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
 | `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`; sets ping syntax |
+| `vdom` | string | no | — | FortiOS only: run in this VDOM; see [FortiGate VDOMs](#fortigate-vdoms) |
 
 `destination`, `source`, `vrf` and `outgoing_interface` may only contain
 letters, digits and `. _ : / @ % -`, which covers addresses, hostnames and
@@ -268,6 +278,7 @@ runs `execute traceroute`, then resets the options within the same SSH session. 
 | `vrf` | string | no | — | VRF name |
 | `outgoing_interface` | string | no | — | Outgoing interface; supported on FortiOS |
 | `device_type` | string | no | detected | `eos`, `ios`, `nxos`, `junos`, `fortios`, `cumulus4x`; sets syntax |
+| `vdom` | string | no | — | FortiOS only: run in this VDOM; see [FortiGate VDOMs](#fortigate-vdoms) |
 
 The same character restrictions as `run_ping` apply to `destination`, `source`,
 `vrf` and `outgoing_interface`.
@@ -293,7 +304,10 @@ FortiOS limitations:
 ### `detect_platform`
 
 Identifies a device's platform and returns the `device_type` to pass to the other tools, using the same probe and
-cache as [Platform detection](#platform-detection). Useful before working through a list of hosts.
+cache as [Platform detection](#platform-detection). Useful before working through a list of hosts. On FortiOS it also
+reports whether the FortiGate uses VDOMs (`vdoms: multiple`, or `vdoms: disable`), from the same `get system status`;
+when it does, the line points at [`fortigate_list_vdoms`](#fortigate_list_vdoms) and the `vdom` parameter. The VDOM a
+session starts in depends on the account, so it is not part of the cached detection; `fortigate_list_vdoms` reports it.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -311,6 +325,66 @@ ssh_server: SSH-2.0-OpenSSH_7.5 (reported by the device)
 detected: now, over SSH
 Pass device_type=junos on later calls to this host to skip detection.
 ```
+
+### `fortigate_list_vdoms`
+
+Lists the VDOMs (virtual domains) the account can reach on a FortiGate, marking the one its sessions start in. Pass one
+of the names as `vdom` to the other tools; see [FortiGate VDOMs](#fortigate-vdoms). The platform is detected (and
+cached) first, and a device that is not a FortiGate is refused; if detection found `Virtual domain configuration:
+disable`, the tool says so without connecting again.
+
+Where sessions start depends on the account. The tool enters and leaves `config global` (`config global`, `end`),
+which changes nothing: an account without global scope gets an error, and its sessions start in the VDOM `get system
+status` names; an account with global scope starts in the global context, so no VDOM is marked and the result says
+that commands without `vdom` run there.
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `host` | string | yes | — | Hostname or IP address of the FortiGate |
+| `username` | string | no | `DEVICE_USERNAME` | SSH username |
+| `port` | int | no | 22 | SSH port |
+| `device_type` | string | no | detected | Only `fortios`: skips detection if it gets a FortiGate wrong |
+
+Example result:
+
+```text
+VDOMs this account can reach (reported by the device):
+root (sessions start here)
+customer-a
+customer-b
+Pass one of these as vdom to get_config, run_show_command, run_ping or run_traceroute; without vdom, commands run in root.
+```
+
+### FortiGate VDOMs
+
+On a FortiGate with multiple VDOMs, each command runs in one of them, or in the global context. Without `vdom`, the
+tools run commands where the account's session starts: its VDOM for an account limited to VDOMs, the global context for
+an account with global scope (where routes, policies and objects need a `vdom`); `fortigate_list_vdoms` tells which.
+With `vdom`, `get_config`, `run_show_command`, `run_ping` and `run_traceroute` run the command in that VDOM.
+
+FortiOS reaches another VDOM through configuration mode (`config vdom`, `edit <name>`, the command, `end`), and for an
+account that may create VDOMs, `edit` with a name that does not exist creates one. The tools therefore never send
+`edit` with a name the device has not listed:
+
+1. The name may only contain letters, digits, `-` and `_`; anything else is refused before connecting.
+2. On the same SSH connection, the tool lists the VDOMs this account can reach, exactly as `fortigate_list_vdoms`
+   does. FortiOS lists them only in an interactive CLI, so the tool opens one, enters `config vdom`, types `edit ?`
+   without Enter, reads the names, and closes the session, which discards the typed `edit`. Before anything is typed,
+   the SSH server must identify as FortiOS (a random token, or `FortiSSH` on older releases); a device given
+   `device_type=fortios` by mistake is refused instead. If the FortiGate asks to
+   accept a post-login banner first, the tool stops with an error instead of accepting it for the user.
+3. A name that is not on that list is refused, with up to three close names suggested (for a typo or different case)
+   and a pointer to `fortigate_list_vdoms`. The tool never substitutes a suggestion.
+4. The command then runs over SSH exec, wrapped in `config vdom` / `edit <name>` / ... / `end`. Its output is returned
+   only if FortiOS confirmed the switch (`current vf=<name>:<index>` and a prompt naming the VDOM); otherwise it is
+   discarded. The result ends with a note naming the VDOM.
+
+The list is fetched for every call that passes `vdom` (about a tenth of a second on a FortiGate-1100E) rather than
+cached, so the gap between checking the name and sending `edit` is as short as one SSH connection allows: the time it
+takes to open the exec session after the listing session closes. It is not zero, and FortiOS offers no way to edit a
+VDOM only if it exists. If another administrator deletes the VDOM in that gap, and this account may create VDOMs (only
+an account with global scope can), the `edit` recreates it empty. An account limited to VDOMs cannot create one, so for
+it a deleted VDOM only makes the `edit` fail.
 
 ### `trust_host_key`
 

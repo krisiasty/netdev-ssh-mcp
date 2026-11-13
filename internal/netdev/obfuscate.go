@@ -28,6 +28,10 @@ const (
 	// boundary anchors a keyword at the start of a line or after whitespace,
 	// so one pattern covers JunOS hierarchy and "display set" output.
 	boundary = `(?:^|\s)`
+	// fortiOSSecretFields names the FortiOS fields whose quoted, unencrypted
+	// value is a secret. Encrypted values need no list: FortiOS marks them
+	// with ENC whatever the field is called.
+	fortiOSSecretFields = `(?:passwd|password|passphrase|auth-passwd|group-password|psksecret(?:-remote|-local)?|ppk-secret|secret|private-key|local-key|peer-key|server-key|client-key|key)`
 )
 
 // sensitivePattern locates secrets in a line. Every capture group in re is a
@@ -116,12 +120,15 @@ var sensitivePatterns = []sensitivePattern{
 	// JunOS: set snmp community <name> ...  (display set format)
 	pattern(boundary + `snmp\s+community\s+` + value),
 
-	// FortiOS: set <secret field> ENC <value>  (encrypted passwords, passphrases, PSKs, key material)
-	pattern(`^\s*set\s+(?:passwd|password|passphrase|auth-passwd|group-password|psksecret(?:-remote|-local)?|ppk-secret|secret|community|snmp-community|private-key|local-key|peer-key|server-key|client-key|key)\s+ENC\s+(\S+)`),
+	// FortiOS: set <field> ENC <value>  (every encrypted value: passwords,
+	// passphrases, PSKs, API keys, RADIUS secondary secrets, key material).
+	// FortiOS encrypts only secrets, so the field name does not matter.
+	pattern(`^\s*set\s+\S+\s+ENC\s+(\S+)`),
 	// FortiOS: set community "<name>" / set snmp-community "<name>"  (SNMP community names)
 	pattern(`^\s*set\s+(?:community|snmp-community)\s+` + quoted),
-	// FortiOS: set key "<value>" / set password "<value>"  (clear-text key-like values)
-	pattern(`^\s*set\s+(?:passwd|password|passphrase|auth-passwd|group-password|psksecret(?:-remote|-local)?|ppk-secret|secret|private-key|local-key|peer-key|server-key|client-key|key)\s+` + quoted),
+	// FortiOS: set key "<value>" / set password "<value>"  (clear-text key-like
+	// values; one spanning several lines is found by textPatterns)
+	pattern(`^\s*set\s+` + fortiOSSecretFields + `\s+` + quoted),
 
 	// Cumulus Linux 4.x: NCLU commands and block form
 	// [net add ...] neighbor IP|IFACE|GROUP password [type] <value>  (BGP; also
@@ -174,6 +181,32 @@ var sensitivePatterns = []sensitivePattern{
 	pattern(`(\$[0-9a-z]{1,2}\$[^\s";]+)`),
 }
 
+// textPatterns locate secrets that can span several lines, so they are
+// matched against the whole text rather than line by line. Every capture
+// group is a secret.
+var textPatterns = []*regexp.Regexp{
+	// FortiOS: set private-key "<PEM block>" and the other secret fields,
+	// whose quoted value can run over many lines.
+	regexp.MustCompile(`(?mi)^[ \t]*set[ \t]+` + fortiOSSecretFields + `[ \t]+` + quoted),
+	// A PEM private key block on any platform (RSA, EC, OPENSSH, ENCRYPTED, ...).
+	regexp.MustCompile(`(?s)(-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----)`),
+}
+
+// textSpans returns a span for every secret textPatterns find in text.
+func textSpans(text string) []span {
+	var spans []span
+	for _, re := range textPatterns {
+		for _, m := range re.FindAllStringSubmatchIndex(text, -1) {
+			for g := 2; g+1 < len(m); g += 2 {
+				if m[g] >= 0 && m[g] < m[g+1] {
+					spans = append(spans, span{start: m[g], end: m[g+1]})
+				}
+			}
+		}
+	}
+	return spans
+}
+
 // Obfuscate controls whether sensitive values are replaced with hashes in
 // tool output. Enabled by default; set to false via --no-obfuscate.
 var Obfuscate = true
@@ -211,9 +244,9 @@ func obfuscate(config string) (out string, hashed bool, err error) {
 	if obfuscationKey == nil {
 		return "", false, errObfuscationKeyNotSet
 	}
-	// Both passes read the original text and only report spans, so neither can
-	// hide a secret from the other by rewriting what it sees.
-	spans := jsonSpans(config)
+	// Every pass reads the original text and only reports spans, so none can
+	// hide a secret from another by rewriting what it sees.
+	spans := append(jsonSpans(config), textSpans(config)...)
 	offset := 0
 	for line := range strings.SplitSeq(config, "\n") {
 		spans = append(spans, lineSpans(line, offset)...)

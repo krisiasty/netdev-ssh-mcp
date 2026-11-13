@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -23,6 +24,7 @@ type RunPingInput struct {
 	Size        int    `json:"size,omitempty" jsonschema:"packet size in bytes"`
 	OutgoingIf  string `json:"outgoing_interface,omitempty" jsonschema:"outgoing interface; FortiOS only"`
 	DeviceType  string `json:"device_type,omitempty" jsonschema:"device OS type: eos (Arista), ios (Cisco IOS/IOS-XE), nxos (Cisco NX-OS), junos (Juniper JunOS), fortios (FortiGate/FortiOS), or cumulus4x (Cumulus Linux 4.x); if omitted, the platform is auto-detected over SSH and reported in the result"`
+	VDOM        string `json:"vdom,omitempty" jsonschema:"FortiOS only: the VDOM to run in, one of those fortigate_list_vdoms lists; if omitted, the command runs where the account's session starts: its VDOM for an account limited to VDOMs, the global context for an account with global scope (fortigate_list_vdoms tells which)"`
 }
 
 // RunPing executes a ping command on a network device.
@@ -53,6 +55,10 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 		return nil, nil, err
 	}
 
+	if err := checkVDOMName(args.VDOM); err != nil {
+		return nil, nil, err
+	}
+
 	cfg, rt, err := resolveTarget(ctx, args.Host, args.Port, args.Username, args.DeviceType)
 	if err != nil {
 		return nil, nil, fmt.Errorf("run_ping: %w", err)
@@ -66,12 +72,7 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 	slog.Info("run_ping", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username), "cmd", sanitizeLog(commandLog)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
 
 	cfg.CommandTimeout = longCommandTimeout
-	var out string
-	if rt.dt == deviceTypeFortiOS {
-		out, err = runCommands(ctx, cfg, commands)
-	} else {
-		out, err = runCommand(ctx, cfg, commands[0])
-	}
+	out, err := runOn(ctx, cfg, rt, args.VDOM, commands)
 	if err != nil {
 		// Linux ping exits 1 when nothing answered; on Cumulus that output
 		// is the result.
@@ -83,12 +84,9 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 		logFailure(ctx, "run_ping", err, "host", args.Host, "destination", args.Destination)
 		return nil, nil, runError(ctx, "run_ping", cfg, rt, cumulusNetError(rt.dt, err))
 	}
-	if out, err = deviceOutput(rt.dt, out); err != nil {
-		return nil, nil, fmt.Errorf("run_ping: %w", err)
-	}
 
 	slog.Info("run_ping done", "host", args.Host, "bytes", len(out))
 	return &mcp.CallToolResult{
-		Content: append([]mcp.Content{&mcp.TextContent{Text: out}}, afterRun(cfg, rt, out, nil)...),
+		Content: slices.Concat([]mcp.Content{&mcp.TextContent{Text: out}}, vdomNotice(args.VDOM), afterRun(cfg, rt, out, nil)),
 	}, nil, nil
 }

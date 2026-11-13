@@ -1,0 +1,106 @@
+package netdev
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"slices"
+	"strings"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+// FortigateListVDOMsInput defines the input parameters for the
+// fortigate_list_vdoms tool.
+type FortigateListVDOMsInput struct {
+	Host     string `json:"host"     jsonschema:"hostname or IP address of the FortiGate"`
+	Username string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
+	Port     int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
+	// DeviceType lets a FortiGate that detection misclassifies, or has cached
+	// as another type, be listed anyway.
+	DeviceType string `json:"device_type,omitempty" jsonschema:"optional: fortios (or fortigate) to skip platform detection, for a FortiGate that detection misclassifies or has cached as another type; no other value is accepted"`
+}
+
+// FortigateListVDOMs lists the VDOMs the account can reach on a FortiGate.
+func FortigateListVDOMs(ctx context.Context, req *mcp.CallToolRequest, args FortigateListVDOMsInput) (*mcp.CallToolResult, any, error) {
+	if args.Host == "" {
+		return nil, nil, fmt.Errorf("host is required")
+	}
+	if args.Username == "" {
+		args.Username = os.Getenv("DEVICE_USERNAME")
+	}
+	if args.Username == "" {
+		return nil, nil, fmt.Errorf("username is required: pass it as a parameter or set DEVICE_USERNAME")
+	}
+
+	cfg, rt, err := resolveTarget(ctx, args.Host, args.Port, args.Username, args.DeviceType)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fortigate_list_vdoms: %w", err)
+	}
+	if rt.dt != deviceTypeFortiOS {
+		if rt.source == sourceExplicit {
+			return nil, nil, fmt.Errorf("fortigate_list_vdoms: device_type can only be fortios here, not %s", rt.dt)
+		}
+		return nil, nil, fmt.Errorf("fortigate_list_vdoms: %q was detected as %s, not a FortiGate; if it is one, "+
+			"pass device_type=fortios, or call detect_platform with refresh=true to detect it again", args.Host, rt.dt)
+	}
+
+	slog.Info("fortigate_list_vdoms", "host", sanitizeLog(args.Host), "user", sanitizeLog(args.Username)) //nolint:gosec // G706: values are sanitized by sanitizeLog before logging
+
+	// Detection has read whether the FortiGate uses VDOMs; without them
+	// there is nothing to list, and no need to connect again.
+	if rt.vdomMode == "disable" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: vdomReport(vdomInfo{}) + " " + vdomsDisabledSource(rt)}},
+		}, nil, nil
+	}
+	info, err := listVDOMs(ctx, cfg, rt)
+	if err != nil {
+		logFailure(ctx, "fortigate_list_vdoms", err, "host", args.Host)
+		// Not runError: this tool has no device_type to suggest, and its
+		// errors say nothing about whether detection was right.
+		return nil, nil, fmt.Errorf("fortigate_list_vdoms: %w", err)
+	}
+	slog.Info("fortigate_list_vdoms done", "host", args.Host, "vdoms", len(info.names))
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: vdomReport(info)}},
+	}, nil, nil
+}
+
+// vdomsDisabledSource says where "no VDOMs" came from when detection
+// answered it.
+func vdomsDisabledSource(rt resolvedType) string {
+	if rt.source == sourceCache {
+		return "(From the cached platform detection, 'Virtual domain configuration: disable'; call detect_platform with refresh=true if that has changed.)"
+	}
+	return "(From 'get system status': 'Virtual domain configuration: disable'.)"
+}
+
+// vdomReport formats vdomInfo. The names come from the device and passed
+// vdomNameRe.
+func vdomReport(info vdomInfo) string {
+	var b strings.Builder
+	if len(info.names) == 0 {
+		b.WriteString("This FortiGate does not use VDOMs, or this account cannot reach them; omit vdom on the other tools.")
+		return b.String()
+	}
+	b.WriteString("VDOMs this account can reach (reported by the device):\n")
+	for _, name := range info.names {
+		b.WriteString(name)
+		if name == info.current {
+			b.WriteString(" (sessions start here)")
+		}
+		b.WriteByte('\n')
+	}
+	b.WriteString("Pass one of these as vdom to get_config, run_show_command, run_ping or run_traceroute")
+	switch {
+	case info.globalScope:
+		b.WriteString("; without vdom, commands run in the global context, where this account's sessions start, " +
+			"so pass vdom for anything that belongs to a VDOM (routes, policies, objects)")
+	case info.current != "" && slices.Contains(info.names, info.current):
+		fmt.Fprintf(&b, "; without vdom, commands run in %s", info.current)
+	}
+	b.WriteString(".")
+	return b.String()
+}
