@@ -78,7 +78,7 @@ const fortiOSShellPromptPattern = `(?:\A|\n)` + fortiOSPromptPattern + `\z`
 // fortiOSVDOMModePromptPattern matches the prompt inside "config vdom" at the
 // end of what was read. A VDOM named "vdom" gives the same prompt, so the
 // reply to "config vdom" is also checked for an error.
-const fortiOSVDOMModePromptPattern = `(?:\A|\n)` + `[\w.-]+ \(vdom\) [#$] \z`
+const fortiOSVDOMModePromptPattern = `(?:\A|\n)` + fortiOSHostnamePattern + ` \(vdom\) [#$] \z`
 
 // fortiOSBannerQuiet is how long the device must stay silent after a line
 // that reads like a request to accept a banner before it is taken for one: a
