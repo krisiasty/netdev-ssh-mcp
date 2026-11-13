@@ -111,22 +111,22 @@ type ConnConfig struct {
 	// an error, the connection is closed and nothing runs. The string is
 	// chosen by the device and is untrusted. Probe does not call it.
 	CheckServerVersion func(serverVersion string) error
-	// Pager, when set, answers the device's output pager for commands run by
-	// RunCommand and RunCommands. Without it stdin is closed at once, so a
-	// device that pages its output waits at the first prompt until the
-	// command timeout. Probe takes its pager from choose instead.
-	Pager *Pager
+	// Terminal, when set, requests a pseudo-terminal of that size for
+	// commands run by RunCommand and RunCommands. Probe takes its terminal
+	// from choose instead.
+	Terminal *Terminal
 }
 
-// Pager describes an output pager that pauses at a prompt line and waits for
-// a key, such as FortiOS "--More--", which no per-session setting turns off.
-type Pager struct {
-	// Prompt is the text the device writes, alone on a line and without a
-	// newline, when it waits for a key. Surrounding spaces, tabs and carriage
-	// returns are ignored.
-	Prompt string
-	// Key is sent to show the next page.
-	Key string
+// Terminal is the size of a pseudo-terminal (PTY) to request before running
+// a command. Some devices page their output, even in an exec session, when
+// they do not know the terminal height: FortiOS writes "--More--", does not
+// wait, and ends the command a few pages in. A tall enough terminal leaves
+// nothing to page. The terminal is requested with echo and output
+// processing off, so output lines still end in "\n" alone, and stdin is
+// closed at once as without one. A server that refuses the request runs the
+// command without a terminal.
+type Terminal struct {
+	Rows, Cols int
 }
 
 // Options controls SSH host key handling and command timeouts.
@@ -259,11 +259,11 @@ type ProbeResult struct {
 
 // Probe dials the SSH host and passes the server's identification string to
 // choose, which returns the command to run on the same connection and the
-// pager to answer while it runs (nil for none; cfg.Pager is not used). If
+// terminal to request for it (nil for none; cfg.Terminal is not used). If
 // choose returns an error, Probe returns it without running anything; if it
 // returns "", Probe runs nothing. Cancelling ctx closes the connection and
 // returns ctx's error.
-func Probe(ctx context.Context, cfg ConnConfig, choose func(serverVersion string) (string, *Pager, error)) (ProbeResult, error) {
+func Probe(ctx context.Context, cfg ConnConfig, choose func(serverVersion string) (string, *Terminal, error)) (ProbeResult, error) {
 	client, addr, err := dial(ctx, cfg)
 	if err != nil {
 		return ProbeResult{}, err
@@ -271,13 +271,13 @@ func Probe(ctx context.Context, cfg ConnConfig, choose func(serverVersion string
 	defer func() { _ = client.Close() }()
 
 	res := ProbeResult{ServerVersion: string(client.ServerVersion())}
-	cmd, pager, err := choose(res.ServerVersion)
+	cmd, term, err := choose(res.ServerVersion)
 	if err != nil || cmd == "" {
 		return res, err
 	}
 	res.Command = cmd
 
-	out, err := runOnClient(ctx, client, addr, cmd, pager, commandTimeout())
+	out, err := runOnClient(ctx, client, addr, cmd, term, commandTimeout())
 	res.Output = out
 	var exitErr *gossh.ExitError
 	if err != nil && !errors.As(err, &exitErr) {
@@ -299,7 +299,7 @@ func runSessionCommand(ctx context.Context, cfg ConnConfig, cmd string) (string,
 		}
 	}
 
-	out, err := runOnClient(ctx, client, addr, cmd, cfg.Pager, commandTimeoutFor(cfg))
+	out, err := runOnClient(ctx, client, addr, cmd, cfg.Terminal, commandTimeoutFor(cfg))
 	if err != nil {
 		return "", err
 	}
@@ -363,9 +363,9 @@ func dial(ctx context.Context, cfg ConnConfig) (*gossh.Client, string, error) {
 // session and running the command take longer than timeout, the connection
 // is closed and ErrCommandTimeout is returned; if ctx is cancelled first, it
 // is closed and ctx's error is returned. On a non-zero exit status it
-// returns the output together with a *CommandError. A non-nil pager is
-// answered while the command runs (see outputWithPager).
-func runOnClient(ctx context.Context, client *gossh.Client, addr, cmd string, pager *Pager, timeout time.Duration) (string, error) {
+// returns the output together with a *CommandError. A non-nil term is
+// requested before the command runs (see Terminal).
+func runOnClient(ctx context.Context, client *gossh.Client, addr, cmd string, term *Terminal, timeout time.Duration) (string, error) {
 	// Start the limit before opening the session: a device can also stall
 	// on the session request. An already-cancelled ctx closes the client
 	// here, so NewSession fails without sending anything.
@@ -391,12 +391,10 @@ func runOnClient(ctx context.Context, client *gossh.Client, addr, cmd string, pa
 	var stderr bytes.Buffer
 	session.Stderr = &stderr
 
-	var out []byte
-	if pager != nil {
-		out, err = outputWithPager(session, cmd, pager)
-	} else {
-		out, err = session.Output(cmd)
+	if term != nil {
+		requestTerminal(session, term)
 	}
+	out, err := session.Output(cmd)
 	if reason := stop(); reason != nil {
 		return "", limitErr(reason)
 	}
@@ -971,4 +969,15 @@ func lineMatchesHost(line, host string, port int) bool {
 	}
 
 	return false
+}
+
+// terminalModes turns off echo and output processing, so that output lines
+// end in "\n" alone rather than "\r\n".
+var terminalModes = gossh.TerminalModes{gossh.ECHO: 0, gossh.OPOST: 0, gossh.ONLCR: 0}
+
+// requestTerminal asks for a pseudo-terminal of term's size on session. If
+// the server refuses, the command runs without one: callers that depend on
+// it check the output (FortiOS output that still pages is refused there).
+func requestTerminal(session *gossh.Session, term *Terminal) {
+	_ = session.RequestPty("vt100", term.Rows, term.Cols, terminalModes)
 }

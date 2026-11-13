@@ -61,21 +61,21 @@ type fakeProbe struct {
 	err     error
 	calls   int
 	ran     []string
-	pagers  []*sshclient.Pager // the pager chosen for each command in ran
+	terms   []*sshclient.Terminal // the terminal chosen for each command in ran
 }
 
-func (f *fakeProbe) probe(_ context.Context, cfg sshclient.ConnConfig, choose func(string) (string, *sshclient.Pager, error)) (sshclient.ProbeResult, error) {
+func (f *fakeProbe) probe(_ context.Context, cfg sshclient.ConnConfig, choose func(string) (string, *sshclient.Terminal, error)) (sshclient.ProbeResult, error) {
 	f.calls++
 	res := sshclient.ProbeResult{ServerVersion: f.ident}
 	if f.err != nil {
 		return res, f.err
 	}
-	cmd, pager, err := choose(f.ident)
+	cmd, term, err := choose(f.ident)
 	if err != nil || cmd == "" {
 		return res, err
 	}
 	f.ran = append(f.ran, cmd)
-	f.pagers = append(f.pagers, pager)
+	f.terms = append(f.terms, term)
 	res.Command = cmd
 	res.Output = f.outputs[cmd]
 	return res, nil
@@ -111,7 +111,7 @@ func TestProbeCommandFor(t *testing.T) {
 	tests := []struct {
 		ident       string
 		want        string
-		pager       bool // the FortiOS --More-- pager
+		terminal    bool // the FortiOS terminal
 		unsupported bool
 	}{
 		{ident: identEOS, want: probeShowVersion},
@@ -119,30 +119,35 @@ func TestProbeCommandFor(t *testing.T) {
 		{ident: identNXOS, want: probeShowVersion},
 		{ident: identIOS, want: probeShowVersion},
 		{ident: identDropbear, want: probeShowVersion},
-		{ident: identFortiOS, want: probeSystemStatus, pager: true},
-		{ident: identFortiSSH, want: probeSystemStatus, pager: true},
+		{ident: identFortiOS, want: probeSystemStatus, terminal: true},
+		{ident: identFortiSSH, want: probeSystemStatus, terminal: true},
 		{ident: identCumulus, want: probeOSRelease},
 		{ident: identUbuntu, want: probeOSRelease},
 		{ident: identC1200, unsupported: true},
 	}
 	for _, tt := range tests {
-		got, pager, err := probeCommandFor(classifyIdent(tt.ident), tt.ident)
+		got, term, err := probeCommandFor(classifyIdent(tt.ident), tt.ident)
 		if tt.unsupported {
-			if !errors.Is(err, errUnsupportedPlatform) || got != "" || pager != nil {
-				t.Errorf("probeCommandFor(%q) = %q, %+v, %v; want no command, no pager and errUnsupportedPlatform", tt.ident, got, pager, err)
+			if !errors.Is(err, errUnsupportedPlatform) || got != "" || term != nil {
+				t.Errorf("probeCommandFor(%q) = %q, %+v, %v; want no command, no terminal and errUnsupportedPlatform", tt.ident, got, term, err)
 			}
 			continue
 		}
 		if err != nil || got != tt.want {
 			t.Errorf("probeCommandFor(%q) = %q, %v; want %q", tt.ident, got, err, tt.want)
 		}
-		if tt.pager {
-			if pager == nil || pager.Prompt != "--More--" || pager.Key != " " {
-				t.Errorf("probeCommandFor(%q) pager = %+v, want the FortiOS --More-- pager", tt.ident, pager)
-			}
-		} else if pager != nil {
-			t.Errorf("probeCommandFor(%q) pager = %+v, want none", tt.ident, pager)
+		if tt.terminal {
+			wantFortiOSTerminal(t, term)
+		} else if term != nil {
+			t.Errorf("probeCommandFor(%q) terminal = %+v, want none", tt.ident, term)
 		}
+	}
+}
+
+func wantFortiOSTerminal(t *testing.T, term *sshclient.Terminal) {
+	t.Helper()
+	if term == nil || term.Rows != 65535 || term.Cols < 80 {
+		t.Fatalf("terminal = %+v, want 65535 rows", term)
 	}
 }
 
@@ -169,6 +174,20 @@ func TestMatchProbeOutput(t *testing.T) {
 			}
 			if v := extractVersion(got, out); v != tt.wantVersion {
 				t.Fatalf("extractVersion() = %q, want %q", v, tt.wantVersion)
+			}
+		})
+	}
+
+	// FortiOS writes its CLI prompt before the output in an exec session.
+	for _, prompt := range []string{"FGT-1 $ ", "FGT-1 # ", "FGT-1 (root) # "} {
+		t.Run("fortios after prompt "+prompt, func(t *testing.T) {
+			out := prompt + readFixture(t, "fortios_get_system_status.txt") + "\n" + prompt
+			got, err := matchProbeOutput(probeSystemStatus, out)
+			if err != nil || got != deviceTypeFortiOS {
+				t.Fatalf("matchProbeOutput() = %q, %v; want fortios", got, err)
+			}
+			if v := extractVersion(got, out); v != "v7.4.4" {
+				t.Fatalf("extractVersion() = %q, want v7.4.4", v)
 			}
 		})
 	}
@@ -292,9 +311,7 @@ func TestResolveDeviceType(t *testing.T) {
 		if len(f.ran) != 1 || f.ran[0] != probeSystemStatus {
 			t.Fatalf("ran %v, want only %q", f.ran, probeSystemStatus)
 		}
-		if p := f.pagers[0]; p == nil || p.Prompt != "--More--" || p.Key != " " {
-			t.Fatalf("probe pager = %+v, want the FortiOS --More-- pager", p)
-		}
+		wantFortiOSTerminal(t, f.terms[0])
 	})
 
 	t.Run("unsupported "+identC1200, func(t *testing.T) {

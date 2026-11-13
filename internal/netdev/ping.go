@@ -83,6 +83,9 @@ func RunPing(ctx context.Context, req *mcp.CallToolRequest, args RunPingInput) (
 		logFailure(ctx, "run_ping", err, "host", args.Host, "destination", args.Destination)
 		return nil, nil, runError(ctx, "run_ping", cfg, rt, cumulusNetError(rt.dt, err))
 	}
+	if out, err = deviceOutput(rt.dt, out); err != nil {
+		return nil, nil, fmt.Errorf("run_ping: %w", err)
+	}
 
 	slog.Info("run_ping done", "host", args.Host, "bytes", len(out))
 	return &mcp.CallToolResult{

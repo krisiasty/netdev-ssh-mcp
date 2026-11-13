@@ -59,6 +59,9 @@ func RunShowCommand(ctx context.Context, req *mcp.CallToolRequest, args RunShowC
 		logFailure(ctx, "run_show_command", err, "host", args.Host, "command", command)
 		return nil, nil, runError(ctx, "run_show_command", cfg, rt, err)
 	}
+	if out, err = deviceOutput(rt.dt, out); err != nil {
+		return nil, nil, fmt.Errorf("run_show_command: %w", err)
+	}
 
 	res, err := obfuscatedResult(out)
 	if err != nil {

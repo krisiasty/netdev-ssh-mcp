@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,10 +17,44 @@ import (
 
 // testServer is a minimal SSH server for exercising the client. Exec requests
 // are answered by commands; a command missing from the map never answers,
-// like a device that ignores exec requests.
+// like a device that ignores exec requests. Pseudo-terminal requests are
+// recorded, and accepted unless refusePTY is set.
 type testServer struct {
-	addr     *net.TCPAddr
-	commands map[string]testReply
+	addr      *net.TCPAddr
+	commands  map[string]testReply
+	refusePTY bool
+
+	mu       sync.Mutex
+	requests []string     // channel request types, in order
+	ptys     []ptyRequest // the pseudo-terminals requested
+}
+
+// ptyRequest is the payload of a "pty-req" channel request (RFC 4254, 6.2).
+type ptyRequest struct {
+	Term          string
+	Cols, Rows    uint32
+	Width, Height uint32
+	Modes         string
+}
+
+// modes decodes the terminal modes: an opcode byte and a uint32 value each,
+// up to TTY_OP_END (0).
+func (r ptyRequest) modes() map[uint8]uint32 {
+	m := map[uint8]uint32{}
+	b := []byte(r.Modes)
+	for len(b) >= 5 && b[0] != 0 {
+		m[b[0]] = binary.BigEndian.Uint32(b[1:5])
+		b = b[5:]
+	}
+	return m
+}
+
+// seen returns the channel request types received so far, and the
+// pseudo-terminals requested.
+func (s *testServer) seen() ([]string, []ptyRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.requests...), append([]ptyRequest(nil), s.ptys...)
 }
 
 type testReply struct {
@@ -85,6 +120,19 @@ func (s *testServer) serve(conn net.Conn, cfg *gossh.ServerConfig) {
 		}
 		go func() {
 			for req := range chReqs {
+				s.mu.Lock()
+				s.requests = append(s.requests, req.Type)
+				s.mu.Unlock()
+				if req.Type == "pty-req" {
+					var pr ptyRequest
+					if err := gossh.Unmarshal(req.Payload, &pr); err == nil {
+						s.mu.Lock()
+						s.ptys = append(s.ptys, pr)
+						s.mu.Unlock()
+					}
+					_ = req.Reply(!s.refusePTY, nil)
+					continue
+				}
 				if req.Type != "exec" || len(req.Payload) < 4 ||
 					uint64(len(req.Payload)) < 4+uint64(binary.BigEndian.Uint32(req.Payload)) {
 					_ = req.Reply(false, nil)
@@ -125,7 +173,7 @@ func TestProbeReturnsServerVersionAndOutput(t *testing.T) {
 	cfg := useTestServer(t, s, 5*time.Second)
 
 	var seen string
-	res, err := Probe(t.Context(), cfg, func(serverVersion string) (string, *Pager, error) {
+	res, err := Probe(t.Context(), cfg, func(serverVersion string) (string, *Terminal, error) {
 		seen = serverVersion
 		return "show version", nil, nil
 	})
@@ -146,7 +194,7 @@ func TestProbeKeepsOutputOnNonZeroExit(t *testing.T) {
 	})
 	cfg := useTestServer(t, s, 5*time.Second)
 
-	res, err := Probe(t.Context(), cfg, func(string) (string, *Pager, error) { return "show version", nil, nil })
+	res, err := Probe(t.Context(), cfg, func(string) (string, *Terminal, error) { return "show version", nil, nil })
 	if err != nil || res.Output != "% Invalid input\n" {
 		t.Fatalf("Probe() = %+v, %v; want the output and no error", res, err)
 	}
@@ -157,7 +205,7 @@ func TestProbeRunsNothingWhenChooseRefuses(t *testing.T) {
 	cfg := useTestServer(t, s, 5*time.Second)
 
 	refused := errors.New("unsupported")
-	res, err := Probe(t.Context(), cfg, func(string) (string, *Pager, error) { return "", nil, refused })
+	res, err := Probe(t.Context(), cfg, func(string) (string, *Terminal, error) { return "", nil, refused })
 	if !errors.Is(err, refused) || res.Command != "" || res.ServerVersion != "SSH-2.0-OpenSSH_7.3p1.RL" {
 		t.Fatalf("Probe() = %+v, %v; want the refusal, the server version and no command", res, err)
 	}

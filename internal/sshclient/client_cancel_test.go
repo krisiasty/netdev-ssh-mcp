@@ -243,7 +243,7 @@ func TestProbeCancelled(t *testing.T) {
 	srv := startStallingServer(t, stallCommand)
 	usePasswordAuth(t)
 	checkCancelled(t, srv.reached, srv.closed, func(ctx context.Context) error {
-		_, err := Probe(ctx, srv.connConfig(), func(string) (string, *Pager, error) { return "show version", nil, nil })
+		_, err := Probe(ctx, srv.connConfig(), func(string) (string, *Terminal, error) { return "show version", nil, nil })
 		return err
 	})
 }

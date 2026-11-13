@@ -76,6 +76,9 @@ func RunTraceroute(ctx context.Context, req *mcp.CallToolRequest, args RunTracer
 		logFailure(ctx, "run_traceroute", err, "host", args.Host, "destination", args.Destination)
 		return nil, nil, runError(ctx, "run_traceroute", cfg, rt, cumulusNetError(rt.dt, err))
 	}
+	if out, err = deviceOutput(rt.dt, out); err != nil {
+		return nil, nil, fmt.Errorf("run_traceroute: %w", err)
+	}
 
 	slog.Info("run_traceroute done", "host", args.Host, "bytes", len(out))
 	return &mcp.CallToolResult{

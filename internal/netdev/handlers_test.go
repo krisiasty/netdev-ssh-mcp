@@ -446,7 +446,7 @@ func TestHandlersPassRequestContext(t *testing.T) {
 		}
 	}
 	f := &fakeProbe{ident: identEOS, outputs: map[string]string{probeShowVersion: readFixture(t, "eos_show_version.txt")}}
-	runProbe = func(pctx context.Context, cfg sshclient.ConnConfig, choose func(string) (string, *sshclient.Pager, error)) (sshclient.ProbeResult, error) {
+	runProbe = func(pctx context.Context, cfg sshclient.ConnConfig, choose func(string) (string, *sshclient.Terminal, error)) (sshclient.ProbeResult, error) {
 		check("probe", pctx)
 		return f.probe(pctx, cfg, choose)
 	}
@@ -836,10 +836,10 @@ func TestNonCumulusTypeRefusesLinuxServer(t *testing.T) {
 	}
 }
 
-// TestFortiOSAnswersPager checks that every tool that runs a command asks
-// sshclient to answer the FortiOS "--More--" pager, and that no other
-// platform gets a pager: answering one keeps stdin open.
-func TestFortiOSAnswersPager(t *testing.T) {
+// TestFortiOSRequestsTerminal checks that every tool that runs a command
+// asks sshclient for the FortiOS terminal, which keeps FortiOS from paging,
+// and that no other platform gets one.
+func TestFortiOSRequestsTerminal(t *testing.T) {
 	for name, call := range commandToolCalls {
 		t.Run(name, func(t *testing.T) {
 			for _, d := range allDeviceTypes {
@@ -851,16 +851,14 @@ func TestFortiOSAnswersPager(t *testing.T) {
 				if len(*cfgs) != 1 {
 					t.Fatalf("%s: configs = %+v, want one", dt, *cfgs)
 				}
-				p := (*cfgs)[0].Pager
+				term := (*cfgs)[0].Terminal
 				if dt != "fortios" {
-					if p != nil {
-						t.Fatalf("%s: pager = %+v, want none", dt, p)
+					if term != nil {
+						t.Fatalf("%s: terminal = %+v, want none", dt, term)
 					}
 					continue
 				}
-				if p == nil || p.Prompt != "--More--" || p.Key != " " {
-					t.Fatalf("%s: pager = %+v, want the --More-- pager answered with a space", dt, p)
-				}
+				wantFortiOSTerminal(t, term)
 			}
 		})
 	}
