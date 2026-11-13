@@ -112,31 +112,23 @@ const (
 )
 
 // probeCommandFor returns the one command to run for an identification
-// class, chosen so the likely platform accepts it. Platforms that are known
-// to be unsupported get an error before anything runs: on the Cisco Business
-// switch OS an exec request hangs. A Linux system reaches a shell, so the
-// probe only reads /etc/os-release.
-func probeCommandFor(c identClass, serverVersion string) (string, error) {
+// class, chosen so the likely platform accepts it, and the pager to answer
+// while it runs (nil for none). Platforms that are known to be unsupported
+// get an error before anything runs: on the Cisco Business switch OS an exec
+// request hangs. A Linux system reaches a shell, so the probe only reads
+// /etc/os-release. The FortiOS probe's output can be long enough to page.
+func probeCommandFor(c identClass, serverVersion string) (string, *sshclient.Pager, error) {
 	switch c {
 	case identLinux:
-		return probeOSRelease, nil
+		return probeOSRelease, nil, nil
 	case identCiscoBusiness:
-		return "", fmt.Errorf("%w: the SSH server %q is the Cisco Business switch OS (Catalyst 1200/1300, CBS), which does not answer SSH exec requests",
+		return "", nil, fmt.Errorf("%w: the SSH server %q is the Cisco Business switch OS (Catalyst 1200/1300, CBS), which does not answer SSH exec requests",
 			errUnsupportedPlatform, displayValue(serverVersion))
 	case identObfuscated:
-		return probeSystemStatus, nil
+		return probeSystemStatus, pagerFor(deviceTypeFortiOS), nil
 	default:
-		return probeShowVersion, nil
+		return probeShowVersion, nil, nil
 	}
-}
-
-// probePager returns the pager to answer while a probe command runs: only
-// FortiOS gets "get system status", and its output can be long enough to page.
-func probePager(cmd string) *sshclient.Pager {
-	if cmd == probeSystemStatus {
-		return pagerFor(deviceTypeFortiOS)
-	}
-	return nil
 }
 
 // platformMarker identifies a platform from probe output. Every pattern is
@@ -310,8 +302,7 @@ func resolveDeviceType(ctx context.Context, cfg sshclient.ConnConfig, raw string
 	}
 
 	res, err := runProbe(ctx, cfg, func(serverVersion string) (string, *sshclient.Pager, error) {
-		cmd, err := probeCommandFor(classifyIdent(serverVersion), serverVersion)
-		return cmd, probePager(cmd), err
+		return probeCommandFor(classifyIdent(serverVersion), serverVersion)
 	})
 	if errors.Is(err, errUnsupportedPlatform) {
 		// Identified, and known not to be supported: an answer, not a failure.

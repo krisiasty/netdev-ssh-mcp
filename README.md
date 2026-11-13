@@ -96,7 +96,25 @@ FortiOS notes:
 - FortiOS does not support `config_type=startup`.
 - FortiOS pages output at `--More--` when the console output mode is `more`, even over SSH exec, and no per-session
   command turns that off. On `fortios` (and while detecting it) every tool answers each prompt with a space and removes
-  the prompt and its erase sequence from the output, so the device configuration does not need to change.
+  the prompt, and what the device writes to clear it, from the output.
+- A prompt is a line that holds only `--More--`, with optional whitespace around it, after which the device stops
+  sending. The first prompt of a command is answered only after the device has been silent for one second, so a
+  device with the pager off is never sent a key for a line of its output. Once the device has waited at a prompt, the
+  later prompts of that command are answered at once, so long output costs that one second only.
+- On a device with the pager on, a line of real output that holds only `--More--`, such as a line inside a multi-line
+  `set buffer` or `set script` value, cannot be told from a prompt if an SSH read happens to end right after it, and
+  is removed from the output. This is rare, but turning the pager off on the device rules it out and is recommended:
+
+  ```
+  config global
+  config system console
+      set output standard
+  end
+  end
+  ```
+
+  On a FortiGate without VDOMs, leave out `config global` and the last `end`. Even with the pager off, such a line is
+  removed if the device pauses for more than a second right after it.
 
 Cumulus Linux notes:
 

@@ -111,6 +111,7 @@ func TestProbeCommandFor(t *testing.T) {
 	tests := []struct {
 		ident       string
 		want        string
+		pager       bool // the FortiOS --More-- pager
 		unsupported bool
 	}{
 		{ident: identEOS, want: probeShowVersion},
@@ -118,21 +119,29 @@ func TestProbeCommandFor(t *testing.T) {
 		{ident: identNXOS, want: probeShowVersion},
 		{ident: identIOS, want: probeShowVersion},
 		{ident: identDropbear, want: probeShowVersion},
-		{ident: identFortiOS, want: probeSystemStatus},
+		{ident: identFortiOS, want: probeSystemStatus, pager: true},
+		{ident: identFortiSSH, want: probeSystemStatus, pager: true},
 		{ident: identCumulus, want: probeOSRelease},
 		{ident: identUbuntu, want: probeOSRelease},
 		{ident: identC1200, unsupported: true},
 	}
 	for _, tt := range tests {
-		got, err := probeCommandFor(classifyIdent(tt.ident), tt.ident)
+		got, pager, err := probeCommandFor(classifyIdent(tt.ident), tt.ident)
 		if tt.unsupported {
-			if !errors.Is(err, errUnsupportedPlatform) || got != "" {
-				t.Errorf("probeCommandFor(%q) = %q, %v; want no command and errUnsupportedPlatform", tt.ident, got, err)
+			if !errors.Is(err, errUnsupportedPlatform) || got != "" || pager != nil {
+				t.Errorf("probeCommandFor(%q) = %q, %+v, %v; want no command, no pager and errUnsupportedPlatform", tt.ident, got, pager, err)
 			}
 			continue
 		}
 		if err != nil || got != tt.want {
 			t.Errorf("probeCommandFor(%q) = %q, %v; want %q", tt.ident, got, err, tt.want)
+		}
+		if tt.pager {
+			if pager == nil || pager.Prompt != "--More--" || pager.Key != " " {
+				t.Errorf("probeCommandFor(%q) pager = %+v, want the FortiOS --More-- pager", tt.ident, pager)
+			}
+		} else if pager != nil {
+			t.Errorf("probeCommandFor(%q) pager = %+v, want none", tt.ident, pager)
 		}
 	}
 }

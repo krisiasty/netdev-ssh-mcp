@@ -842,7 +842,8 @@ func TestNonCumulusTypeRefusesLinuxServer(t *testing.T) {
 func TestFortiOSAnswersPager(t *testing.T) {
 	for name, call := range commandToolCalls {
 		t.Run(name, func(t *testing.T) {
-			for _, dt := range []string{"eos", "ios", "nxos", "junos", "fortios", "cumulus4x"} {
+			for _, d := range allDeviceTypes {
+				dt := string(d)
 				cfgs := stubRunCommandConfigs(t, "ok")
 				if err := call(t.Context(), dt); err != nil {
 					t.Fatalf("%s: error = %v", dt, err)

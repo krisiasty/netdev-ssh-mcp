@@ -46,6 +46,16 @@ func connConfig(host string, port int, username string) sshclient.ConnConfig {
 // "config system console / set output standard" changes the configuration.
 // The other platforms do not page exec output, or have it disabled with
 // "| no-more" by the command builders.
+//
+// With a pager, stdin stays open for the whole command, so a command that
+// reads stdin, such as one that asks "(y/n)", waits until the command timeout
+// instead of reading end of file. Every FortiOS command the tools send must
+// therefore never ask for input: run_show_command accepts only "get"
+// commands there (checkOperationalCommand) and refuses show, config, execute
+// and diagnose (normalizeFortiOSOperationalCommand; see
+// TestNormalizeOperationalCommandRequiresLowerCaseVerb), and the other tools
+// send only the fixed commands built in this file. Loosen either only for
+// commands that do not read stdin.
 func pagerFor(dt deviceType) *sshclient.Pager {
 	if dt == deviceTypeFortiOS {
 		return &sshclient.Pager{Prompt: "--More--", Key: " "}
