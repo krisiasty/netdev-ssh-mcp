@@ -24,6 +24,8 @@ func TestToolInputSchemaRequiredFields(t *testing.T) {
 		{name: "run_traceroute", typ: reflect.TypeFor[RunTracerouteInput](), want: []string{"destination", "host"}},
 		{name: "detect_platform", typ: reflect.TypeFor[DetectPlatformInput](), want: []string{"host"}},
 		{name: "fortigate_list_vdoms", typ: reflect.TypeFor[FortigateListVDOMsInput](), want: []string{"host"}},
+		{name: "get_logs", typ: reflect.TypeFor[GetLogsInput](), want: []string{"host", "unit"}},
+		{name: "list_log_units", typ: reflect.TypeFor[ListLogUnitsInput](), want: nil},
 		{name: "trust_host_key", typ: reflect.TypeFor[TrustHostKeyInput](), want: []string{"host"}},
 	}
 

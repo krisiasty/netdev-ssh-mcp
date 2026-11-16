@@ -11,7 +11,9 @@ import (
 
 // cumulusMergeStderr is appended to every command built for Cumulus Linux 4.x.
 // NCLU's error stream is undocumented, so stderr is merged into stdout to make
-// sure it reaches obfuscation. It is the only shell syntax the server adds.
+// sure it reaches obfuscation. Apart from the single quotes get_logs puts
+// around a validated, quote-free --since value (buildLogsCommand), it is the
+// only shell syntax the server adds.
 const cumulusMergeStderr = " 2>&1"
 
 // On Cumulus Linux, ping and traceroute are wrapped by vrf-wrapper.sh, which
