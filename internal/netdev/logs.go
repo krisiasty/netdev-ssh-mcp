@@ -28,6 +28,11 @@ var logUnits = map[deviceType][]string{
 const (
 	// defaultLogSince is the --since value when the caller gives none.
 	defaultLogSince = "-1h"
+	// defaultLogLines is the --lines value when the caller gives none. A
+	// day of switchd on a quiet switch is megabytes, which would use much of
+	// an agent's context and exceed MCP clients' output limits, so an
+	// unlimited default is not useful.
+	defaultLogLines = 1000
 	// maxLogLines is the largest --lines value get_logs accepts.
 	maxLogLines = 100000
 	// maxLogSinceLen bounds since, which the patterns below already keep
@@ -89,12 +94,16 @@ func normalizeLogSince(since string) (string, error) {
 	return "", fmt.Errorf("since must be %s", logSinceRule)
 }
 
-// checkLogLines checks lines; 0 means all lines.
-func checkLogLines(lines int) error {
+// normalizeLogLines checks lines and returns it, or defaultLogLines when it
+// is 0 (omitted).
+func normalizeLogLines(lines int) (int, error) {
 	if lines < 0 || lines > maxLogLines {
-		return fmt.Errorf("lines must be between 1 and %d, or omitted for all lines", maxLogLines)
+		return 0, fmt.Errorf("lines must be between 1 and %d, or omitted for the default of %d", maxLogLines, defaultLogLines)
 	}
-	return nil
+	if lines == 0 {
+		return defaultLogLines, nil
+	}
+	return lines, nil
 }
 
 // logPlatforms lists the platforms that have log units, sorted.
@@ -141,7 +150,7 @@ func logUnitsSummary() string {
 }
 
 // buildLogsCommand builds the journalctl command for unit on dt. since must
-// have passed normalizeLogSince and lines checkLogLines; the unit is checked
+// have passed normalizeLogSince and lines normalizeLogLines; the unit is checked
 // against dt's list here. Every platform in logUnits is Linux, where bash
 // runs the command, so stderr is merged as on Cumulus Linux and since, which
 // can hold a space, is single-quoted.
@@ -160,11 +169,10 @@ func buildLogsCommand(dt deviceType, unit, since string, lines int) (string, err
 		// normalizeLogSince accepts no quote; this guards the quoting below.
 		return "", fmt.Errorf("since must not contain quotes")
 	}
-	parts := []string{"journalctl", "-u", unit, "--since", "'" + since + "'"}
-	if lines > 0 {
-		parts = append(parts, "--lines", fmt.Sprintf("%d", lines))
+	if lines <= 0 || lines > maxLogLines {
+		return "", fmt.Errorf("lines %d is out of range", lines)
 	}
-	parts = append(parts, "--no-pager")
+	parts := []string{"journalctl", "-u", unit, "--since", "'" + since + "'", "--lines", fmt.Sprintf("%d", lines), "--no-pager"}
 	return strings.Join(parts, " ") + cumulusMergeStderr, nil
 }
 
@@ -177,12 +185,43 @@ var journalNoAccessRe = regexp.MustCompile(`(?m)^Hint: You are currently not see
 const journalNoAccessNotice = "journalctl reports that this account cannot read the system journal, so the output above holds only its own messages, " +
 	"if any: add the account to the systemd-journal group on the device."
 
-// logsNotices returns the notices to append to get_logs output.
-func logsNotices(out string) []mcp.Content {
-	if journalNoAccessRe.MatchString(out) {
-		return []mcp.Content{&mcp.TextContent{Text: journalNoAccessNotice}}
+// countLogEntries counts the journal entries in journalctl output: lines
+// that are not empty, not journalctl's own "-- ... --" markers (the header,
+// "-- No entries --", "-- Reboot --"), not its hint, and not indented
+// continuations of a multi-line entry or the hint.
+func countLogEntries(out string) int {
+	n := 0
+	for line := range strings.SplitSeq(out, "\n") {
+		switch {
+		case line == "", strings.HasPrefix(line, "-- "), strings.HasPrefix(line, "Hint: "),
+			strings.HasPrefix(line, " "), strings.HasPrefix(line, "\t"):
+			continue
+		}
+		n++
 	}
-	return nil
+	return n
+}
+
+// logsNotices returns the notices to append to get_logs output for a call
+// with the given lines limit.
+func logsNotices(out string, lines int) []mcp.Content {
+	var notices []mcp.Content
+	if journalNoAccessRe.MatchString(out) {
+		notices = append(notices, &mcp.TextContent{Text: journalNoAccessNotice})
+	}
+	entries := countLogEntries(out)
+	if entries >= lines {
+		notices = append(notices, &mcp.TextContent{Text: fmt.Sprintf(
+			"journalctl returned the newest %d entries, the lines limit, so older entries in the time window were probably left out; "+
+				"narrow since, or raise lines (up to %d) to get more.", lines, maxLogLines)})
+	}
+	if entries > defaultLogLines {
+		notices = append(notices, &mcp.TextContent{Text: fmt.Sprintf(
+			"Warning: this result holds %d log entries (%d bytes), more than the default of %d. A result this large uses much of "+
+				"an agent's context and may exceed an MCP client's output limit; narrow since or lower lines if you need less.",
+			entries, len(out), defaultLogLines)})
+	}
+	return notices
 }
 
 // logsErrorLines is how much of a failed journalctl's output is reported.
@@ -214,7 +253,7 @@ type GetLogsInput struct {
 	Host       string `json:"host"       jsonschema:"hostname or IP address of the switch"`
 	Unit       string `json:"unit"       jsonschema:"systemd unit to read the journal of, one of those list_log_units returns for the platform (cumulus4x: clagd, switchd)"`
 	Since      string `json:"since,omitempty" jsonschema:"start of the time window, defaults to -1h: a relative time such as -15min, -1h, -2d or -1h30min, 'today', 'yesterday', or a device-local YYYY-MM-DD, YYYY-MM-DD HH:MM or YYYY-MM-DD HH:MM:SS"`
-	Lines      int    `json:"lines,omitempty" jsonschema:"return only the newest N entries of the window, 1 to 100000; if omitted, every entry in the window is returned"`
+	Lines      int    `json:"lines,omitempty" jsonschema:"return at most the newest N entries of the window, 1 to 100000, defaults to 1000; the result says when the limit was reached, and warns when it holds more than 1000 entries, which uses much of an agent's context and may exceed an MCP client's output limit"`
 	Username   string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
 	Port       int    `json:"port,omitempty" jsonschema:"SSH port, defaults to 22"`
 	DeviceType string `json:"device_type,omitempty" jsonschema:"device OS type; only cumulus4x (Cumulus Linux 4.x) has log units; if omitted, the platform is auto-detected over SSH and reported in the result"`
@@ -241,7 +280,8 @@ func GetLogs(ctx context.Context, req *mcp.CallToolRequest, args GetLogsInput) (
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := checkLogLines(args.Lines); err != nil {
+	lines, err := normalizeLogLines(args.Lines)
+	if err != nil {
 		return nil, nil, err
 	}
 
@@ -249,7 +289,7 @@ func GetLogs(ctx context.Context, req *mcp.CallToolRequest, args GetLogsInput) (
 	if err != nil {
 		return nil, nil, fmt.Errorf("get_logs: %w", err)
 	}
-	command, err := buildLogsCommand(rt.dt, unit, since, args.Lines)
+	command, err := buildLogsCommand(rt.dt, unit, since, lines)
 	if err != nil {
 		if rt.source != sourceExplicit {
 			return nil, nil, fmt.Errorf("%w (device_type %s was auto-detected)", err, rt.dt)
@@ -269,7 +309,7 @@ func GetLogs(ctx context.Context, req *mcp.CallToolRequest, args GetLogsInput) (
 	if err != nil {
 		return nil, nil, fmt.Errorf("get_logs: %w", err)
 	}
-	res.Content = append(res.Content, logsNotices(out)...)
+	res.Content = append(res.Content, logsNotices(out, lines)...)
 	res.Content = append(res.Content, afterRun(cfg, rt, out, nil)...)
 	slog.Info("get_logs done", "host", args.Host, "bytes", len(out))
 	return res, nil, nil

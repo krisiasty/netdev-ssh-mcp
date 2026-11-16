@@ -189,12 +189,14 @@ func main() {
 		Name: "get_logs",
 		Description: "Connect to a Linux-based switch (Cumulus Linux 4.x) via SSH and return the systemd journal of one service unit. " +
 			"Only the units list_log_units returns for the platform are allowed: on cumulus4x, clagd (MLAG) and switchd (the switching ASIC driver). " +
-			"The tool runs \"journalctl -u <unit> --since '<since>' [--lines N] --no-pager\"; the account must be able to read the system journal " +
+			"The tool runs \"journalctl -u <unit> --since '<since>' --lines <lines> --no-pager\"; the account must be able to read the system journal " +
 			"(for example as a member of the systemd-journal group), and the result says so when journalctl reports that it cannot. " +
 			"since defaults to -1h and takes a relative time (-15min, -1h, -2d, -1h30min; units s, sec, m, min, h, hour, d, day, w, week and their plurals), " +
 			"'today', 'yesterday', or YYYY-MM-DD, YYYY-MM-DD HH:MM or YYYY-MM-DD HH:MM:SS in the device's local time. " +
-			"lines (1 to 100000) returns only the newest N entries of the window; without it every entry in the window is returned, " +
-			"so keep the window short on a busy unit. Sensitive values in the output are obfuscated as in get_config. " +
+			"lines (1 to 100000, default 1000) returns at most the newest N entries of the window; when the limit is reached the result says that " +
+			"older entries were probably left out, so narrow since or raise lines. Above 1000 entries the result carries a warning: " +
+			"a result that large uses much of the agent's context and may exceed the MCP client's output limit, so prefer a narrower since. " +
+			"Sensitive values in the output are obfuscated as in get_config. " +
 			"Other platforms have no log units and are refused. " +
 			deviceTypeGuidance,
 	}, netdev.GetLogs)

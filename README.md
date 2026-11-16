@@ -314,7 +314,7 @@ allowed; [`list_log_units`](#list_log_units) returns it. Platforms without a lis
 The tool runs:
 
 ```text
-journalctl -u <unit> --since '<since>' [--lines <lines>] --no-pager 2>&1
+journalctl -u <unit> --since '<since>' --lines <lines> --no-pager 2>&1
 ```
 
 The account must be able to read the system journal without `sudo`, for example as a member of the `systemd-journal`
@@ -326,7 +326,7 @@ result ends with a note saying so; until the account can read the journal, the o
 | `host` | string | yes | — | Hostname or IP address of the switch |
 | `unit` | string | yes | — | Unit to read, from the platform's list |
 | `since` | string | no | `-1h` | Start of the time window; see below |
-| `lines` | int | no | all | Return only the newest N entries of the window, 1 to 100000 |
+| `lines` | int | no | 1000 | Return at most the newest N entries of the window, 1 to 100000 |
 | `username` | string | no | `DEVICE_USERNAME` | SSH username |
 | `port` | int | no | 22 | SSH port |
 | `device_type` | string | no | detected | Only `cumulus4x` has log units; see [Platform detection](#platform-detection) |
@@ -342,9 +342,17 @@ result ends with a note saying so; until the account can read the journal, the o
 The value is single-quoted in the command; none of the accepted forms contains a quote or any other character the
 shell would interpret. `unit` must match a listed name exactly, so nothing else reaches the command line.
 
-Without `lines`, every entry in the window is returned, so keep the window short on a busy unit; a large journal can
-also run into the [command timeout](#command-timeout). Sensitive values are obfuscated as for `get_config`, but the
-obfuscation patterns are written for configuration syntax and cover free-form log text only partly.
+`lines` defaults to 1000. A day of `switchd` on a quiet lab switch is about 7,500 entries and 1.8 MB, which would use
+much of an agent's context and exceed the output limits of many MCP clients, so an unlimited default is not useful. Two
+notes follow the output when they apply:
+
+- When journalctl returns as many entries as `lines`, older entries in the window were probably left out; the note
+  suggests narrowing `since` or raising `lines`.
+- When the output holds more than 1000 entries (only possible with a larger `lines`), a warning says that the result
+  uses much of an agent's context and may exceed an MCP client's output limit.
+
+A large journal can also run into the [command timeout](#command-timeout). Sensitive values are obfuscated as for
+`get_config`, but the obfuscation patterns are written for configuration syntax and cover free-form log text only partly.
 
 ### `list_log_units`
 

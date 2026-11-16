@@ -3,6 +3,7 @@ package netdev
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -84,15 +85,15 @@ func TestNormalizeLogSince(t *testing.T) {
 	}
 }
 
-func TestCheckLogLines(t *testing.T) {
-	for _, n := range []int{0, 1, 100, maxLogLines} {
-		if err := checkLogLines(n); err != nil {
-			t.Errorf("checkLogLines(%d) error = %v", n, err)
+func TestNormalizeLogLines(t *testing.T) {
+	for in, want := range map[int]int{0: defaultLogLines, 1: 1, 100: 100, maxLogLines: maxLogLines} {
+		if got, err := normalizeLogLines(in); err != nil || got != want {
+			t.Errorf("normalizeLogLines(%d) = %d, %v; want %d", in, got, err, want)
 		}
 	}
 	for _, n := range []int{-1, maxLogLines + 1} {
-		if err := checkLogLines(n); err == nil {
-			t.Errorf("checkLogLines(%d) = nil, want an error", n)
+		if got, err := normalizeLogLines(n); err == nil {
+			t.Errorf("normalizeLogLines(%d) = %d, want an error", n, got)
 		}
 	}
 }
@@ -109,14 +110,13 @@ func TestBuildLogsCommand(t *testing.T) {
 	}{
 		{name: "lines", dt: deviceTypeCumulus4x, unit: "clagd", since: "-15min", lines: 100,
 			want: "journalctl -u clagd --since '-15min' --lines 100 --no-pager 2>&1"},
-		{name: "all lines", dt: deviceTypeCumulus4x, unit: "switchd", since: "-1h",
-			want: "journalctl -u switchd --since '-1h' --no-pager 2>&1"},
-		{name: "absolute since", dt: deviceTypeCumulus4x, unit: "switchd", since: "2026-11-16 08:30",
-			want: "journalctl -u switchd --since '2026-11-16 08:30' --no-pager 2>&1"},
-		{name: "unit not on platform", dt: deviceTypeCumulus4x, unit: "sshd", since: "-1h", err: `unit "sshd" is not allowed on cumulus4x`},
+		{name: "absolute since", dt: deviceTypeCumulus4x, unit: "switchd", since: "2026-11-16 08:30", lines: 1000,
+			want: "journalctl -u switchd --since '2026-11-16 08:30' --lines 1000 --no-pager 2>&1"},
+		{name: "lines not normalized", dt: deviceTypeCumulus4x, unit: "switchd", since: "-1h", err: "out of range"},
+		{name: "unit not on platform", dt: deviceTypeCumulus4x, unit: "sshd", since: "-1h", lines: 10, err: `unit "sshd" is not allowed on cumulus4x`},
 		{name: "platform without units", dt: deviceTypeEOS, unit: "clagd", since: "-1h", err: "supports no log units on eos"},
 		{name: "unresolved", dt: "", unit: "clagd", since: "-1h", err: "not resolved"},
-		{name: "quote guard", dt: deviceTypeCumulus4x, unit: "clagd", since: "-1h'", err: "quotes"},
+		{name: "quote guard", dt: deviceTypeCumulus4x, unit: "clagd", since: "-1h'", lines: 10, err: "quotes"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -157,14 +157,14 @@ func TestGetLogsRunsJournalctl(t *testing.T) {
 	}
 }
 
-func TestGetLogsDefaultSince(t *testing.T) {
+func TestGetLogsDefaults(t *testing.T) {
 	ran := stubRunCommand(t, "-- No entries --\n", nil)
 	if _, _, err := GetLogs(context.Background(), nil, GetLogsInput{
 		Host: "sw1", Username: "netops", DeviceType: "cumulus4x", Unit: "switchd",
 	}); err != nil {
 		t.Fatalf("GetLogs() error = %v", err)
 	}
-	want := "journalctl -u switchd --since '-1h' --no-pager 2>&1"
+	want := "journalctl -u switchd --since '-1h' --lines 1000 --no-pager 2>&1"
 	if len(*ran) != 1 || (*ran)[0] != want {
 		t.Fatalf("ran %q, want [%q]", *ran, want)
 	}
@@ -249,7 +249,7 @@ func TestGetLogsDetectsCumulus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLogs() error = %v", err)
 	}
-	if want := "journalctl -u switchd --since 'today' --no-pager 2>&1"; len(*ran) != 1 || (*ran)[0] != want {
+	if want := "journalctl -u switchd --since 'today' --lines 1000 --no-pager 2>&1"; len(*ran) != 1 || (*ran)[0] != want {
 		t.Fatalf("ran %q, want [%q]", *ran, want)
 	}
 	if text := strings.Join(resultTexts(res), "\n"); !strings.Contains(text, "device_type: cumulus4x (auto-detected") {
@@ -358,5 +358,73 @@ func TestListLogUnitsNeedsHostOrDeviceType(t *testing.T) {
 	_, _, err := ListLogUnits(context.Background(), nil, ListLogUnitsInput{})
 	if err == nil || !strings.Contains(err.Error(), "host or device_type is required") {
 		t.Fatalf("ListLogUnits() error = %v, want host or device_type required", err)
+	}
+}
+
+// journalOutput returns journalctl output holding n entries.
+func journalOutput(n int) string {
+	var b strings.Builder
+	b.WriteString("-- Logs begin at Thu 2026-11-12 08:26:41 CET, end at Mon 2026-11-16 20:48:58 CET. --\n")
+	for i := range n {
+		fmt.Fprintf(&b, "Nov 16 20:%02d:%02d leaf5 switchd[3320]: entry %d\n", i/60%60, i%60, i)
+	}
+	return b.String()
+}
+
+func TestCountLogEntries(t *testing.T) {
+	out := "-- Logs begin at Thu 2026-11-12 08:26:41 CET, end at Mon 2026-11-16 20:48:58 CET. --\n" +
+		"Hint: You are currently not seeing messages from other users and the system.\n" +
+		"      Users in groups 'adm', 'systemd-journal' can see all messages.\n" +
+		"Nov 16 08:00:01 sw1 clagd[812]: first\n" +
+		"                                second line of the first entry\n" +
+		"-- Reboot --\n" +
+		"Nov 16 09:00:01 sw1 clagd[812]: second\n"
+	if got := countLogEntries(out); got != 2 {
+		t.Fatalf("countLogEntries() = %d, want 2", got)
+	}
+	if got := countLogEntries("-- Logs begin at ... --\n-- No entries --\n"); got != 0 {
+		t.Fatalf("countLogEntries(no entries) = %d, want 0", got)
+	}
+}
+
+func TestGetLogsLimitNotices(t *testing.T) {
+	const limitReached = "the lines limit, so older entries"
+	const sizeWarning = "Warning: this result holds"
+	tests := []struct {
+		name        string
+		lines       int
+		entries     int
+		wantLimit   bool
+		wantWarning bool
+		wantCommand string
+	}{
+		{name: "default, under the limit", entries: 20, wantCommand: "--lines 1000 "},
+		{name: "default, limit reached", entries: defaultLogLines, wantLimit: true, wantCommand: "--lines 1000 "},
+		{name: "larger limit, small output", lines: 5000, entries: 20, wantCommand: "--lines 5000 "},
+		{name: "larger limit, large output", lines: 5000, entries: 1500, wantWarning: true, wantCommand: "--lines 5000 "},
+		{name: "larger limit reached", lines: 2000, entries: 2000, wantLimit: true, wantWarning: true, wantCommand: "--lines 2000 "},
+		{name: "small limit reached", lines: 5, entries: 5, wantLimit: true, wantCommand: "--lines 5 "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ran := stubRunCommand(t, journalOutput(tt.entries), nil)
+			res, _, err := GetLogs(context.Background(), nil, GetLogsInput{
+				Host: "sw1", Username: "u", DeviceType: "cumulus4x", Unit: "switchd", Lines: tt.lines,
+			})
+			if err != nil {
+				t.Fatalf("GetLogs() error = %v", err)
+			}
+			if len(*ran) != 1 || !strings.Contains((*ran)[0], tt.wantCommand) {
+				t.Fatalf("ran %q, want %q in it", *ran, tt.wantCommand)
+			}
+			texts := resultTexts(res)
+			notes := strings.Join(texts[1:], "\n")
+			if got := strings.Contains(notes, limitReached); got != tt.wantLimit {
+				t.Errorf("limit notice = %v, want %v; notes %q", got, tt.wantLimit, notes)
+			}
+			if got := strings.Contains(notes, sizeWarning); got != tt.wantWarning {
+				t.Errorf("size warning = %v, want %v; notes %q", got, tt.wantWarning, notes)
+			}
+		})
 	}
 }
