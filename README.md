@@ -43,8 +43,9 @@ or a command joined with `;`) before detection logs in to the device.
 
 When a command fails, the error names the command and its exit status and, if the device rejected the syntax, says so.
 It never includes what the device printed: that output is untrusted, can contain secrets, and would bypass the
-obfuscation applied to successful output. The one exception is `run_ping` and `run_traceroute` on Cumulus Linux 4.x,
-where Linux states the reason only in the output and the output holds no secrets; there it follows the exit status.
+obfuscation applied to successful output. There are two exceptions on Cumulus Linux 4.x, where Linux states the reason
+only in the output: `run_ping` and `run_traceroute`, whose output holds no secrets, and `get_logs`, which adds the first
+20 lines of the output after obfuscating them. In both cases the output follows the exit status.
 
 Some platforms are recognised and refused. The Cisco Business switch OS is recognised from the SSH identification
 string before any command runs; Linux systems are identified by the `/etc/os-release` probe. Unsupported results are
@@ -300,6 +301,82 @@ FortiOS limitations:
 
 - `vrf`, `max_hops`, and `timeout` are not supported in this tool for FortiOS 7.4+.
 - `| json` is not supported for FortiOS operational output.
+
+### `get_logs`
+
+Returns the systemd journal of one service unit on a Linux-based switch. Only units on a fixed per-platform list are
+allowed; [`list_log_units`](#list_log_units) returns it. Platforms without a list are refused.
+
+| Platform | Units |
+| --- | --- |
+| `cumulus4x` | `clagd` (MLAG), `switchd` (switching ASIC driver) |
+
+The tool runs:
+
+```text
+journalctl -u <unit> --since '<since>' --lines <lines> --no-pager 2>&1
+```
+
+The account must be able to read the system journal without `sudo`, for example as a member of the `systemd-journal`
+group. Without that, journalctl prints a "You are currently not seeing messages from other users and the system" hint.
+If it can still open a journal file, the result holds at most the account's own messages and ends with a note saying
+so. On Cumulus 4.x it usually cannot, and exits with "No journal files were opened due to insufficient permissions";
+the error then includes that output and a note to add the account to the `systemd-journal` group.
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `host` | string | yes | — | Hostname or IP address of the switch |
+| `unit` | string | yes | — | Unit to read, from the platform's list |
+| `since` | string | no | `-1h` | Start of the time window; see below |
+| `lines` | int | no | 1000 | Return at most the newest N entries of the window, 1 to 100000 |
+| `username` | string | no | `DEVICE_USERNAME` | SSH username |
+| `port` | int | no | 22 | SSH port |
+| `device_type` | string | no | detected | Only `cumulus4x` has log units; see [Platform detection](#platform-detection) |
+
+`since` is checked before the tool connects and accepts only:
+
+- a relative time: `-` followed by one or more numbers, each with a unit, such as `-15min`, `-1h`, `-2d` or `-1h30min`.
+  Units are `s`, `sec`, `second`, `m`, `min`, `minute`, `h`, `hour`, `d`, `day`, `w`, `week` and their plurals; `m` is
+  minutes.
+- `today` or `yesterday`.
+- `YYYY-MM-DD`, `YYYY-MM-DD HH:MM` or `YYYY-MM-DD HH:MM:SS`, in the switch's local time. Impossible dates are refused.
+
+The value is single-quoted in the command; none of the accepted forms contains a quote or any other character the
+shell would interpret. `unit` must match a listed name exactly, so nothing else reaches the command line.
+
+`lines` defaults to 1000. A day of `switchd` on a quiet lab switch is about 7,500 entries and 1.8 MB, which would use
+much of an agent's context and exceed the output limits of many MCP clients, so an unlimited default is not useful. Two
+notes follow the output when they apply:
+
+- When journalctl returns as many entries as `lines`, older entries in the window were probably left out; the note
+  suggests narrowing `since` or raising `lines`.
+- When the output holds more than 1000 entries (only possible with a larger `lines`), a warning says that the result
+  uses much of an agent's context and may exceed an MCP client's output limit.
+
+A large journal can also run into the [command timeout](#command-timeout). Sensitive values are obfuscated as for
+`get_config`, but the obfuscation patterns are written for configuration syntax and cover free-form log text only partly.
+
+### `list_log_units`
+
+Lists the units [`get_logs`](#get_logs) may read on a platform. With `device_type`, the tool answers without
+connecting to any device. Without it, `host` is required and the platform is detected (and cached) first, as in the
+other tools, and the result ends with the detection note.
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `host` | string | if no `device_type` | — | Hostname or IP address of the switch to detect |
+| `username` | string | no | `DEVICE_USERNAME` | SSH username for detection |
+| `port` | int | no | 22 | SSH port for detection |
+| `device_type` | string | no | detected | Platform to list the units of, without connecting |
+
+Example result:
+
+```text
+Log units get_logs can read on cumulus4x:
+clagd
+switchd
+Pass one of these as unit to get_logs.
+```
 
 ### `detect_platform`
 

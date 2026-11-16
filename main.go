@@ -186,6 +186,29 @@ func main() {
 	}, netdev.FortigateListVDOMs)
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name: "get_logs",
+		Description: "Connect to a Linux-based switch (Cumulus Linux 4.x) via SSH and return the systemd journal of one service unit. " +
+			"Only the units list_log_units returns for the platform are allowed: on cumulus4x, clagd (MLAG) and switchd (the switching ASIC driver). " +
+			"The tool runs \"journalctl -u <unit> --since '<since>' --lines <lines> --no-pager\"; the account must be able to read the system journal " +
+			"(for example as a member of the systemd-journal group), and the result says so when journalctl reports that it cannot. " +
+			"since defaults to -1h and takes a relative time (-15min, -1h, -2d, -1h30min; units s, sec, m, min, h, hour, d, day, w, week and their plurals), " +
+			"'today', 'yesterday', or YYYY-MM-DD, YYYY-MM-DD HH:MM or YYYY-MM-DD HH:MM:SS in the device's local time. " +
+			"lines (1 to 100000, default 1000) returns at most the newest N entries of the window; when the limit is reached the result says that " +
+			"older entries were probably left out, so narrow since or raise lines. Above 1000 entries the result carries a warning: " +
+			"a result that large uses much of the agent's context and may exceed the MCP client's output limit, so prefer a narrower since. " +
+			"Sensitive values in the output are obfuscated as in get_config. " +
+			"Other platforms have no log units and are refused. " +
+			deviceTypeGuidance,
+	}, netdev.GetLogs)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "list_log_units",
+		Description: "List the systemd units get_logs may read on a platform. With device_type, the units of that platform are returned " +
+			"without connecting to any device. Without it, host is required and the platform is auto-detected over SSH (and cached) first, " +
+			"as in the other tools. Only Linux-based platforms have log units: cumulus4x has clagd and switchd.",
+	}, netdev.ListLogUnits)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name: "detect_platform",
 		Description: "Connect to a network device via SSH and identify its platform, returning the device_type to pass to the other tools " +
 			"(eos, ios, nxos, junos, fortios or cumulus4x) and a short software version. Detection reads the SSH server identification and runs " +
