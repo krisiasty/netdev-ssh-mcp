@@ -251,19 +251,22 @@ const logsErrorLines = 20
 // failed journalctl, which states the reason only there ("Failed to parse
 // timestamp", "No journal files were opened due to insufficient
 // permissions"), and the journalAccessNotice that applies. The output may
-// hold log entries, so it is obfuscated first, and left out if that fails.
+// hold log entries, so all of it is obfuscated before the first
+// logsErrorLines lines are taken, and it is left out if that fails.
 // Call it after logging, so the output stays out of the log.
 func logsCommandError(err error) error {
 	var cmdErr *sshclient.CommandError
 	if !errors.As(err, &cmdErr) {
 		return err
 	}
-	out := strings.TrimSpace(firstLines(string(cmdErr.Output), logsErrorLines))
-	if out == "" {
+	// Obfuscate before cutting: a pattern that spans lines, such as a PEM
+	// private key block, needs both of its ends to match.
+	out, _, obfErr := obfuscate(string(cmdErr.Output))
+	if obfErr != nil {
 		return err
 	}
-	out, _, obfErr := obfuscate(out)
-	if obfErr != nil {
+	out = strings.TrimSpace(firstLines(out, logsErrorLines))
+	if out == "" {
 		return err
 	}
 	if notice := journalAccessNotice(string(cmdErr.Output)); notice != "" {

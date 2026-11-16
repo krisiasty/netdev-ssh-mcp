@@ -459,3 +459,36 @@ func TestGetLogsLimitNotices(t *testing.T) {
 		})
 	}
 }
+
+// TestGetLogsErrorObfuscatesKeyAcrossLineLimit checks that a private key
+// block crossing the logsErrorLines cut is obfuscated: the PEM pattern needs
+// both markers, so the output must be obfuscated before it is cut.
+func TestGetLogsErrorObfuscatesKeyAcrossLineLimit(t *testing.T) {
+	var b strings.Builder
+	for i := range logsErrorLines - 2 {
+		fmt.Fprintf(&b, "Nov 16 08:00:%02d leaf5 clagd[812]: line %d\n", i, i)
+	}
+	b.WriteString("-----BEGIN RSA PRIVATE KEY-----\n")
+	for i := range 6 {
+		fmt.Fprintf(&b, "KEYMATERIALLINE%dSECRET\n", i)
+	}
+	b.WriteString("-----END RSA PRIVATE KEY-----\n")
+	stubRunCommand(t, "", &sshclient.CommandError{
+		Command:    "journalctl",
+		Err:        &gossh.ExitError{},
+		ExitStatus: 1,
+		Output:     []byte(b.String()),
+	})
+	_, _, err := GetLogs(context.Background(), nil, GetLogsInput{
+		Host: "sw1", Username: "u", DeviceType: "cumulus4x", Unit: "clagd",
+	})
+	if err == nil {
+		t.Fatalf("GetLogs() error = nil, want the command error")
+	}
+	if strings.Contains(err.Error(), "KEYMATERIALLINE") {
+		t.Fatalf("GetLogs() error leaks key material: %v", err)
+	}
+	if !strings.Contains(err.Error(), "line 0") {
+		t.Fatalf("GetLogs() error = %v, want the start of the device output", err)
+	}
+}
