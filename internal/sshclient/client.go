@@ -718,8 +718,9 @@ var placeholderHostKey = sync.OnceValue(func() gossh.PublicKey {
 
 // prohibitedHostKeyAlgorithms are never offered to a server, and keys of
 // these types are refused. DSA (ssh-dss) is limited to 1024-bit keys and
-// SHA-1 signatures and is cryptographically weak. The library's default
-// host key algorithms still include it, so HostKeyAlgorithms is always set.
+// SHA-1 signatures and is cryptographically weak. golang.org/x/crypto/ssh
+// dropped it in v0.59.0 and can no longer negotiate or parse it; the refusal
+// stays as a guard in case a library version that offers it is used.
 var prohibitedHostKeyAlgorithms = []string{gossh.InsecureKeyAlgoDSA, gossh.InsecureCertAlgoDSAv01} //nolint:staticcheck // SA1019: referenced only to refuse DSA.
 
 // sha1HostKeyAlgorithms sign with SHA-1. x/crypto drops them from its default

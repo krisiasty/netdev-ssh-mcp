@@ -2,21 +2,21 @@ package sshclient
 
 import (
 	"context"
-	"crypto/dsa" //nolint:staticcheck // SA1019: the tests need DSA keys to check that they are refused.
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/fips140"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -25,12 +25,48 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-// dsaParameters are generated once, because generating them is slow.
-var dsaParameters = sync.OnceValues(func() (dsa.Parameters, error) {
-	var params dsa.Parameters
-	err := dsa.GenerateParameters(&params, rand.Reader, dsa.L1024N160)
-	return params, err
-})
+// golang.org/x/crypto/ssh no longer implements DSA (ssh-dss) at all: it can
+// neither create a DSA signer, nor parse a DSA public key, nor negotiate one.
+// A DSA server therefore cannot be built for a test, and the tests below
+// cover what is left: a stale ssh-dss line in known_hosts, and the client's
+// own refusal of the type, kept in case the library ever offers it again.
+
+// dsaKeyBlob is the wire encoding of an ssh-dss public key ("ssh-dss", p,
+// q, g, y). The numbers are arbitrary: the library no longer parses the
+// type, so nothing checks them.
+var dsaKeyBlob = gossh.Marshal(struct {
+	Name       string
+	P, Q, G, Y *big.Int
+}{gossh.InsecureKeyAlgoDSA, big.NewInt(23), big.NewInt(11), big.NewInt(4), big.NewInt(8)}) //nolint:staticcheck // SA1019: referenced only to build a stale DSA entry.
+
+// dsaKnownHostsLine returns a known_hosts line storing an ssh-dss key for
+// addr, as an older OpenSSH client would have written it.
+func dsaKnownHostsLine(addr *net.TCPAddr) string {
+	return strings.Join(knownHostAddresses(addr.IP.String(), addr.Port), ",") + " ssh-dss " + base64.StdEncoding.EncodeToString(dsaKeyBlob)
+}
+
+// appendKnownHostsLine adds line to the known_hosts file at path.
+func appendKnownHostsLine(t *testing.T, path, line string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // G304: path is a test temp file.
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.WriteString(line + "\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dsaPublicKey stands in for an ssh-dss key, which the library can no longer
+// produce, to check the client's own refusal of the type.
+type dsaPublicKey struct{}
+
+func (dsaPublicKey) Type() string    { return gossh.InsecureKeyAlgoDSA } //nolint:staticcheck // SA1019: referenced only to stand in for a DSA key.
+func (dsaPublicKey) Marshal() []byte { return dsaKeyBlob }
+func (dsaPublicKey) Verify([]byte, *gossh.Signature) error {
+	return errors.New("ssh-dss is not supported")
+}
 
 func newSigner(t *testing.T, kind string) gossh.Signer {
 	t.Helper()
@@ -43,13 +79,6 @@ func newSigner(t *testing.T, kind string) gossh.Signer {
 		key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	case "rsa":
 		key, err = rsa.GenerateKey(rand.Reader, 2048)
-	case "dsa":
-		var params dsa.Parameters
-		if params, err = dsaParameters(); err == nil {
-			dsaKey := &dsa.PrivateKey{PublicKey: dsa.PublicKey{Parameters: params}}
-			err = dsa.GenerateKey(dsaKey, rand.Reader)
-			key = dsaKey
-		}
 	default:
 		t.Fatalf("unknown key kind %q", kind)
 	}
@@ -158,6 +187,9 @@ func TestPreferredHostKeyAlgorithms(t *testing.T) {
 	tests := []struct {
 		name string
 		keys []string
+		// staleDSA adds an ssh-dss line for the host, which the library
+		// skips when it reads known_hosts.
+		staleDSA bool
 		// first lists, in any order, the algorithms expected ahead of all others.
 		first []string
 	}{
@@ -165,8 +197,7 @@ func TestPreferredHostKeyAlgorithms(t *testing.T) {
 		{name: "ecdsa", keys: []string{"ecdsa"}, first: []string{gossh.KeyAlgoECDSA256}},
 		{name: "rsa", keys: []string{"rsa"}, first: rsaAlgorithms},
 		{name: "rsa and ed25519", keys: []string{"rsa", "ed25519"}, first: append([]string{gossh.KeyAlgoED25519}, rsaAlgorithms...)},
-		{name: "dsa and ed25519", keys: []string{"dsa", "ed25519"}, first: []string{gossh.KeyAlgoED25519}},
-		{name: "dsa only", keys: []string{"dsa"}},
+		{name: "stale dsa and ed25519", keys: []string{"ed25519"}, staleDSA: true, first: []string{gossh.KeyAlgoED25519}},
 		{name: "nothing stored"},
 	}
 	for _, tt := range tests {
@@ -176,6 +207,9 @@ func TestPreferredHostKeyAlgorithms(t *testing.T) {
 				pub = append(pub, newSigner(t, k).PublicKey())
 			}
 			path := useKnownHosts(t, addr, pub...)
+			if tt.staleDSA {
+				appendKnownHostsLine(t, path, dsaKnownHostsLine(addr))
+			}
 			known, err := knownhosts.New(path)
 			if err != nil {
 				t.Fatal(err)
@@ -309,32 +343,35 @@ func TestRunCommandMismatchWhenStoredTypeIsGone(t *testing.T) {
 	}
 }
 
-// TestRunCommandRefusesDSAHostKey checks that a DSA host key is never
-// negotiated, even when known_hosts stores it.
-func TestRunCommandRefusesDSAHostKey(t *testing.T) {
-	dsaKey := newSigner(t, "dsa")
-	addr := startHostKeyServer(t, dsaKey)
-	useKnownHosts(t, addr, dsaKey.PublicKey())
+// TestRunCommandSkipsStoredDSAKey checks that a stale ssh-dss line in
+// known_hosts is skipped: the host's ed25519 key stored next to it verifies
+// the server, and without it the server is reported as unknown, with no
+// stored key to match.
+func TestRunCommandSkipsStoredDSAKey(t *testing.T) {
+	edKey := newSigner(t, "ed25519")
+	addr := startHostKeyServer(t, edKey)
+	cfg := ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}
 
-	out, err := RunCommand(t.Context(), ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
-	if err == nil {
-		t.Fatalf("RunCommand() = %q, nil; want an error for a DSA-only server", out)
-	}
-}
+	t.Run("ed25519 stored too", func(t *testing.T) {
+		path := useKnownHosts(t, addr, edKey.PublicKey())
+		appendKnownHostsLine(t, path, dsaKnownHostsLine(addr))
+		if out, err := RunCommand(t.Context(), cfg, "show version"); err != nil || out != "ok" {
+			t.Fatalf("RunCommand() = %q, %v; want ok", out, err)
+		}
+	})
 
-// TestRunCommandIgnoresStoredDSAKey checks that a stored DSA key is not
-// preferred: the server presents its ed25519 key, which is then reported as
-// a mismatch against the stored DSA key.
-func TestRunCommandIgnoresStoredDSAKey(t *testing.T) {
-	dsaKey := newSigner(t, "dsa")
-	addr := startHostKeyServer(t, dsaKey, newSigner(t, "ed25519"))
-	useKnownHosts(t, addr, dsaKey.PublicKey())
-
-	_, err := RunCommand(t.Context(), ConnConfig{Host: addr.IP.String(), Port: addr.Port, Username: "u"}, "show version")
-	var hkErr *HostKeyValidationError
-	if !errors.As(err, &hkErr) || hkErr.PresentedKeyType != gossh.KeyAlgoED25519 {
-		t.Fatalf("RunCommand() error = %v, want a host key mismatch on the ed25519 key", err)
-	}
+	t.Run("only dsa stored for the host", func(t *testing.T) {
+		// Another host's key keeps the file valid: with only the DSA line,
+		// it would have no entry the library can read.
+		other := &net.TCPAddr{IP: net.IPv4(192, 0, 2, 99), Port: 22}
+		path := useKnownHosts(t, other, newSigner(t, "ed25519").PublicKey())
+		appendKnownHostsLine(t, path, dsaKnownHostsLine(addr))
+		_, err := RunCommand(t.Context(), cfg, "show version")
+		var hkErr *HostKeyValidationError
+		if !errors.As(err, &hkErr) || hkErr.PresentedKeyType != gossh.KeyAlgoED25519 || len(hkErr.MatchingKnownHosts) != 0 {
+			t.Fatalf("RunCommand() error = %v, want an unknown ed25519 host key with no stored key", err)
+		}
+	})
 }
 
 // TestTrustHostKey walks trust_host_key through adding a key to a
@@ -387,32 +424,21 @@ func TestMalformedKnownHosts(t *testing.T) {
 	}
 }
 
-func TestTrustHostKeyRefusesDSAHostKey(t *testing.T) {
-	addr := startHostKeyServer(t, newSigner(t, "dsa"))
-	path := useKnownHosts(t, addr)
-
-	if _, err := TrustHostKey(t.Context(), addr.IP.String(), addr.Port, false); err == nil {
-		t.Fatal("TrustHostKey() error = nil, want an error for a DSA-only server")
-	}
-	if fi, err := os.Stat(path); err != nil || fi.Size() != 0 {
-		t.Fatalf("known_hosts stat = %v, %v; want it left empty", fi, err)
-	}
-}
-
 // TestHostKeyCallbackRejectsDSA checks the callback refuses a DSA key on its
-// own, whether known_hosts stores it or verification is disabled.
+// own, before known_hosts is consulted, and when verification is disabled.
 func TestHostKeyCallbackRejectsDSA(t *testing.T) {
 	addr := &net.TCPAddr{IP: net.IPv4(192, 0, 2, 10), Port: 22}
-	key := newSigner(t, "dsa").PublicKey()
+	var key gossh.PublicKey = dsaPublicKey{}
 
-	t.Run("stored in known_hosts", func(t *testing.T) {
-		useKnownHosts(t, addr, key)
+	t.Run("verification enabled", func(t *testing.T) {
+		useKnownHosts(t, addr, newSigner(t, "ed25519").PublicKey())
 		callback, _, err := buildHostKeyCallback(addr.IP.String(), addr.Port)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := callback(joinHostPort(addr.IP.String(), addr.Port), addr, key); err == nil {
-			t.Fatal("callback() = nil, want the stored DSA key refused")
+		err = callback(joinHostPort(addr.IP.String(), addr.Port), addr, key)
+		if err == nil || !strings.Contains(err.Error(), "DSA keys are cryptographically weak") {
+			t.Fatalf("callback() = %v, want the DSA key refused by type", err)
 		}
 	})
 
