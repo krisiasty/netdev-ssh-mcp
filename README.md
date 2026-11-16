@@ -307,9 +307,13 @@ FortiOS limitations:
 Returns the systemd journal of one service unit on a Linux-based switch. Only units on a fixed per-platform list are
 allowed; [`list_log_units`](#list_log_units) returns it. Platforms without a list are refused.
 
-| Platform | Units |
-| --- | --- |
-| `cumulus4x` | `clagd` (MLAG), `switchd` (switching ASIC driver) |
+| Platform | Unit | Service |
+| --- | --- | --- |
+| `cumulus4x` | `clagd` | MLAG |
+| `cumulus4x` | `frr` | FRRouting routing daemons (zebra, bgpd, ospfd, ...) |
+| `cumulus4x` | `mstpd` | Spanning tree |
+| `cumulus4x` | `ptmd` | Prescriptive Topology Manager |
+| `cumulus4x` | `switchd` | Switching ASIC driver |
 
 The tool runs:
 
@@ -374,6 +378,9 @@ Example result:
 ```text
 Log units get_logs can read on cumulus4x:
 clagd
+frr
+mstpd
+ptmd
 switchd
 Pass one of these as unit to get_logs.
 ```
