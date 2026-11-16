@@ -112,6 +112,13 @@ func TestBuildLogsCommand(t *testing.T) {
 			want: "journalctl -u clagd --since '-15min' --lines 100 --no-pager 2>&1"},
 		{name: "absolute since", dt: deviceTypeCumulus4x, unit: "switchd", since: "2026-11-16 08:30", lines: 1000,
 			want: "journalctl -u switchd --since '2026-11-16 08:30' --lines 1000 --no-pager 2>&1"},
+		{name: "frr", dt: deviceTypeCumulus4x, unit: "frr", since: "-1h", lines: 50,
+			want: "journalctl -u frr --since '-1h' --lines 50 --no-pager 2>&1"},
+		{name: "mstpd", dt: deviceTypeCumulus4x, unit: "mstpd", since: "-1h", lines: 50,
+			want: "journalctl -u mstpd --since '-1h' --lines 50 --no-pager 2>&1"},
+		{name: "ptmd", dt: deviceTypeCumulus4x, unit: "ptmd", since: "-1h", lines: 50,
+			want: "journalctl -u ptmd --since '-1h' --lines 50 --no-pager 2>&1"},
+		{name: "unit case matters", dt: deviceTypeCumulus4x, unit: "FRR", since: "-1h", lines: 10, err: `unit "FRR" is not allowed on cumulus4x`},
 		{name: "lines not normalized", dt: deviceTypeCumulus4x, unit: "switchd", since: "-1h", err: "out of range"},
 		{name: "unit not on platform", dt: deviceTypeCumulus4x, unit: "sshd", since: "-1h", lines: 10, err: `unit "sshd" is not allowed on cumulus4x`},
 		{name: "platform without units", dt: deviceTypeEOS, unit: "clagd", since: "-1h", err: "supports no log units on eos"},
@@ -195,7 +202,7 @@ func TestGetLogsRejectsBeforeConnecting(t *testing.T) {
 		err  string
 	}{
 		{name: "no unit", args: GetLogsInput{Host: "sw1", Username: "u"}, err: "unit is required"},
-		{name: "unknown unit", args: GetLogsInput{Host: "sw1", Username: "u", Unit: "sshd"}, err: "allowed units are cumulus4x: clagd, switchd"},
+		{name: "unknown unit", args: GetLogsInput{Host: "sw1", Username: "u", Unit: "sshd"}, err: "allowed units are cumulus4x: clagd, frr, mstpd, ptmd, switchd"},
 		{name: "unit injection", args: GetLogsInput{Host: "sw1", Username: "u", Unit: "clagd; reboot"}, err: "is not allowed"},
 		{name: "bad since", args: GetLogsInput{Host: "sw1", Username: "u", Unit: "clagd", Since: "-1h'; reboot'"}, err: "since must be"},
 		{name: "negative lines", args: GetLogsInput{Host: "sw1", Username: "u", Unit: "clagd", Lines: -5}, err: "lines must be"},
@@ -347,8 +354,8 @@ func TestListLogUnitsWithDeviceType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListLogUnits() error = %v", err)
 	}
-	if text := strings.Join(resultTexts(res), "\n"); !strings.Contains(text, "clagd\nswitchd") {
-		t.Fatalf("result = %q, want clagd and switchd", text)
+	if text := strings.Join(resultTexts(res), "\n"); !strings.Contains(text, "clagd\nfrr\nmstpd\nptmd\nswitchd") {
+		t.Fatalf("result = %q, want every cumulus4x unit", text)
 	}
 
 	res, _, err = ListLogUnits(context.Background(), nil, ListLogUnitsInput{DeviceType: "fortigate"})
@@ -377,7 +384,7 @@ func TestListLogUnitsDetects(t *testing.T) {
 		t.Fatalf("ListLogUnits() error = %v", err)
 	}
 	text := strings.Join(resultTexts(res), "\n")
-	if !strings.Contains(text, "on cumulus4x:\nclagd\nswitchd") || !strings.Contains(text, "device_type: cumulus4x (auto-detected over SSH)") {
+	if !strings.Contains(text, "on cumulus4x:\nclagd\nfrr\nmstpd\nptmd\nswitchd") || !strings.Contains(text, "device_type: cumulus4x (auto-detected over SSH)") {
 		t.Fatalf("result = %q, want the units and the detection notice", text)
 	}
 	if probe.calls != 1 {

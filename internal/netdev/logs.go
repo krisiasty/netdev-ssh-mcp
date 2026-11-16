@@ -22,7 +22,7 @@ import (
 // unit is inserted into a bash command line, so only names listed here are
 // ever sent.
 var logUnits = map[deviceType][]string{
-	deviceTypeCumulus4x: {"clagd", "switchd"},
+	deviceTypeCumulus4x: {"clagd", "frr", "mstpd", "ptmd", "switchd"},
 }
 
 const (
@@ -278,7 +278,7 @@ func logsCommandError(err error) error {
 // GetLogsInput defines the input parameters for the get_logs tool.
 type GetLogsInput struct {
 	Host       string `json:"host"       jsonschema:"hostname or IP address of the switch"`
-	Unit       string `json:"unit"       jsonschema:"systemd unit to read the journal of, one of those list_log_units returns for the platform (cumulus4x: clagd, switchd)"`
+	Unit       string `json:"unit"       jsonschema:"systemd unit to read the journal of, one of those list_log_units returns for the platform (cumulus4x: clagd, frr, mstpd, ptmd, switchd)"`
 	Since      string `json:"since,omitempty" jsonschema:"start of the time window, defaults to -1h: a relative time such as -15min, -1h, -2d or -1h30min, 'today', 'yesterday', or a device-local YYYY-MM-DD, YYYY-MM-DD HH:MM or YYYY-MM-DD HH:MM:SS"`
 	Lines      int    `json:"lines,omitempty" jsonschema:"return at most the newest N entries of the window, 1 to 100000, defaults to 1000; the result says when the limit was reached, and warns when it holds more than 1000 entries, which uses much of an agent's context and may exceed an MCP client's output limit"`
 	Username   string `json:"username,omitempty" jsonschema:"SSH username; if omitted, falls back to the DEVICE_USERNAME environment variable"`
