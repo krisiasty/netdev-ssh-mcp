@@ -64,4 +64,4 @@ jobs:
           globs: "**/*.md"
 
       - name: typos
-        uses: crate-ci/typos@v1.52.0
+        uses: crate-ci/typos@v1.52.2
