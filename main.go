@@ -106,7 +106,7 @@ func main() {
 			"The command depends on the platform: 'show configuration' on JunOS, 'show full-configuration' on FortiOS, " +
 			"'show running-config' on IOS, 'show running-config | no-more' on EOS and NX-OS and 'net show configuration commands' on Cumulus Linux 4.x. " +
 			"JunOS, FortiOS and Cumulus Linux do not support config_type='startup'." +
-			vdomGuidance,
+			vdomGuidance + " " + usernameGuidance,
 	}, netdev.GetConfig)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -136,7 +136,7 @@ func main() {
 			"Examples: 'show bgp summary | json', 'show interfaces status | json', " +
 			"'show lldp neighbors detail | json', 'show inventory | json', 'show version | json', " +
 			"'get system status', 'get router info routing-table all', 'net show interface json'." +
-			vdomGuidance,
+			vdomGuidance + " " + usernameGuidance,
 	}, netdev.RunShowCommand)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -151,7 +151,7 @@ func main() {
 			"On Cumulus Linux 4.x the tool runs 'ping -c <count> [-s size] [-W timeout] [-I source|vrf] destination' with 5 probes unless count is set; " +
 			"vrf cannot be combined with source, outgoing_interface is not supported, and when nothing answers the output with its statistics " +
 			"is returned instead of an error." +
-			vdomGuidance,
+			vdomGuidance + " " + usernameGuidance,
 	}, netdev.RunPing)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -170,7 +170,7 @@ func main() {
 			"vrf cannot be combined with source, and outgoing_interface is not supported. " +
 			"Optional parameters: max_hops, timeout (per-probe seconds), probe (probes per hop, not used on JunOS), " +
 			"source (source IP or interface), vrf (routing-instance on JunOS), outgoing_interface (FortiOS only)." +
-			vdomGuidance,
+			vdomGuidance + " " + usernameGuidance,
 	}, netdev.RunTraceroute)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -182,7 +182,8 @@ func main() {
 			"which changes nothing (an account without global scope gets an error), and, for an account limited to VDOMs, 'get system status' " +
 			"unless platform detection in the same call has just read it. " +
 			"The platform is auto-detected (and cached) first, unless device_type=fortios is passed for a FortiGate that detection gets wrong; " +
-			"a device that is not a FortiGate is refused, and one detected without VDOMs is answered without connecting again.",
+			"a device that is not a FortiGate is refused, and one detected without VDOMs is answered without connecting again. " +
+			usernameGuidance,
 	}, netdev.FortigateListVDOMs)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -199,14 +200,15 @@ func main() {
 			"a result that large uses much of the agent's context and may exceed the MCP client's output limit, so prefer a narrower since. " +
 			"Sensitive values in the output are obfuscated as in get_config. " +
 			"Other platforms have no log units and are refused. " +
-			deviceTypeGuidance,
+			deviceTypeGuidance + usernameGuidance,
 	}, netdev.GetLogs)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "list_log_units",
 		Description: "List the systemd units get_logs may read on a platform. With device_type, the units of that platform are returned " +
 			"without connecting to any device. Without it, host is required and the platform is auto-detected over SSH (and cached) first, " +
-			"as in the other tools. Only Linux-based platforms have log units: cumulus4x has clagd, frr, mstpd, ptmd and switchd.",
+			"as in the other tools. Only Linux-based platforms have log units: cumulus4x has clagd, frr, mstpd, ptmd and switchd. " +
+			usernameGuidance,
 	}, netdev.ListLogUnits)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -216,7 +218,8 @@ func main() {
 			"one read-only command ('show version', 'get system status' on FortiOS, or 'cat /etc/os-release' on Debian or Ubuntu based systems). Results are cached by this server per host; " +
 			"set refresh=true to probe again. Use it to resolve a list of hosts before working through them. " +
 			"On FortiOS it also reports whether the FortiGate uses VDOMs ('vdoms: multiple'), pointing at fortigate_list_vdoms. " +
-			"Cumulus Linux 5.x, other Linux systems and the Cisco Business switch OS (e.g. Catalyst 1200) are recognised and reported as unsupported.",
+			"Cumulus Linux 5.x, other Linux systems and the Cisco Business switch OS (e.g. Catalyst 1200) are recognised and reported as unsupported. " +
+			usernameGuidance,
 	}, netdev.DetectPlatform)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -237,6 +240,13 @@ const deviceTypeGuidance = "device_type selects the platform syntax: 'eos' (Aris
 	"'junos' (Juniper JunOS), 'fortios' (FortiGate/FortiOS) or 'cumulus4x' (Cumulus Linux 4.x; 5.x is not supported). Pass it when you know the platform, for example from an inventory " +
 	"system. If it is omitted, the platform is auto-detected over SSH, cached for the host, and reported in a note after the output; " +
 	"pass that value on later calls. To work through many hosts, call detect_platform for each one first. "
+
+// usernameGuidance is shared by the tools that take username. Naming the
+// parameter and its fallback in the tool description, not only in the
+// parameter's own description, also keeps tool scanners such as mcpproxy's
+// capability.mismatch from reading a parameter whose description mentions an
+// environment variable as an unexplained data sink.
+const usernameGuidance = "username is the SSH login name; if omitted, the DEVICE_USERNAME environment variable is used."
 
 // vdomGuidance is shared by the tools that take vdom.
 const vdomGuidance = " On a FortiGate with VDOMs, vdom runs the command in that VDOM; call fortigate_list_vdoms for the names this account can reach. " +
