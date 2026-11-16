@@ -185,6 +185,26 @@ var journalNoAccessRe = regexp.MustCompile(`(?m)^Hint: You are currently not see
 const journalNoAccessNotice = "journalctl reports that this account cannot read the system journal, so the output above holds only its own messages, " +
 	"if any: add the account to the systemd-journal group on the device."
 
+// journalNoFilesRe matches the error journalctl prints, after the hint, when
+// the account cannot open any journal file; it then exits with status 1.
+var journalNoFilesRe = regexp.MustCompile(`(?m)^No journal files were opened due to insufficient permissions`)
+
+// journalNoFilesNotice explains journalNoFilesRe's error.
+const journalNoFilesNotice = "journalctl could not open any journal file because this account cannot read the system journal: " +
+	"add the account to the systemd-journal group on the device."
+
+// journalAccessNotice returns the notice for journalctl output that shows the
+// account cannot read the system journal, or "".
+func journalAccessNotice(out string) string {
+	switch {
+	case journalNoFilesRe.MatchString(out):
+		return journalNoFilesNotice
+	case journalNoAccessRe.MatchString(out):
+		return journalNoAccessNotice
+	}
+	return ""
+}
+
 // countLogEntries counts the journal entries in journalctl output: lines
 // that are not empty, not journalctl's own "-- ... --" markers (the header,
 // "-- No entries --", "-- Reboot --"), not its hint, and not indented
@@ -206,8 +226,8 @@ func countLogEntries(out string) int {
 // with the given lines limit.
 func logsNotices(out string, lines int) []mcp.Content {
 	var notices []mcp.Content
-	if journalNoAccessRe.MatchString(out) {
-		notices = append(notices, &mcp.TextContent{Text: journalNoAccessNotice})
+	if notice := journalAccessNotice(out); notice != "" {
+		notices = append(notices, &mcp.TextContent{Text: notice})
 	}
 	entries := countLogEntries(out)
 	if entries >= lines {
@@ -229,9 +249,10 @@ const logsErrorLines = 20
 
 // logsCommandError adds the start of the device output to the error of a
 // failed journalctl, which states the reason only there ("Failed to parse
-// timestamp", "No journal files were found"). The output may hold log
-// entries, so it is obfuscated first, and left out if that fails. Call it
-// after logging, so the output stays out of the log.
+// timestamp", "No journal files were opened due to insufficient
+// permissions"), and the journalAccessNotice that applies. The output may
+// hold log entries, so it is obfuscated first, and left out if that fails.
+// Call it after logging, so the output stays out of the log.
 func logsCommandError(err error) error {
 	var cmdErr *sshclient.CommandError
 	if !errors.As(err, &cmdErr) {
@@ -244,6 +265,9 @@ func logsCommandError(err error) error {
 	out, _, obfErr := obfuscate(out)
 	if obfErr != nil {
 		return err
+	}
+	if notice := journalAccessNotice(string(cmdErr.Output)); notice != "" {
+		return fmt.Errorf("%w; device output:\n%s\n%s", err, out, notice)
 	}
 	return fmt.Errorf("%w; device output:\n%s", err, out)
 }

@@ -257,10 +257,15 @@ func TestGetLogsDetectsCumulus(t *testing.T) {
 	}
 }
 
+// journalNoAccessHint is the hint journalctl printed on a Cumulus 4.x leaf
+// for an account outside the systemd-journal group.
+const journalNoAccessHint = "Hint: You are currently not seeing messages from other users and the system.\n" +
+	"      Users in the 'systemd-journal' group can see all messages. Pass -q to\n" +
+	"      turn off this notice.\n"
+
 func TestGetLogsJournalAccessNotice(t *testing.T) {
-	stubRunCommand(t, "Hint: You are currently not seeing messages from other users and the system.\n"+
-		"      Users in groups 'adm', 'systemd-journal' can see all messages.\n"+
-		"      Pass -q to turn off this notice.\n-- No entries --\n", nil)
+	stubRunCommand(t, journalNoAccessHint+"-- Logs begin at Thu 2026-11-12 08:26:41 CET, end at Mon 2026-11-16 20:48:58 CET. --\n"+
+		"Nov 16 08:00:01 leaf5 sudo[812]: kcieplucha : TTY=pts/0 ; PWD=/home/kcieplucha ; COMMAND=/bin/true\n", nil)
 	res, _, err := GetLogs(context.Background(), nil, GetLogsInput{
 		Host: "sw1", Username: "u", DeviceType: "cumulus4x", Unit: "clagd",
 	})
@@ -269,6 +274,32 @@ func TestGetLogsJournalAccessNotice(t *testing.T) {
 	}
 	if text := strings.Join(resultTexts(res), "\n"); !strings.Contains(text, journalNoAccessNotice) {
 		t.Fatalf("result = %q, want the journal access notice", text)
+	}
+}
+
+// TestGetLogsNoJournalFiles covers the output a Cumulus 4.x leaf gave an
+// account outside the systemd-journal group, which journalctl ends with
+// exit status 1.
+func TestGetLogsNoJournalFiles(t *testing.T) {
+	stubRunCommand(t, "", &sshclient.CommandError{
+		Command:    "journalctl",
+		Err:        &gossh.ExitError{},
+		ExitStatus: 1,
+		Output:     []byte(journalNoAccessHint + "No journal files were opened due to insufficient permissions.\n"),
+	})
+	_, _, err := GetLogs(context.Background(), nil, GetLogsInput{
+		Host: "sw1", Username: "u", DeviceType: "cumulus4x", Unit: "clagd",
+	})
+	if err == nil {
+		t.Fatalf("GetLogs() error = nil, want the journal access error")
+	}
+	for _, want := range []string{"No journal files were opened due to insufficient permissions", journalNoFilesNotice} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("GetLogs() error = %v, want %q in it", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), journalNoAccessNotice) {
+		t.Errorf("GetLogs() error = %v, want only the no-files notice", err)
 	}
 }
 

@@ -318,8 +318,10 @@ journalctl -u <unit> --since '<since>' --lines <lines> --no-pager 2>&1
 ```
 
 The account must be able to read the system journal without `sudo`, for example as a member of the `systemd-journal`
-group. If journalctl prints its "You are currently not seeing messages from other users and the system" hint, the
-result ends with a note saying so; until the account can read the journal, the output holds at most its own messages.
+group. Without that, journalctl prints a "You are currently not seeing messages from other users and the system" hint.
+If it can still open a journal file, the result holds at most the account's own messages and ends with a note saying
+so. On Cumulus 4.x it usually cannot, and exits with "No journal files were opened due to insufficient permissions";
+the error then includes that output and a note to add the account to the `systemd-journal` group.
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
