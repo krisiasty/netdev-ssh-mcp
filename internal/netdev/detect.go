@@ -82,8 +82,12 @@ const (
 
 var (
 	plainOpenSSHRe = regexp.MustCompile(`^OpenSSH_\d+(?:\.\d+)*(?:p\d+)?$`)
-	obfuscatedRe   = regexp.MustCompile(`^[A-Za-z0-9]{6,16}$`)
-	linuxDistroRe  = regexp.MustCompile(`(?i)\b(?:debian|ubuntu)\b`)
+	// The FortiOS random token can contain "_" and "-" as well as letters
+	// and digits, such as "ZA_YzKcb" or "Zl-NBaulRz0maR". Identification
+	// strings of other platforms carry a version with a dot, and are
+	// matched before this.
+	obfuscatedRe  = regexp.MustCompile(`^[A-Za-z0-9_-]{6,16}$`)
+	linuxDistroRe = regexp.MustCompile(`(?i)\b(?:debian|ubuntu)\b`)
 )
 
 // classifyIdent classifies an SSH identification string such as
