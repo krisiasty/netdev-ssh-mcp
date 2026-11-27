@@ -92,6 +92,10 @@ func TestClassifyIdent(t *testing.T) {
 		{identIOS, identCisco},
 		{identFortiOS, identObfuscated},
 		{identFortiSSH, identObfuscated},
+		{"SSH-2.0-q4bNXYer", identObfuscated},       // FortiOS 7.4.12
+		{"SSH-2.0-ZA_YzKcb", identObfuscated},       // FortiOS, token with "_"
+		{"SSH-2.0-Zl-NBaulRz0maR", identObfuscated}, // FortiOS 7.4.13, token with "-"
+		{"SSH-2.0-Comware-7.1.064", identUnknown},
 		{identCumulus, identLinux},
 		{identUbuntu, identLinux},
 		{identC1200, identCiscoBusiness},
